@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -22,12 +23,35 @@ func currentVersion() string {
 	return strings.TrimSpace(string(data))
 }
 
+// getPlatformSuffix returns the expected platform suffix for release files
+func getPlatformSuffix() string {
+	switch runtime.GOOS {
+	case "windows":
+		return "-windows"
+	case "darwin":
+		return "-macos"
+	case "linux":
+		return "-linux"
+	default:
+		return "-" + runtime.GOOS
+	}
+}
+
+// getExecutableName returns the expected executable name for the current platform
+func getExecutableName() string {
+	execName := "claude-webext-patcher"
+	if runtime.GOOS == "windows" {
+		execName += ".exe"
+	}
+	return execName
+}
+
 func FinishUpdateIfNeeded() {
 	exePath, _ := os.Executable()
 	exeName := filepath.Base(exePath)
 
-	// If we're running as .new.exe, replace the original
-	if strings.HasSuffix(exeName, ".new.exe") {
+	// Platform-specific handling for Windows
+	if runtime.GOOS == "windows" && strings.HasSuffix(exeName, ".new.exe") {
 		originalExe := strings.TrimSuffix(exePath, ".new.exe") + ".exe"
 
 		// Wait a bit for the original to fully exit
@@ -55,21 +79,56 @@ func FinishUpdateIfNeeded() {
 		os.Exit(0)
 	}
 
-	// If we're the main exe, clean up any .new.exe
-	newExePath := strings.TrimSuffix(exePath, ".exe") + ".new.exe"
-	os.Remove(newExePath) // Clean up if it exists
+	// For Unix-like systems, check for .new suffix
+	if runtime.GOOS != "windows" && strings.HasSuffix(exeName, ".new") {
+		originalExe := strings.TrimSuffix(exePath, ".new")
+
+		// Wait for original to exit
+		time.Sleep(500 * time.Millisecond)
+
+		// Try to replace with retries
+		for i := 0; i < 5; i++ {
+			if err := os.Remove(originalExe); err == nil {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+
+		// Copy ourselves to the original name
+		input, _ := os.ReadFile(exePath)
+		if err := os.WriteFile(originalExe, input, 0755); err != nil {
+			fmt.Printf("Failed to write update: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Launch the original
+		cmd := exec.Command(originalExe)
+		cmd.Start()
+
+		os.Exit(0)
+	}
+
+	// Clean up any temporary update files
+	if runtime.GOOS == "windows" {
+		newExePath := strings.TrimSuffix(exePath, ".exe") + ".new.exe"
+		os.Remove(newExePath)
+	} else {
+		newExePath := exePath + ".new"
+		os.Remove(newExePath)
+	}
 }
 
 func CheckAndUpdate() error {
-	fmt.Println("Checking for installer updates...")
+	fmt.Printf("Checking for installer updates on %s...\n", runtime.GOOS)
 
-	currentVersion := currentVersion()
+	currentVer := currentVersion()
+	platformSuffix := getPlatformSuffix()
 
 	// Check latest release
 	url := "https://api.github.com/repos/lugia19/claude-webext-patcher/releases/latest"
 	resp, err := http.Get(url)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to check for updates: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -82,7 +141,7 @@ func CheckAndUpdate() error {
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return err
+		return fmt.Errorf("failed to parse release info: %v", err)
 	}
 
 	// Strip 'v' prefix if present
@@ -93,49 +152,76 @@ func CheckAndUpdate() error {
 		return fmt.Errorf("failed to get latest version from GitHub")
 	}
 
-	if compareVersions(currentVersion, latestVersion) >= 0 {
+	if compareVersions(currentVer, latestVersion) >= 0 {
 		fmt.Println("Installer is up to date")
 		return nil
 	}
 
-	fmt.Printf("Update available: %s -> %s\n", currentVersion, latestVersion)
+	fmt.Printf("Update available: %s -> %s\n", currentVer, latestVersion)
 
-	// Find the zip asset
+	// Find the platform-specific zip asset
 	var downloadURL string
+	var assetName string
+
+	// First try to find exact platform match
 	for _, asset := range release.Assets {
-		if strings.HasSuffix(asset.Name, ".zip") {
+		if strings.Contains(asset.Name, platformSuffix) && strings.HasSuffix(asset.Name, ".zip") {
 			downloadURL = asset.DownloadURL
+			assetName = asset.Name
 			break
 		}
 	}
 
+	// If no platform-specific file found, show available options
 	if downloadURL == "" {
-		return fmt.Errorf("no zip file found in release")
+		fmt.Printf("No release found for platform: %s\n", runtime.GOOS)
+		fmt.Println("Available releases:")
+		for _, asset := range release.Assets {
+			if strings.HasSuffix(asset.Name, ".zip") {
+				fmt.Printf("  - %s\n", asset.Name)
+			}
+		}
+		return fmt.Errorf("no compatible release file found for %s", runtime.GOOS)
 	}
+
+	fmt.Printf("Found platform release: %s\n", assetName)
 
 	// Download to temp
 	fmt.Println("Downloading update...")
 	tempZip := "update-temp.zip"
 	resp, err = http.Get(downloadURL)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to download update: %v", err)
 	}
 	defer resp.Body.Close()
 
-	out, _ := os.Create(tempZip)
-	io.Copy(out, resp.Body)
+	out, err := os.Create(tempZip)
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %v", err)
+	}
+	_, err = io.Copy(out, resp.Body)
 	out.Close()
+	if err != nil {
+		os.Remove(tempZip)
+		return fmt.Errorf("failed to save update: %v", err)
+	}
 	defer os.Remove(tempZip)
 
 	// Extract to temp dir
 	fmt.Println("Extracting update...")
 	tempDir := "update-temp"
 	os.RemoveAll(tempDir)
-	os.MkdirAll(tempDir, 0755)
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return fmt.Errorf("failed to create temp dir: %v", err)
+	}
 	defer os.RemoveAll(tempDir)
 
 	// Extract zip
-	zipReader, _ := zip.OpenReader(tempZip)
+	zipReader, err := zip.OpenReader(tempZip)
+	if err != nil {
+		return fmt.Errorf("failed to open zip: %v", err)
+	}
+
 	for _, f := range zipReader.File {
 		path := filepath.Join(tempDir, f.Name)
 
@@ -158,24 +244,45 @@ func CheckAndUpdate() error {
 
 	// Replace resources folder
 	os.RemoveAll("resources")
-	os.Rename(filepath.Join(tempDir, "resources"), "resources")
+	if err := os.Rename(filepath.Join(tempDir, "resources"), "resources"); err != nil {
+		// Resources folder might not exist in all releases
+		fmt.Printf("Note: No resources folder in update\n")
+	}
 
 	// Update version.txt
-	versionData, _ := os.ReadFile(filepath.Join(tempDir, "version.txt"))
-	os.WriteFile("version.txt", versionData, 0644)
+	versionData, err := os.ReadFile(filepath.Join(tempDir, "version.txt"))
+	if err == nil {
+		os.WriteFile("version.txt", versionData, 0644)
+	}
 
-	// Copy new exe as .new.exe
+	// Copy new executable with platform-specific naming
 	exePath, _ := os.Executable()
-	newExeName := strings.TrimSuffix(filepath.Base(exePath), ".exe") + ".new.exe"
+	executableName := getExecutableName()
 
-	newExeData, _ := os.ReadFile(filepath.Join(tempDir, "claude-webext-patcher.exe"))
-	os.WriteFile(newExeName, newExeData, 0755)
+	var newExeName string
+	if runtime.GOOS == "windows" {
+		newExeName = strings.TrimSuffix(filepath.Base(exePath), ".exe") + ".new.exe"
+	} else {
+		newExeName = filepath.Base(exePath) + ".new"
+	}
+
+	// Look for the executable in the temp dir
+	newExeData, err := os.ReadFile(filepath.Join(tempDir, executableName))
+	if err != nil {
+		return fmt.Errorf("failed to find executable in update: %v", err)
+	}
+
+	if err := os.WriteFile(newExeName, newExeData, 0755); err != nil {
+		return fmt.Errorf("failed to write new executable: %v", err)
+	}
 
 	fmt.Println("Restarting to complete update...")
 
 	// Launch the new exe
-	cmd := exec.Command(newExeName)
-	cmd.Start()
+	cmd := exec.Command("./" + newExeName)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start updated executable: %v", err)
+	}
 
 	// Exit to let it take over
 	os.Exit(0)
