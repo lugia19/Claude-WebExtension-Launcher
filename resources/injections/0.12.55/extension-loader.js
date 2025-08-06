@@ -22,8 +22,8 @@ while (currentPath !== CUTpath.dirname(currentPath)) {
 
 // Load extensions if we found the folder
 if (extPath) {
-    // Wait for the page to be ready before loading extensions
-    CUTwebView.webContents.once('did-finish-load', () => {
+    // Wait for the dom to be ready before loading extensions
+    CUTwebView.webContents.once('dom-ready', () => {
         console.log('Page loaded, loading extensions...');
         CUTfs.readdirSync(extPath).forEach(f => {
             const p = CUTpath.join(extPath, f);
