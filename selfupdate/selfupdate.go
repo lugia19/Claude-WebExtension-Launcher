@@ -205,20 +205,21 @@ func CheckAndUpdate() error {
 		os.Remove(tempZip)
 		return fmt.Errorf("failed to save update: %v", err)
 	}
-	defer os.Remove(tempZip)
 
 	// Extract to temp dir
 	fmt.Println("Extracting update...")
 	tempDir := "update-temp"
 	os.RemoveAll(tempDir)
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		os.Remove(tempZip)
 		return fmt.Errorf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
 
 	// Extract zip
 	zipReader, err := zip.OpenReader(tempZip)
 	if err != nil {
+		os.Remove(tempZip)
+		os.RemoveAll(tempDir)
 		return fmt.Errorf("failed to open zip: %v", err)
 	}
 
@@ -269,12 +270,22 @@ func CheckAndUpdate() error {
 	// Look for the executable in the temp dir
 	newExeData, err := os.ReadFile(filepath.Join(tempDir, executableName))
 	if err != nil {
+		// Clean up before returning error
+		os.Remove(tempZip)
+		os.RemoveAll(tempDir)
 		return fmt.Errorf("failed to find executable in update: %v", err)
 	}
 
 	if err := os.WriteFile(newExeName, newExeData, 0755); err != nil {
+		// Clean up before returning error
+		os.Remove(tempZip)
+		os.RemoveAll(tempDir)
 		return fmt.Errorf("failed to write new executable: %v", err)
 	}
+
+	// Clean up temp files before restarting
+	os.Remove(tempZip)
+	os.RemoveAll(tempDir)
 
 	fmt.Println("Restarting to complete update...")
 
