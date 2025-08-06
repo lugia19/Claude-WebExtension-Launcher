@@ -1,8 +1,5 @@
-/Test-4/*
-/Test-5/*
-/Testing/*
-/Testing-3/*
 /claude-webext-patcher.exe
 **/.git/
 !/.git/
 .idea
+/Tests/

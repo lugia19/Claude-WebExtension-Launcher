@@ -1,0 +1,142 @@
+package extensions
+
+import (
+	"archive/zip"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+type Extension struct {
+	Owner  string // GitHub owner
+	Repo   string // GitHub repo name
+	Folder string // Local folder name in extensions/
+}
+
+var extensions = []Extension{
+	{Owner: "lugia19", Repo: "Claude-Usage-Extension", Folder: "usage-tracker"},
+	// Add more as needed
+}
+
+func UpdateAll() error {
+	fmt.Println("Checking extensions...")
+
+	// Create extensions dir if needed
+	os.MkdirAll("extensions", 0755)
+
+	for _, ext := range extensions {
+		// Check current version
+		manifestPath := filepath.Join("extensions", ext.Folder, "manifest.json")
+		currentVersion := ""
+
+		if data, err := os.ReadFile(manifestPath); err == nil {
+			var manifest struct {
+				Version string `json:"version"`
+			}
+			if json.Unmarshal(data, &manifest) == nil {
+				currentVersion = manifest.Version
+			}
+		}
+
+		// Get latest release from GitHub
+		url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", ext.Owner, ext.Repo)
+		resp, err := http.Get(url)
+		if err != nil {
+			fmt.Printf("  %s: error checking: %v\n", ext.Folder, err)
+			continue
+		}
+
+		var release struct {
+			TagName string `json:"tag_name"`
+			Assets  []struct {
+				Name        string `json:"name"`
+				DownloadURL string `json:"browser_download_url"`
+			} `json:"assets"`
+		}
+
+		json.NewDecoder(resp.Body).Decode(&release)
+		resp.Body.Close()
+
+		// Check if update needed
+		releaseVersion := strings.TrimPrefix(release.TagName, "v")
+
+		// Check if update needed
+		if currentVersion == releaseVersion {
+			fmt.Printf("  %s: up to date (%s)\n", ext.Folder, currentVersion)
+			continue
+		}
+
+		// Find electron zip
+		downloadURL := ""
+		for _, asset := range release.Assets {
+			if strings.Contains(strings.ToLower(asset.Name), "electron") && strings.HasSuffix(asset.Name, ".zip") {
+				downloadURL = asset.DownloadURL
+				break
+			}
+		}
+
+		if downloadURL == "" {
+			fmt.Printf("  %s: no electron zip found\n", ext.Folder)
+			continue
+		}
+
+		fmt.Printf("  %s: updating %s -> %s\n", ext.Folder, currentVersion, release.TagName)
+
+		// Download and extract
+		if err := downloadAndExtractExtension(downloadURL, ext.Folder); err != nil {
+			fmt.Printf("  %s: error updating: %v\n", ext.Folder, err)
+		}
+	}
+
+	return nil
+}
+
+func downloadAndExtractExtension(url, folder string) error {
+	// Download to temp
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	tempFile := folder + "-temp.zip"
+	out, _ := os.Create(tempFile)
+	io.Copy(out, resp.Body)
+	out.Close()
+	defer os.Remove(tempFile)
+
+	// Remove old and extract new
+	extPath := filepath.Join("extensions", folder)
+	os.RemoveAll(extPath)
+	os.MkdirAll(extPath, 0755)
+
+	// Extract zip
+	zipReader, err := zip.OpenReader(tempFile)
+	if err != nil {
+		return err
+	}
+	defer zipReader.Close()
+
+	for _, f := range zipReader.File {
+		path := filepath.Join(extPath, f.Name)
+
+		if f.FileInfo().IsDir() {
+			os.MkdirAll(path, f.Mode())
+			continue
+		}
+
+		os.MkdirAll(filepath.Dir(path), 0755)
+
+		src, _ := f.Open()
+		dst, _ := os.Create(path)
+		io.Copy(dst, src)
+		dst.Close()
+		src.Close()
+	}
+
+	return nil
+}
