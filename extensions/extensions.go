@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -65,7 +66,7 @@ func UpdateAll() error {
 		releaseVersion := strings.TrimPrefix(release.TagName, "v")
 
 		// Check if update needed
-		if currentVersion == releaseVersion {
+		if compareVersions(currentVersion, releaseVersion) >= 0 {
 			fmt.Printf("  %s: up to date (%s)\n", ext.Folder, currentVersion)
 			continue
 		}
@@ -139,4 +140,39 @@ func downloadAndExtractExtension(url, folder string) error {
 	}
 
 	return nil
+}
+
+func compareVersions(v1, v2 string) int {
+	// Split versions and pad to same length
+	parts1 := strings.Split(v1, ".")
+	parts2 := strings.Split(v2, ".")
+
+	// Make both same length
+	maxLen := len(parts1)
+	if len(parts2) > maxLen {
+		maxLen = len(parts2)
+	}
+
+	for i := 0; i < maxLen; i++ {
+		// Get digit or 0 if missing
+		digit1 := 0
+		if i < len(parts1) {
+			digit1, _ = strconv.Atoi(parts1[i])
+		}
+
+		digit2 := 0
+		if i < len(parts2) {
+			digit2, _ = strconv.Atoi(parts2[i])
+		}
+
+		// Compare
+		if digit1 < digit2 {
+			return -1
+		}
+		if digit1 > digit2 {
+			return 1
+		}
+	}
+
+	return 0 // Equal
 }
