@@ -45,3 +45,10 @@ if (extPath) {
     });
 }
 
+//Generic logging function
+CUTwebView.webContents.on('console-message', (event) => {
+    const message = event.message
+    if (message.startsWith("EXT_LOG:")) {
+        console.log(message)
+    }
+});
