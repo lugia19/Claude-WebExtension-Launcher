@@ -44,20 +44,47 @@ func readInjection(version, filename string) (string, error) {
 	return string(content), nil
 }
 
+func readCombinedInjection(version string, filenames []string) (string, error) {
+	var combined strings.Builder
+
+	for i, filename := range filenames {
+		content, err := readInjection(version, filename)
+		if err != nil {
+			return "", err
+		}
+
+		// Add the content
+		combined.WriteString(content)
+
+		// Add newlines between files for clarity
+		if i < len(filenames)-1 {
+			combined.WriteString("\n\n")
+		}
+	}
+
+	return combined.String(), nil
+}
+
 func patch_0_12_55(content []byte) []byte {
 	contentStr := string(content)
 
-	// Load injection from file
-	injection, err := readInjection("0.12.55", "extension-loader.js")
+	// Load all injection files
+	injectionFiles := []string{
+		"extension_loader.js",
+		"alarm_polyfill.js",
+		"notification_polyfill.js",
+		"tabevents_polyfill.js",
+	}
+
+	injection, err := readCombinedInjection("0.12.55", injectionFiles)
 	if err != nil {
 		fmt.Printf("Warning: %v\n", err)
 		return content
 	}
 
-	// First injection point - before return statement inside use();
-	returnPattern := `return a(), i(), e.on("resize", () => {`
+	// First injection point - inside use() function
+	returnPattern := `return a(), i(), e.on("resize"`
 	if idx := strings.Index(contentStr, returnPattern); idx != -1 {
-		// Insert right before 'return'
 		contentStr = contentStr[:idx] + "\n" + injection + "\n" + contentStr[idx:]
 	}
 
