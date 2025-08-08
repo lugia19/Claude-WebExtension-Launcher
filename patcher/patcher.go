@@ -17,7 +17,7 @@ import (
 const (
 	releasesURL    = "https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest-win-x64/RELEASES"
 	AppFolder      = "app-latest"
-	KeepNupkgFiles = true
+	KeepNupkgFiles = false
 )
 
 type Patch struct {

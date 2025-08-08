@@ -20,7 +20,7 @@ type Extension struct {
 
 var extensions = []Extension{
 	{Owner: "lugia19", Repo: "Claude-Usage-Extension", Folder: "usage-tracker"},
-	// Add more as needed
+	{Owner: "lugia19", Repo: "Claude-Toolbox", Folder: "userscript-toolbox"},
 }
 
 func UpdateAll() error {
