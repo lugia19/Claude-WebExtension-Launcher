@@ -34,6 +34,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	//Clear service worker cache
+	serviceWorkerPath := filepath.Join(os.Getenv("APPDATA"), "Claude", "Service Worker")
+	webStoragePath := filepath.Join(os.Getenv("APPDATA"), "Claude", "WebStorage")
+
+	os.RemoveAll(serviceWorkerPath)
+	os.RemoveAll(webStoragePath)
+
+	fmt.Println("Cleared cache folders")
+
 	// Launch Claude
 	fmt.Println("Launching Claude.")
 	cmd := exec.Command(filepath.Join(patcher.AppFolder, "claude.exe"))
