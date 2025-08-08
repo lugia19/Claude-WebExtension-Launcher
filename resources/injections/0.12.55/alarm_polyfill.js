@@ -8,10 +8,23 @@ CUTwebView.webContents.on('console-message', (event) => {
         try {
             const data = JSON.parse(message.substring(CUT_ALARM_PREFIX.length));
             if (data.action === 'create') {
-                // Clear existing alarm with same name
-                if (alarms.has(data.name)) {
-                    clearTimeout(alarms.get(data.name));
-                    alarms.delete(data.name);
+                const existing = alarms.get(data.name);
+
+                // Check if alarm exists with same parameters
+                if (existing) {
+                    const sameParams =
+                        existing.params.periodInMinutes === data.periodInMinutes &&
+                        existing.params.when === data.when &&
+                        existing.params.delayInMinutes === data.delayInMinutes;
+
+                    if (sameParams) {
+                        console.log(`[Node] Alarm '${data.name}' already exists with same params, skipping`);
+                        return;
+                    }
+
+                    // Different params, clear old timer
+                    clearTimeout(existing.timerId);
+                    console.log(`[Node] Cleared existing alarm '${data.name}' for update`);
                 }
 
                 let timerId;
@@ -41,7 +54,14 @@ CUTwebView.webContents.on('console-message', (event) => {
                 }
 
                 if (timerId) {
-                    alarms.set(data.name, timerId);
+                    alarms.set(data.name, {
+                        timerId: timerId,
+                        params: {
+                            periodInMinutes: data.periodInMinutes,
+                            when: data.when,
+                            delayInMinutes: data.delayInMinutes
+                        }
+                    });
                 }
 
             } else if (data.action === 'clear') {
@@ -57,6 +77,7 @@ CUTwebView.webContents.on('console-message', (event) => {
 });
 
 function fireAlarm(name) {
+    console.log(`[Node] Firing alarm ${name}!`);
     CUTwebView.webContents.executeJavaScript(`
         window.dispatchEvent(new CustomEvent('electronAlarmFired', {
             detail: { name: '${name}' }
