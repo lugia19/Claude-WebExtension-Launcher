@@ -2,6 +2,11 @@
 
 A custom installer for Claude Desktop that includes built-in extensions (and the ability to install your own).
 
+**Disclaimer**: This is an unofficial, third-party modification of Claude Desktop that enables extension support. By using this installer, you acknowledge that:
+- You are doing so at your own risk and discretion
+- This project is neither affiliated with nor endorsed by Anthropic
+- You are responsible for ensuring your use complies with all applicable terms and agreements
+
 ## Overview
 
 This installer generates a modified version of the Claude Desktop client with extension support enabled. It creates a standalone installation that can coexist with the official Claude Desktop client, automatically keeping both the client and extensions up to date.
