@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 )
 
 func main() {
@@ -45,6 +46,17 @@ func main() {
 
 	// Launch Claude
 	fmt.Println("Launching Claude.")
-	cmd := exec.Command(filepath.Join(patcher.AppFolder, "claude.exe"))
+	var claudePath string
+	switch runtime.GOOS {
+	case "windows":
+		claudePath = filepath.Join(patcher.AppFolder, "claude.exe")
+	case "darwin":
+		// macOS app bundle structure
+		claudePath = filepath.Join(patcher.AppFolder, "Claude.app", "Contents", "MacOS", "Claude")
+	default:
+		// Linux and other Unix-like systems
+		claudePath = filepath.Join(patcher.AppFolder, "claude")
+	}
+	cmd := exec.Command(claudePath)
 	cmd.Start()
 }

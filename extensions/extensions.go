@@ -2,6 +2,7 @@ package extensions
 
 import (
 	"archive/zip"
+	"claude-webext-patcher/utils"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,11 +28,11 @@ func UpdateAll() error {
 	fmt.Println("Checking extensions...")
 
 	// Create extensions dir if needed
-	os.MkdirAll("extensions", 0755)
+	os.MkdirAll(utils.ResolvePath("web-extensions"), 0755)
 
 	for _, ext := range extensions {
 		// Check current version
-		manifestPath := filepath.Join("extensions", ext.Folder, "manifest.json")
+		manifestPath := filepath.Join(utils.ResolvePath("web-extensions"), ext.Folder, "manifest.json")
 		currentVersion := ""
 
 		if data, err := os.ReadFile(manifestPath); err == nil {
@@ -104,14 +105,14 @@ func downloadAndExtractExtension(url, folder string) error {
 	}
 	defer resp.Body.Close()
 
-	tempFile := folder + "-temp.zip"
+	tempFile := utils.ResolvePath(folder + "-temp.zip")
 	out, _ := os.Create(tempFile)
 	io.Copy(out, resp.Body)
 	out.Close()
 	defer os.Remove(tempFile)
 
 	// Remove old and extract new
-	extPath := filepath.Join("extensions", folder)
+	extPath := filepath.Join(utils.ResolvePath("web-extensions"), folder)
 	os.RemoveAll(extPath)
 	os.MkdirAll(extPath, 0755)
 

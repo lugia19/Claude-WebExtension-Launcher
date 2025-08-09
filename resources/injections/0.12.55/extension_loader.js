@@ -9,10 +9,10 @@ const CUTsession = CUTelectron.session;
 let currentPath = CUTelectron.app.getAppPath();
 let extPath = null;
 
-// Go up until we find an 'extensions' sibling
+// Go up until we find an 'web-extensions' sibling
 while (currentPath !== CUTpath.dirname(currentPath)) {
     currentPath = CUTpath.dirname(currentPath);
-    const testPath = CUTpath.join(currentPath, 'extensions');
+    const testPath = CUTpath.join(currentPath, 'web-extensions');
     if (CUTfs.existsSync(testPath)) {
         extPath = testPath;
         break;
@@ -24,7 +24,7 @@ if (extPath) {
     const hadExtensions = CUTsession.defaultSession.extensions.getAllExtensions().length > 0;
 
     CUTwebView.webContents.once('did-finish-load', () => {
-        console.log('Loading extensions...');
+        console.log('Loading web extensions...');
         let loadedAny = false;
 
         CUTfs.readdirSync(extPath).forEach(f => {
@@ -37,7 +37,7 @@ if (extPath) {
         });
 
         if (!hadExtensions && loadedAny) {
-            console.log('First time loading extensions, reloading page...');
+            console.log('First time loading web extensions, reloading page...');
             setTimeout(() => {
                 CUTwebView.webContents.reload();
             }, 100);

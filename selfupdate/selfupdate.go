@@ -2,6 +2,7 @@ package selfupdate
 
 import (
 	"archive/zip"
+	"claude-webext-patcher/utils"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,7 +17,7 @@ import (
 )
 
 func currentVersion() string {
-	data, err := os.ReadFile("version.txt")
+	data, err := os.ReadFile(utils.ResolvePath("version.txt"))
 	if err != nil {
 		return "0.0.0" // If no version file, assume ancient
 	}
@@ -30,8 +31,6 @@ func getPlatformSuffix() string {
 		return "-windows"
 	case "darwin":
 		return "-macos"
-	case "linux":
-		return "-linux"
 	default:
 		return "-" + runtime.GOOS
 	}
@@ -188,7 +187,7 @@ func CheckAndUpdate() error {
 
 	// Download to temp
 	fmt.Println("Downloading update...")
-	tempZip := "update-temp.zip"
+	tempZip := utils.ResolvePath("update-temp.zip")
 	resp, err = http.Get(downloadURL)
 	if err != nil {
 		return fmt.Errorf("failed to download update: %v", err)
@@ -208,7 +207,7 @@ func CheckAndUpdate() error {
 
 	// Extract to temp dir
 	fmt.Println("Extracting update...")
-	tempDir := "update-temp"
+	tempDir := utils.ResolvePath("update-temp")
 	os.RemoveAll(tempDir)
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		os.Remove(tempZip)
@@ -244,8 +243,8 @@ func CheckAndUpdate() error {
 	fmt.Println("Installing update...")
 
 	// Replace resources folder
-	os.RemoveAll("resources")
-	if err := os.Rename(filepath.Join(tempDir, "resources"), "resources"); err != nil {
+	os.RemoveAll(utils.ResolvePath("resources"))
+	if err := os.Rename(filepath.Join(tempDir, "resources"), utils.ResolvePath("resources")); err != nil {
 		// Resources folder might not exist in all releases
 		fmt.Printf("Note: No resources folder in update\n")
 	}
@@ -253,7 +252,7 @@ func CheckAndUpdate() error {
 	// Update version.txt
 	versionData, err := os.ReadFile(filepath.Join(tempDir, "version.txt"))
 	if err == nil {
-		os.WriteFile("version.txt", versionData, 0644)
+		os.WriteFile(utils.ResolvePath("version.txt"), versionData, 0644)
 	}
 
 	// Copy new executable with platform-specific naming
@@ -262,9 +261,9 @@ func CheckAndUpdate() error {
 
 	var newExeName string
 	if runtime.GOOS == "windows" {
-		newExeName = strings.TrimSuffix(filepath.Base(exePath), ".exe") + ".new.exe"
+		newExeName = utils.ResolvePath(strings.TrimSuffix(filepath.Base(exePath), ".exe") + ".new.exe")
 	} else {
-		newExeName = filepath.Base(exePath) + ".new"
+		newExeName = utils.ResolvePath(filepath.Base(exePath) + ".new")
 	}
 
 	// Look for the executable in the temp dir
@@ -290,7 +289,7 @@ func CheckAndUpdate() error {
 	fmt.Println("Restarting to complete update...")
 
 	// Launch the new exe
-	cmd := exec.Command("./" + newExeName)
+	cmd := exec.Command(newExeName)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start updated executable: %v", err)
 	}

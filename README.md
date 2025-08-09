@@ -2,6 +2,8 @@
 
 A custom installer for Claude Desktop that includes built-in extensions (and the ability to install your own).
 
+**Note**: The extensions in question are _Web_ extensions! Not to be confused with Local MCPs, which the client also calls Extensions and come in the dxt format.
+
 **Disclaimer**: This is an unofficial, third-party modification of Claude Desktop that enables extension support. By using this installer, you acknowledge that:
 - You are doing so at your own risk and discretion
 - This project is neither affiliated with nor endorsed by Anthropic

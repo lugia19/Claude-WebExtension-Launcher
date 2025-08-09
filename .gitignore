@@ -3,3 +3,5 @@
 !/.git/
 .idea
 /Tests/
+/Claude-WebExt-Launcher.exe
+/builds/

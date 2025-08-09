@@ -3,6 +3,7 @@ package patcher
 import (
 	"archive/zip"
 	"bytes"
+	"claude-webext-patcher/utils"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,9 +17,11 @@ import (
 
 const (
 	releasesURL    = "https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest-win-x64/RELEASES"
-	AppFolder      = "app-latest"
+	appFolderName  = "app-latest"
 	KeepNupkgFiles = false
 )
+
+var AppFolder = utils.ResolvePath(appFolderName)
 
 type Patch struct {
 	File string
@@ -36,7 +39,7 @@ var supportedVersions = map[string][]Patch{
 
 // Patch functions
 func readInjection(version, filename string) (string, error) {
-	injectionPath := filepath.Join("resources", "injections", version, filename)
+	injectionPath := utils.ResolvePath(filepath.Join("resources", "injections", version, filename))
 	content, err := os.ReadFile(injectionPath)
 	if err != nil {
 		return "", fmt.Errorf("could not load injection %s for version %s: %v", filename, version, err)
@@ -124,7 +127,7 @@ func ensureTools() error {
 	fmt.Printf("Found Node.js %s\n", versionStr)
 
 	// Set tool paths
-	nodeModulesPath := filepath.Join(".", "node_modules", ".bin")
+	nodeModulesPath := utils.ResolvePath(filepath.Join("node_modules", ".bin"))
 	asarCmd = filepath.Join(nodeModulesPath, "asar")
 	jsBeautifyCmd = filepath.Join(nodeModulesPath, "js-beautify")
 
@@ -207,7 +210,8 @@ func EnsurePatched() error {
 
 		// Check if file already exists when KeepNupkgFiles is enabled
 		fileExists := false
-		if _, err := os.Stat(filename); err == nil {
+		fullPath := utils.ResolvePath(filename)
+		if _, err := os.Stat(fullPath); err == nil {
 			fileExists = true
 		}
 
@@ -225,9 +229,9 @@ func EnsurePatched() error {
 			defer resp.Body.Close()
 
 			// Use temp file if we're not keeping the nupkg
-			targetFile := filename
+			targetFile := utils.ResolvePath(filename)
 			if !KeepNupkgFiles {
-				targetFile = filename + ".tmp"
+				targetFile = utils.ResolvePath(filename + ".tmp")
 			}
 
 			outFile, err := os.Create(targetFile)
@@ -252,7 +256,11 @@ func EnsurePatched() error {
 		os.RemoveAll(AppFolder)
 		os.MkdirAll(AppFolder, 0755)
 
-		zipReader, err := zip.OpenReader(filename)
+		filePath := filename
+		if !KeepNupkgFiles {
+			filePath = filename + ".tmp"
+		}
+		zipReader, err := zip.OpenReader(utils.ResolvePath(filePath))
 		if err != nil {
 			return fmt.Errorf("opening nupkg: %v", err)
 		}
@@ -288,7 +296,7 @@ func EnsurePatched() error {
 
 		// Delete the nupkg file only if KeepNupkgFiles is false
 		if !KeepNupkgFiles {
-			os.Remove(filename)
+			os.Remove(utils.ResolvePath(filePath))
 			fmt.Println("Removed temporary nupkg file")
 		} else {
 			fmt.Printf("Keeping nupkg file: %s\n", filename)
@@ -319,7 +327,7 @@ func applyPatches(version string) error {
 	}
 
 	asarPath := filepath.Join(AppFolder, "resources", "app.asar")
-	tempDir := "asar-temp"
+	tempDir := utils.ResolvePath("asar-temp")
 
 	// Unpack asar
 	fmt.Println("Unpacking asar...")
@@ -400,7 +408,7 @@ func applyPatches(version string) error {
 }
 
 func replaceIcons() error {
-	iconDir := filepath.Join("resources", "icons")
+	iconDir := utils.ResolvePath(filepath.Join("resources", "icons"))
 	if _, err := os.Stat(iconDir); os.IsNotExist(err) {
 		return fmt.Errorf("icons folder not found")
 	}
@@ -410,7 +418,7 @@ func replaceIcons() error {
 	// OS-specific exe icon replacement
 	switch runtime.GOOS {
 	case "windows":
-		rceditPath := filepath.Join("resources", "rcedit.exe")
+		rceditPath := utils.ResolvePath(filepath.Join("resources", "rcedit.exe"))
 		icoPath := filepath.Join(iconDir, "app.ico")
 		exePath := filepath.Join(AppFolder, "claude.exe")
 
@@ -421,9 +429,6 @@ func replaceIcons() error {
 	case "darwin":
 		// macOS: Would need to replace .icns in the .app bundle
 		// TODO when adding macOS support
-	case "linux":
-		// Linux: Icons are typically just .desktop files
-		// TODO when adding Linux support
 	}
 
 	// Copy PNG icons (works for all platforms)
