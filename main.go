@@ -12,6 +12,18 @@ import (
 )
 
 func main() {
+	// On macOS, if not running in terminal, relaunch in Terminal.app
+	if runtime.GOOS == "darwin" && os.Getenv("TERM") == "" {
+		executable, _ := os.Executable()
+		script := fmt.Sprintf(`tell application "Terminal"
+			do script "%s"
+			activate
+		end tell`, executable)
+		cmd := exec.Command("osascript", "-e", script)
+		cmd.Start()
+		os.Exit(0)
+	}
+
 	// Handle update completion first
 	selfupdate.FinishUpdateIfNeeded()
 
