@@ -18,21 +18,21 @@ import (
 const (
 	releasesURL    = "https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest-win-x64/RELEASES"
 	appFolderName  = "app-latest"
-	KeepNupkgFiles = false
+	KeepNupkgFiles = true
 )
 
 var AppFolder = utils.ResolvePath(appFolderName)
 
 type Patch struct {
-	File string
-	Func func(content []byte) []byte
+	Files []string
+	Func  func(content []byte) []byte
 }
 
 var supportedVersions = map[string][]Patch{
 	"0.12.55": {
 		{
-			File: ".vite/build/index-BZRfNpEg.js",
-			Func: patch_0_12_55,
+			Files: []string{".vite/build/index-BZRfNpEg.js", ".vite/build/index-DyHP6ri_.js"},
+			Func:  patch_0_12_55,
 		},
 	},
 }
@@ -338,42 +338,60 @@ func applyPatches(version string) error {
 	defer os.RemoveAll(tempDir)
 
 	// Apply patches
-	for _, patch := range patches {
-		filePath := filepath.Join(tempDir, patch.File)
-		content, err := os.ReadFile(filePath)
-		if err != nil {
-			return fmt.Errorf("reading %s: %v", patch.File, err)
-		}
+	for i, patch := range patches {
+		fmt.Printf("Applying patch %d/%d...\n", i+1, len(patches))
 
-		if strings.HasSuffix(patch.File, ".js") {
-			// Check if already beautified
-			if !bytes.Contains(content, []byte("/* CLAUDE-MANAGER-BEAUTIFIED */")) {
-				// Beautify the file
-				cmd := exec.Command(jsBeautifyCmd, filePath, "-o", filePath)
-				if err := cmd.Run(); err != nil {
-					fmt.Printf("Warning: Could not beautify %s: %v\n", patch.File, err)
-				} else {
-					// Add marker comment
-					beautifiedContent, _ := os.ReadFile(filePath)
-					markedContent := append([]byte("/* CLAUDE-MANAGER-BEAUTIFIED */\n"), beautifiedContent...)
-					os.WriteFile(filePath, markedContent, 0644)
+		// Try each file for this patch until one exists and successfully applies
+		patchApplied := false
+		for _, file := range patch.Files {
+			filePath := filepath.Join(tempDir, file)
+			content, err := os.ReadFile(filePath)
+			if err != nil {
+				fmt.Printf("Skipping %s: %v\n", file, err)
+				continue // Try next file
+			}
 
-					// Re-read for patching
-					content = markedContent
+			fmt.Printf("Found file: %s\n", file)
+
+			if strings.HasSuffix(file, ".js") {
+				// Check if already beautified
+				if !bytes.Contains(content, []byte("/* CLAUDE-MANAGER-BEAUTIFIED */")) {
+					// Beautify the file
+					cmd := exec.Command(jsBeautifyCmd, filePath, "-o", filePath)
+					if err := cmd.Run(); err != nil {
+						fmt.Printf("Warning: Could not beautify %s: %v\n", file, err)
+					} else {
+						// Add marker comment
+						beautifiedContent, _ := os.ReadFile(filePath)
+						markedContent := append([]byte("/* CLAUDE-MANAGER-BEAUTIFIED */\n"), beautifiedContent...)
+						os.WriteFile(filePath, markedContent, 0644)
+
+						// Re-read for patching
+						content = markedContent
+					}
 				}
 			}
+
+			// Print first 100 chars for debugging
+			debugLen := len(content)
+			if debugLen > 100 {
+				debugLen = 100
+			}
+			fmt.Printf("Patching %s (first %d chars): %s...\n", file, debugLen, string(content[:debugLen]))
+
+			newContent := patch.Func(content)
+			if err := os.WriteFile(filePath, newContent, 0644); err != nil {
+				fmt.Printf("Failed to write %s: %v\n", file, err)
+				continue // Try next file
+			}
+
+			fmt.Printf("Successfully applied patch to %s\n", file)
+			patchApplied = true
+			break // Move to next patch
 		}
 
-		// Print first 100 chars for debugging
-		debugLen := len(content)
-		if debugLen > 100 {
-			debugLen = 100
-		}
-		fmt.Printf("Patching %s (first %d chars): %s...\n", patch.File, debugLen, string(content[:debugLen]))
-
-		newContent := patch.Func(content)
-		if err := os.WriteFile(filePath, newContent, 0644); err != nil {
-			return fmt.Errorf("writing %s: %v", patch.File, err)
+		if !patchApplied {
+			return fmt.Errorf("patch %d failed: none of the target files could be patched", i+1)
 		}
 	}
 
