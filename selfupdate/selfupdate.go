@@ -239,8 +239,20 @@ func CheckAndUpdate() error {
 		// Then use filepath.Join which will use the correct separator for the OS
 		path := filepath.Join(tempDir, filepath.FromSlash(normalizedName))
 
-		if f.FileInfo().IsDir() {
+		//fmt.Printf("Processing: %s -> %s (IsDir: %v, Size: %d)\n", f.Name, path, f.FileInfo().IsDir(), f.UncompressedSize64)
+
+		// Treat as directory if IsDir() returns true OR if it's a zero-byte entry ending with slash/backslash
+		isDirectory := f.FileInfo().IsDir() || (f.UncompressedSize64 == 0 && (strings.HasSuffix(normalizedName, "/") || strings.HasSuffix(f.Name, "\\")))
+
+		if isDirectory {
+			fmt.Printf("Creating directory: %s\n", path)
 			os.MkdirAll(path, f.Mode())
+			continue
+		}
+
+		// Skip if path already exists as a directory (created by earlier MkdirAll)
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
+			fmt.Printf("Skipping %s - already exists as directory\n", path)
 			continue
 		}
 
@@ -265,8 +277,8 @@ func CheckAndUpdate() error {
 		// On macOS, extract from the .app bundle structure
 		appName := "Claude_WebExtension_Launcher.app"
 
-		// Extract resources from the app bundle
-		bundleResourcesPath := filepath.Join(tempDir, appName, "Contents", "Resources")
+		// Extract resources from the app bundle (they're next to the executable in MacOS/)
+		bundleResourcesPath := filepath.Join(tempDir, appName, "Contents", "MacOS")
 		if info, err := os.Stat(bundleResourcesPath); err == nil && info.IsDir() {
 			// Copy resources folder if it exists
 			resourcesSrc := filepath.Join(bundleResourcesPath, "resources")
