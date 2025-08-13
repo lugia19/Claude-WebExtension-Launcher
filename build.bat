@@ -2,6 +2,10 @@
 set APP_NAME=Claude_WebExtension_Launcher
 set PACKAGE_NAME=com.lugia19.claudewebextlauncher
 
+:: Read version from version.txt
+set /p VERSION=<version.txt
+echo Building version: %VERSION%
+
 :: Create builds directory if it doesn't exist
 if not exist ".\builds" mkdir ".\builds"
 
@@ -23,8 +27,8 @@ if exist .\builds\%APP_NAME%.exe (
 
     :: Create Windows zip with exe, resources, and version.txt
     echo Creating Windows distribution zip...
-    powershell Compress-Archive -Path '.\builds\%APP_NAME%.exe','.\builds\resources','.\builds\version.txt' -DestinationPath '.\builds\%APP_NAME%-windows.zip' -Force
-    echo Created: builds\%APP_NAME%-windows.zip
+    powershell Compress-Archive -Path '.\builds\%APP_NAME%.exe','.\builds\resources','.\builds\version.txt' -DestinationPath '.\builds\%APP_NAME%-%VERSION%-windows.zip' -Force
+    echo Created: builds\%APP_NAME%-%VERSION%-windows.zip
 
     :: Clean up loose files (keep them in the zip)
     del .\builds\%APP_NAME%.exe
@@ -38,8 +42,8 @@ echo.
 echo Building for macOS...
 set GOOS=darwin
 set GOARCH=amd64
-go build -o .\%APP_NAME%-macos
-if not exist .\%APP_NAME%-macos (
+go build -o .\%APP_NAME%-mac
+if not exist .\%APP_NAME%-mac (
     echo macOS build failed! Make sure Go can cross-compile to Darwin.
     echo Skipping macOS packaging...
     goto :cleanup
@@ -57,7 +61,7 @@ mkdir ".\builds\%APP_NAME%.app\Contents\MacOS" 2>nul
 mkdir ".\builds\%APP_NAME%.app\Contents\Resources" 2>nul
 
 :: Copy binary
-move .\%APP_NAME%-macos ".\builds\%APP_NAME%.app\Contents\MacOS\%APP_NAME%"
+move .\%APP_NAME%-mac ".\builds\%APP_NAME%.app\Contents\MacOS\%APP_NAME%"
 
 :: Copy resources folder next to the macOS executable
 echo Copying resources folder to app bundle...
@@ -83,6 +87,10 @@ copy ".\version.txt" ".\builds\%APP_NAME%.app\Contents\MacOS\version.txt" >nul
     echo     ^<string^>%APP_NAME%^</string^>
     echo     ^<key^>CFBundlePackageType^</key^>
     echo     ^<string^>APPL^</string^>
+    echo     ^<key^>CFBundleVersion^</key^>
+    echo     ^<string^>%VERSION%^</string^>
+    echo     ^<key^>CFBundleShortVersionString^</key^>
+    echo     ^<string^>%VERSION%^</string^>
     echo     ^<key^>LSMinimumSystemVersion^</key^>
     echo     ^<string^>10.12^</string^>
     echo ^</dict^>
@@ -101,8 +109,8 @@ echo macOS build complete: builds\%APP_NAME%.app
 
 :: Zip it up for distribution
 echo Creating macOS distribution zip...
-powershell Compress-Archive -Path '.\builds\%APP_NAME%.app' -DestinationPath '.\builds\%APP_NAME%-macos.zip' -Force
-echo Created: builds\%APP_NAME%-macos.zip
+powershell Compress-Archive -Path '.\builds\%APP_NAME%.app' -DestinationPath '.\builds\%APP_NAME%-%VERSION%-macos.zip' -Force
+echo Created: builds\%APP_NAME%-%VERSION%-macos.zip
 
 :: Clean up the .app folder after zipping
 rd /s /q ".\builds\%APP_NAME%.app"
@@ -110,6 +118,5 @@ rd /s /q ".\builds\%APP_NAME%.app"
 :cleanup
 echo.
 echo Builds complete!
-if exist .\builds\%APP_NAME%-windows.zip echo - Windows: builds\%APP_NAME%-windows.zip
-if exist .\builds\%APP_NAME%-macos.zip echo - macOS: builds\%APP_NAME%-macos.zip
-echo - Directory: builds\%APP_NAME%\
+if exist .\builds\%APP_NAME%-%VERSION%-windows.zip echo - Windows: builds\%APP_NAME%-%VERSION%-windows.zip
+if exist .\builds\%APP_NAME%-%VERSION%-macos.zip echo - macOS: builds\%APP_NAME%-%VERSION%-macos.zip

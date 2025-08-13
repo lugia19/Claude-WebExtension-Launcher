@@ -71,8 +71,8 @@ func FinishUpdateIfNeeded() {
 			os.Exit(1)
 		}
 
-		// Launch the original
-		cmd := exec.Command(originalExe)
+		// Launch the original in new console window
+		cmd := exec.Command("cmd", "/c", "start", originalExe)
 		cmd.Start()
 
 		os.Exit(0)
