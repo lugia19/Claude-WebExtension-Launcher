@@ -38,7 +38,7 @@ func getPlatformSuffix() string {
 
 // getExecutableName returns the expected executable name for the current platform
 func getExecutableName() string {
-	execName := "claude-webext-patcher"
+	execName := "Claude_WebExtension_Launcher"
 	if runtime.GOOS == "windows" {
 		execName += ".exe"
 	}
@@ -244,21 +244,64 @@ func CheckAndUpdate() error {
 
 	// Replace resources folder
 	os.RemoveAll(utils.ResolvePath("resources"))
-	if err := os.Rename(filepath.Join(tempDir, "resources"), utils.ResolvePath("resources")); err != nil {
-		// Resources folder might not exist in all releases
-		fmt.Printf("Note: No resources folder in update\n")
+
+	// Platform-specific extraction
+	var newExeData []byte
+	if runtime.GOOS == "darwin" {
+		// On macOS, extract from the .app bundle structure
+		appName := "Claude_WebExtension_Launcher.app"
+
+		// Extract resources from the app bundle
+		bundleResourcesPath := filepath.Join(tempDir, appName, "Contents", "Resources")
+		if info, err := os.Stat(bundleResourcesPath); err == nil && info.IsDir() {
+			// Copy resources folder if it exists
+			resourcesSrc := filepath.Join(bundleResourcesPath, "resources")
+			if _, err := os.Stat(resourcesSrc); err == nil {
+				if err := os.Rename(resourcesSrc, utils.ResolvePath("resources")); err != nil {
+					fmt.Printf("Note: Could not update resources folder: %v\n", err)
+				}
+			}
+		}
+
+		// Extract the actual executable from the app bundle
+		bundleExePath := filepath.Join(tempDir, appName, "Contents", "MacOS", "Claude_WebExtension_Launcher")
+		newExeData, err = os.ReadFile(bundleExePath)
+		if err != nil {
+			os.Remove(tempZip)
+			os.RemoveAll(tempDir)
+			return fmt.Errorf("failed to find executable in app bundle: %v", err)
+		}
+
+		// Also extract version.txt if it's in Resources
+		versionPath := filepath.Join(bundleResourcesPath, "version.txt")
+		if versionData, err := os.ReadFile(versionPath); err == nil {
+			os.WriteFile(utils.ResolvePath("version.txt"), versionData, 0644)
+		}
+
+	} else {
+		// Windows - flat structure
+		if err := os.Rename(filepath.Join(tempDir, "resources"), utils.ResolvePath("resources")); err != nil {
+			fmt.Printf("Note: No resources folder in update\n")
+		}
+
+		// Update version.txt
+		versionData, err := os.ReadFile(filepath.Join(tempDir, "version.txt"))
+		if err == nil {
+			os.WriteFile(utils.ResolvePath("version.txt"), versionData, 0644)
+		}
+
+		// Look for the executable in the temp dir
+		executableName := getExecutableName() // This returns claude-webext-patcher.exe on Windows
+		newExeData, err = os.ReadFile(filepath.Join(tempDir, executableName))
+		if err != nil {
+			os.Remove(tempZip)
+			os.RemoveAll(tempDir)
+			return fmt.Errorf("failed to find executable in update: %v", err)
+		}
 	}
 
-	// Update version.txt
-	versionData, err := os.ReadFile(filepath.Join(tempDir, "version.txt"))
-	if err == nil {
-		os.WriteFile(utils.ResolvePath("version.txt"), versionData, 0644)
-	}
-
-	// Copy new executable with platform-specific naming
+	// Now write the new executable with platform-specific naming
 	exePath, _ := os.Executable()
-	executableName := getExecutableName()
-
 	var newExeName string
 	if runtime.GOOS == "windows" {
 		newExeName = utils.ResolvePath(strings.TrimSuffix(filepath.Base(exePath), ".exe") + ".new.exe")
@@ -266,17 +309,7 @@ func CheckAndUpdate() error {
 		newExeName = utils.ResolvePath(filepath.Base(exePath) + ".new")
 	}
 
-	// Look for the executable in the temp dir
-	newExeData, err := os.ReadFile(filepath.Join(tempDir, executableName))
-	if err != nil {
-		// Clean up before returning error
-		os.Remove(tempZip)
-		os.RemoveAll(tempDir)
-		return fmt.Errorf("failed to find executable in update: %v", err)
-	}
-
 	if err := os.WriteFile(newExeName, newExeData, 0755); err != nil {
-		// Clean up before returning error
 		os.Remove(tempZip)
 		os.RemoveAll(tempDir)
 		return fmt.Errorf("failed to write new executable: %v", err)
