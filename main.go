@@ -17,9 +17,9 @@ func main() {
 		executable, _ := os.Executable()
 		execDir := filepath.Dir(executable)
 
-		// Change to the executable's directory before running
+		// Change to the executable's directory, run, then exit terminal
 		script := fmt.Sprintf(`tell application "Terminal"
-			do script "cd '%s' && '%s'"
+			set newTab to do script "cd '%s' && '%s' && exit"
 			activate
 		end tell`, execDir, executable)
 
@@ -52,13 +52,28 @@ func main() {
 	}
 
 	//Clear service worker cache
-	serviceWorkerPath := filepath.Join(os.Getenv("APPDATA"), "Claude", "Service Worker")
-	webStoragePath := filepath.Join(os.Getenv("APPDATA"), "Claude", "WebStorage")
+	var serviceWorkerPath, webStoragePath string
 
-	os.RemoveAll(serviceWorkerPath)
-	os.RemoveAll(webStoragePath)
+	switch runtime.GOOS {
+	case "windows":
+		serviceWorkerPath = filepath.Join(os.Getenv("APPDATA"), "Claude", "Service Worker")
+		webStoragePath = filepath.Join(os.Getenv("APPDATA"), "Claude", "WebStorage")
+	case "darwin":
+		home, _ := os.UserHomeDir()
+		appSupport := filepath.Join(home, "Library", "Application Support", "Claude")
+		serviceWorkerPath = filepath.Join(appSupport, "Service Worker")
+		webStoragePath = filepath.Join(appSupport, "WebStorage")
+	}
 
-	fmt.Println("Cleared cache folders")
+	if serviceWorkerPath != "" {
+		fmt.Printf("Clearing cache folders:\n")
+		fmt.Printf("  Service Worker: %s\n", serviceWorkerPath)
+		fmt.Printf("  Web Storage: %s\n", webStoragePath)
+
+		os.RemoveAll(serviceWorkerPath)
+		os.RemoveAll(webStoragePath)
+		fmt.Println("Cache cleared successfully")
+	}
 
 	// Launch Claude
 	fmt.Println("Launching Claude.")
