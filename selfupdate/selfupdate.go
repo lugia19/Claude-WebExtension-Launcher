@@ -100,9 +100,20 @@ func FinishUpdateIfNeeded() {
 			os.Exit(1)
 		}
 
-		// Launch the original
-		cmd := exec.Command(originalExe)
-		cmd.Start()
+		// Launch the original - on macOS, make sure it's in Terminal
+		if runtime.GOOS == "darwin" {
+			execDir := filepath.Dir(originalExe)
+			script := fmt.Sprintf(`tell application "Terminal"
+				do script "cd '%s' && '%s' && exit"
+				activate
+			end tell`, execDir, originalExe)
+
+			cmd := exec.Command("osascript", "-e", script)
+			cmd.Start()
+		} else {
+			cmd := exec.Command(originalExe)
+			cmd.Start()
+		}
 
 		os.Exit(0)
 	}
@@ -223,7 +234,10 @@ func CheckAndUpdate() error {
 	}
 
 	for _, f := range zipReader.File {
-		path := filepath.Join(tempDir, f.Name)
+		// Normalize path separators - replace backslashes with forward slashes
+		normalizedName := strings.ReplaceAll(f.Name, "\\", "/")
+		// Then use filepath.Join which will use the correct separator for the OS
+		path := filepath.Join(tempDir, filepath.FromSlash(normalizedName))
 
 		if f.FileInfo().IsDir() {
 			os.MkdirAll(path, f.Mode())
@@ -272,10 +286,12 @@ func CheckAndUpdate() error {
 			return fmt.Errorf("failed to find executable in app bundle: %v", err)
 		}
 
-		// Also extract version.txt if it's in Resources
-		versionPath := filepath.Join(bundleResourcesPath, "version.txt")
+		// Look for version.txt next to the executable in the app bundle
+		versionPath := filepath.Join(tempDir, appName, "Contents", "MacOS", "version.txt")
 		if versionData, err := os.ReadFile(versionPath); err == nil {
 			os.WriteFile(utils.ResolvePath("version.txt"), versionData, 0644)
+		} else {
+			fmt.Printf("Note: No version.txt found in update\n")
 		}
 
 	} else {
@@ -326,7 +342,6 @@ func CheckAndUpdate() error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start updated executable: %v", err)
 	}
-
 	// Exit to let it take over
 	os.Exit(0)
 

@@ -17,13 +17,18 @@ if exist .\builds\%APP_NAME%.exe (
     echo Copying resources folder...
     xcopy /E /I /Y ".\resources" ".\builds\resources" >nul
 
-    :: Create Windows zip with exe and resources
+    :: Copy version.txt next to exe
+    echo Copying version.txt...
+    copy ".\version.txt" ".\builds\version.txt" >nul
+
+    :: Create Windows zip with exe, resources, and version.txt
     echo Creating Windows distribution zip...
-    powershell Compress-Archive -Path '.\builds\%APP_NAME%.exe','.\builds\resources' -DestinationPath '.\builds\%APP_NAME%-windows.zip' -Force
+    powershell Compress-Archive -Path '.\builds\%APP_NAME%.exe','.\builds\resources','.\builds\version.txt' -DestinationPath '.\builds\%APP_NAME%-windows.zip' -Force
     echo Created: builds\%APP_NAME%-windows.zip
 
     :: Clean up loose files (keep them in the zip)
     del .\builds\%APP_NAME%.exe
+    del .\builds\version.txt
     rd /s /q .\builds\resources
 ) else (
     echo Windows build failed!
@@ -33,8 +38,8 @@ echo.
 echo Building for macOS...
 set GOOS=darwin
 set GOARCH=amd64
-go build -o .\%APP_NAME%-mac
-if not exist .\%APP_NAME%-mac (
+go build -o .\%APP_NAME%-macos
+if not exist .\%APP_NAME%-macos (
     echo macOS build failed! Make sure Go can cross-compile to Darwin.
     echo Skipping macOS packaging...
     goto :cleanup
@@ -52,11 +57,15 @@ mkdir ".\builds\%APP_NAME%.app\Contents\MacOS" 2>nul
 mkdir ".\builds\%APP_NAME%.app\Contents\Resources" 2>nul
 
 :: Copy binary
-move .\%APP_NAME%-mac ".\builds\%APP_NAME%.app\Contents\MacOS\%APP_NAME%"
+move .\%APP_NAME%-macos ".\builds\%APP_NAME%.app\Contents\MacOS\%APP_NAME%"
 
 :: Copy resources folder next to the macOS executable
 echo Copying resources folder to app bundle...
 xcopy /E /I /Y ".\resources" ".\builds\%APP_NAME%.app\Contents\MacOS\resources" >nul
+
+:: Copy version.txt next to the macOS executable
+echo Copying version.txt to app bundle...
+copy ".\version.txt" ".\builds\%APP_NAME%.app\Contents\MacOS\version.txt" >nul
 
 :: Create Info.plist
 (
@@ -92,8 +101,8 @@ echo macOS build complete: builds\%APP_NAME%.app
 
 :: Zip it up for distribution
 echo Creating macOS distribution zip...
-powershell Compress-Archive -Path '.\builds\%APP_NAME%.app' -DestinationPath '.\builds\%APP_NAME%-mac.zip' -Force
-echo Created: builds\%APP_NAME%-mac.zip
+powershell Compress-Archive -Path '.\builds\%APP_NAME%.app' -DestinationPath '.\builds\%APP_NAME%-macos.zip' -Force
+echo Created: builds\%APP_NAME%-macos.zip
 
 :: Clean up the .app folder after zipping
 rd /s /q ".\builds\%APP_NAME%.app"
@@ -102,5 +111,5 @@ rd /s /q ".\builds\%APP_NAME%.app"
 echo.
 echo Builds complete!
 if exist .\builds\%APP_NAME%-windows.zip echo - Windows: builds\%APP_NAME%-windows.zip
-if exist .\builds\%APP_NAME%-mac.zip echo - macOS: builds\%APP_NAME%-mac.zip
+if exist .\builds\%APP_NAME%-macos.zip echo - macOS: builds\%APP_NAME%-macos.zip
 echo - Directory: builds\%APP_NAME%\

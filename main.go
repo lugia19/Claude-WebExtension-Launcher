@@ -12,6 +12,9 @@ import (
 )
 
 func main() {
+	// Handle update completion first
+	selfupdate.FinishUpdateIfNeeded()
+
 	// On macOS, if not running in terminal, relaunch in Terminal.app
 	if runtime.GOOS == "darwin" && os.Getenv("TERM") == "" {
 		executable, _ := os.Executable()
@@ -27,9 +30,6 @@ func main() {
 		cmd.Start()
 		os.Exit(0)
 	}
-
-	// Handle update completion first
-	selfupdate.FinishUpdateIfNeeded()
 
 	fmt.Println("Claude Manager starting...")
 
