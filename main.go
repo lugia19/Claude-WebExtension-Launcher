@@ -15,10 +15,14 @@ func main() {
 	// On macOS, if not running in terminal, relaunch in Terminal.app
 	if runtime.GOOS == "darwin" && os.Getenv("TERM") == "" {
 		executable, _ := os.Executable()
+		execDir := filepath.Dir(executable)
+
+		// Change to the executable's directory before running
 		script := fmt.Sprintf(`tell application "Terminal"
-			do script "%s"
+			do script "cd '%s' && '%s'"
 			activate
-		end tell`, executable)
+		end tell`, execDir, executable)
+
 		cmd := exec.Command("osascript", "-e", script)
 		cmd.Start()
 		os.Exit(0)

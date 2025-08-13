@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"claude-webext-patcher/utils"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,12 +17,21 @@ import (
 )
 
 const (
-	releasesURL    = "https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest-win-x64/RELEASES"
-	appFolderName  = "app-latest"
-	KeepNupkgFiles = true
+	windowsReleasesURL = "https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest-win-x64/RELEASES"
+	macosReleasesURL   = "https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest/update_manifest.json"
+	appFolderName      = "app-latest"
+	KeepNupkgFiles     = false
 )
 
-var AppFolder = utils.ResolvePath(appFolderName)
+type MacOSManifest struct {
+	CurrentRelease string `json:"currentRelease"`
+	Releases       []struct {
+		Version  string `json:"version"`
+		UpdateTo struct {
+			URL string `json:"url"`
+		} `json:"updateTo"`
+	} `json:"releases"`
+}
 
 type Patch struct {
 	Files []string
@@ -35,6 +45,22 @@ var supportedVersions = map[string][]Patch{
 			Func:  patch_0_12_55,
 		},
 	},
+}
+
+var (
+	AppFolder       = utils.ResolvePath(appFolderName)
+	appResourcesDir string
+	appExePath      string
+)
+
+func init() {
+	if runtime.GOOS == "darwin" {
+		appResourcesDir = filepath.Join(AppFolder, "Claude.app", "Contents", "Resources")
+		appExePath = filepath.Join(AppFolder, "Claude.app", "Contents", "MacOS", "Claude")
+	} else {
+		appResourcesDir = filepath.Join(AppFolder, "resources")
+		appExePath = filepath.Join(AppFolder, "claude.exe")
+	}
 }
 
 // Patch functions
@@ -146,11 +172,233 @@ func ensureTools() error {
 			asarPackage = "@electron/asar"
 		}
 
-		cmd := exec.Command("npm", "install", "--no-save", asarPackage, "js-beautify")
+		installDir := utils.ResolvePath(".")
+		cmd := exec.Command("npm", "install", "--prefix", installDir, "--no-save", asarPackage, "js-beautify")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to install tools: %v", err)
+		}
+	}
+
+	return nil
+}
+
+func getLatestSupportedVersion() (string, string, error) {
+	// Get supported supportedVersionsList sorted newest first
+	supportedVersionsList := make([]string, 0, len(supportedVersions))
+	for v := range supportedVersions {
+		supportedVersionsList = append(supportedVersionsList, v)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(supportedVersionsList)))
+
+	if runtime.GOOS == "darwin" {
+		// Parse macOS manifest
+		resp, err := http.Get(macosReleasesURL)
+		if err != nil {
+			return "", "", fmt.Errorf("fetching macOS manifest: %v", err)
+		}
+		defer resp.Body.Close()
+
+		var manifest MacOSManifest
+		if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+			return "", "", fmt.Errorf("parsing macOS manifest: %v", err)
+		}
+
+		// Build a map of available supportedVersionsList to their URLs
+		availableVersions := make(map[string]string)
+		for _, release := range manifest.Releases {
+			availableVersions[release.Version] = release.UpdateTo.URL
+		}
+
+		// Find newest supported version that's available
+		for _, version := range supportedVersionsList {
+			if url, exists := availableVersions[version]; exists {
+				return version, url, nil
+			}
+		}
+		return "", "", fmt.Errorf("no supported supportedVersionsList available in macOS manifest")
+	} else {
+		// Windows - use existing RELEASES logic
+		resp, err := http.Get(windowsReleasesURL)
+		if err != nil {
+			return "", "", fmt.Errorf("fetching Windows releases: %v", err)
+		}
+		defer resp.Body.Close()
+
+		releasesText, _ := io.ReadAll(resp.Body)
+
+		// Find newest supported version
+		for _, version := range supportedVersionsList {
+			filename := fmt.Sprintf("AnthropicClaude-%s-full.nupkg", version)
+			if strings.Contains(string(releasesText), filename) {
+				downloadURL := strings.Replace(windowsReleasesURL, "RELEASES", filename, 1)
+				return version, downloadURL, nil
+			}
+		}
+		return "", "", fmt.Errorf("no supported supportedVersionsList available in Windows releases")
+	}
+}
+
+func downloadAndExtract(version, downloadURL string) error {
+	var filename string
+	if runtime.GOOS == "darwin" {
+		filename = fmt.Sprintf("Claude-%s.zip", version)
+	} else {
+		filename = fmt.Sprintf("AnthropicClaude-%s-full.nupkg", version)
+	}
+
+	// Check if file already exists when KeepNupkgFiles is enabled
+	fileExists := false
+	fullPath := utils.ResolvePath(filename)
+	if _, err := os.Stat(fullPath); err == nil {
+		fileExists = true
+	}
+
+	if KeepNupkgFiles && fileExists {
+		fmt.Printf("Using existing file: %s\n", filename)
+	} else {
+		// Download if file doesn't exist or if we're not keeping files
+		fmt.Printf("Downloading from: %s\n", downloadURL)
+
+		resp, err := http.Get(downloadURL)
+		if err != nil {
+			return fmt.Errorf("downloading: %v", err)
+		}
+		defer resp.Body.Close()
+
+		// Use temp file if we're not keeping the files
+		targetFile := utils.ResolvePath(filename)
+		if !KeepNupkgFiles {
+			targetFile = utils.ResolvePath(filename + ".tmp")
+		}
+
+		outFile, err := os.Create(targetFile)
+		if err != nil {
+			return fmt.Errorf("creating file: %v", err)
+		}
+		_, err = io.Copy(outFile, resp.Body)
+		outFile.Close()
+		if err != nil {
+			return fmt.Errorf("saving file: %v", err)
+		}
+		fmt.Printf("Downloaded: %s\n", targetFile)
+	}
+
+	// Extract
+	fmt.Println("Extracting...")
+	os.RemoveAll(AppFolder)
+	os.MkdirAll(AppFolder, 0755)
+
+	filePath := filename
+	if !KeepNupkgFiles {
+		filePath = filename + ".tmp"
+	}
+	zipReader, err := zip.OpenReader(utils.ResolvePath(filePath))
+	if err != nil {
+		return fmt.Errorf("opening archive: %v", err)
+	}
+	defer zipReader.Close()
+
+	for _, f := range zipReader.File {
+		var relativePath string
+
+		if runtime.GOOS == "darwin" {
+			// For macOS, keep the full .app bundle structure
+			relativePath = f.Name
+		} else {
+			// Windows - only extract files from lib/net45/
+			if !strings.HasPrefix(f.Name, "lib/net45/") {
+				continue
+			}
+			relativePath = strings.TrimPrefix(f.Name, "lib/net45/")
+		}
+
+		if relativePath == "" {
+			continue
+		}
+
+		path := filepath.Join(AppFolder, relativePath)
+
+		if f.FileInfo().IsDir() {
+			os.MkdirAll(path, f.Mode())
+			continue
+		}
+
+		os.MkdirAll(filepath.Dir(path), 0755)
+
+		// Check if this is a symlink on macOS
+		isSymlink := runtime.GOOS == "darwin" &&
+			(f.ExternalAttrs>>16)&0170000 == 0120000
+
+		if isSymlink {
+			// Read the symlink target
+			src, err := f.Open()
+			if err != nil {
+				continue
+			}
+			linkTarget, err := io.ReadAll(src)
+			src.Close()
+
+			if err == nil && len(linkTarget) > 0 {
+				linkStr := string(linkTarget)
+				// Create the symlink
+				os.Remove(path) // Remove if exists
+				if err := os.Symlink(linkStr, path); err == nil {
+					fmt.Printf("Created symlink: %s -> %s\n", filepath.Base(path), linkStr)
+				} else {
+					fmt.Printf("Failed to create symlink %s: %v\n", path, err)
+				}
+				continue
+			}
+		}
+
+		// Regular file extraction
+		src, _ := f.Open()
+		dst, _ := os.Create(path)
+		io.Copy(dst, src)
+		dst.Close()
+		src.Close()
+	}
+
+	// Delete the archive file only if KeepNupkgFiles is false
+	if !KeepNupkgFiles {
+		os.Remove(utils.ResolvePath(filePath))
+		fmt.Println("Removed temporary archive file")
+	} else {
+		fmt.Printf("Keeping archive file: %s\n", filename)
+	}
+
+	// macOS specific: Make sure the executable has execute permissions
+	if runtime.GOOS == "darwin" {
+		// Make the main executable executable
+		claudeExec := filepath.Join(AppFolder, "Claude.app", "Contents", "MacOS", "Claude")
+		if err := os.Chmod(claudeExec, 0755); err != nil {
+			fmt.Printf("Warning: Could not set executable permissions: %v\n", err)
+		}
+
+		// Also make helper apps executable
+		helpers := []string{
+			"Claude Helper",
+			"Claude Helper (GPU)",
+			"Claude Helper (Plugin)",
+			"Claude Helper (Renderer)",
+		}
+		for _, helper := range helpers {
+			helperPath := filepath.Join(AppFolder, "Claude.app", "Contents", "Frameworks",
+				helper+".app", "Contents", "MacOS", helper)
+			if err := os.Chmod(helperPath, 0755); err != nil {
+				// Don't warn for each one, they might not all exist
+				continue
+			}
+		}
+
+		// Delete ShipIt to prevent self-updates
+		shipItPath := filepath.Join(AppFolder, "Claude.app", "Contents", "Frameworks", "Squirrel.framework", "Resources", "ShipIt")
+		if err := os.Remove(shipItPath); err != nil && !os.IsNotExist(err) {
+			fmt.Printf("Warning: Could not remove ShipIt: %v\n", err)
+		} else {
+			fmt.Println("Removed ShipIt to prevent self-updates")
 		}
 	}
 
@@ -171,33 +419,10 @@ func EnsurePatched() error {
 		fmt.Printf("Current version: %s\n", currentVersion)
 	}
 
-	// Get available releases
-	resp, err := http.Get(releasesURL)
+	// Get newest supported version and download URL
+	newestVersion, downloadURL, err := getLatestSupportedVersion()
 	if err != nil {
-		return fmt.Errorf("fetching releases: %v", err)
-	}
-	defer resp.Body.Close()
-
-	releasesText, _ := io.ReadAll(resp.Body)
-
-	// Find newest supported version
-	versions := make([]string, 0, len(supportedVersions))
-	for v := range supportedVersions {
-		versions = append(versions, v)
-	}
-	sort.Sort(sort.Reverse(sort.StringSlice(versions)))
-
-	newestVersion := ""
-	for _, version := range versions {
-		filename := fmt.Sprintf("AnthropicClaude-%s-full.nupkg", version)
-		if strings.Contains(string(releasesText), filename) {
-			newestVersion = version
-			break
-		}
-	}
-
-	if newestVersion == "" {
-		return fmt.Errorf("no supported versions available")
+		return err
 	}
 
 	fmt.Printf("Newest supported version: %s\n", newestVersion)
@@ -206,100 +431,8 @@ func EnsurePatched() error {
 	if currentVersion != newestVersion {
 		fmt.Printf("Updating to %s...\n", newestVersion)
 
-		filename := fmt.Sprintf("AnthropicClaude-%s-full.nupkg", newestVersion)
-
-		// Check if file already exists when KeepNupkgFiles is enabled
-		fileExists := false
-		fullPath := utils.ResolvePath(filename)
-		if _, err := os.Stat(fullPath); err == nil {
-			fileExists = true
-		}
-
-		if KeepNupkgFiles && fileExists {
-			fmt.Printf("Using existing nupkg: %s\n", filename)
-		} else {
-			// Download if file doesn't exist or if we're not keeping files
-			downloadURL := strings.Replace(releasesURL, "RELEASES", filename, 1)
-			fmt.Printf("Downloading from: %s\n", downloadURL)
-
-			resp, err := http.Get(downloadURL)
-			if err != nil {
-				return fmt.Errorf("downloading: %v", err)
-			}
-			defer resp.Body.Close()
-
-			// Use temp file if we're not keeping the nupkg
-			targetFile := utils.ResolvePath(filename)
-			if !KeepNupkgFiles {
-				targetFile = utils.ResolvePath(filename + ".tmp")
-			}
-
-			outFile, err := os.Create(targetFile)
-			if err != nil {
-				return fmt.Errorf("creating file: %v", err)
-			}
-			_, err = io.Copy(outFile, resp.Body)
-			outFile.Close()
-			if err != nil {
-				return fmt.Errorf("saving file: %v", err)
-			}
-			fmt.Printf("Downloaded: %s\n", targetFile)
-
-			// If using temp file, rename for extraction
-			if !KeepNupkgFiles {
-				filename = targetFile
-			}
-		}
-
-		// Extract
-		fmt.Println("Extracting...")
-		os.RemoveAll(AppFolder)
-		os.MkdirAll(AppFolder, 0755)
-
-		filePath := filename
-		if !KeepNupkgFiles {
-			filePath = filename + ".tmp"
-		}
-		zipReader, err := zip.OpenReader(utils.ResolvePath(filePath))
-		if err != nil {
-			return fmt.Errorf("opening nupkg: %v", err)
-		}
-		defer zipReader.Close()
-
-		for _, f := range zipReader.File {
-			// Only extract files from lib/net45/
-			if !strings.HasPrefix(f.Name, "lib/net45/") {
-				continue
-			}
-
-			// Strip the lib/net45/ prefix when extracting
-			relativePath := strings.TrimPrefix(f.Name, "lib/net45/")
-			if relativePath == "" {
-				continue
-			}
-
-			path := filepath.Join(AppFolder, relativePath)
-
-			if f.FileInfo().IsDir() {
-				os.MkdirAll(path, f.Mode())
-				continue
-			}
-
-			os.MkdirAll(filepath.Dir(path), 0755)
-
-			src, _ := f.Open()
-			dst, _ := os.Create(path)
-			io.Copy(dst, src)
-			dst.Close()
-			src.Close()
-		}
-
-		// Delete the nupkg file only if KeepNupkgFiles is false
-		if !KeepNupkgFiles {
-			os.Remove(utils.ResolvePath(filePath))
-			fmt.Println("Removed temporary nupkg file")
-		} else {
-			fmt.Printf("Keeping nupkg file: %s\n", filename)
+		if err := downloadAndExtract(newestVersion, downloadURL); err != nil {
+			return err
 		}
 
 		// Write version
@@ -326,7 +459,7 @@ func applyPatches(version string) error {
 		// Don't fail the whole process if icons can't be replaced
 	}
 
-	asarPath := filepath.Join(AppFolder, "resources", "app.asar")
+	asarPath := filepath.Join(appResourcesDir, "app.asar")
 	tempDir := utils.ResolvePath("asar-temp")
 
 	// Unpack asar
@@ -433,20 +566,34 @@ func replaceIcons() error {
 
 	fmt.Println("Replacing icons...")
 
-	// OS-specific exe icon replacement
+	// OS-specific exe/app icon replacement
 	switch runtime.GOOS {
 	case "windows":
 		rceditPath := utils.ResolvePath(filepath.Join("resources", "rcedit.exe"))
 		icoPath := filepath.Join(iconDir, "app.ico")
-		exePath := filepath.Join(AppFolder, "claude.exe")
 
-		cmd := exec.Command(rceditPath, exePath, "--set-icon", icoPath)
+		cmd := exec.Command(rceditPath, appExePath, "--set-icon", icoPath)
 		if err := cmd.Run(); err != nil {
 			fmt.Printf("Warning: Could not replace exe icon: %v\n", err)
 		}
 	case "darwin":
-		// macOS: Would need to replace .icns in the .app bundle
-		// TODO when adding macOS support
+		// Replace the app bundle icon
+		icnsPath := filepath.Join(iconDir, "app.icns")
+		if _, err := os.Stat(icnsPath); err == nil {
+			// electron.icns is in Claude.app/Contents/Resources/
+			targetPath := filepath.Join(AppFolder, "Claude.app", "Contents", "Resources", "electron.icns")
+
+			input, err := os.ReadFile(icnsPath)
+			if err != nil {
+				return fmt.Errorf("reading app.icns: %v", err)
+			}
+
+			if err := os.WriteFile(targetPath, input, 0644); err != nil {
+				fmt.Printf("Warning: Could not replace app icon: %v\n", err)
+			} else {
+				fmt.Println("  Replaced electron.icns")
+			}
+		}
 	}
 
 	// Copy PNG icons (works for all platforms)
@@ -461,7 +608,7 @@ func replaceIcons() error {
 		}
 
 		src := filepath.Join(iconDir, entry.Name())
-		dst := filepath.Join(AppFolder, "resources", entry.Name())
+		dst := filepath.Join(appResourcesDir, entry.Name())
 
 		fmt.Printf("  %s -> %s\n", entry.Name(), dst)
 
@@ -479,7 +626,7 @@ func replaceIcons() error {
 }
 
 func captureHashMismatch() (string, string, error) {
-	cmd := exec.Command(filepath.Join(AppFolder, "claude.exe"))
+	cmd := exec.Command(appExePath)
 	output, _ := cmd.CombinedOutput()
 
 	// Parse the error output for the hashes
@@ -502,20 +649,38 @@ func captureHashMismatch() (string, string, error) {
 }
 
 func replaceHashInExe(oldHash, newHash string) error {
-	exePath := filepath.Join(AppFolder, "claude.exe")
+	if runtime.GOOS == "darwin" {
+		// On macOS, the hash is in Info.plist
+		plistPath := filepath.Join(AppFolder, "Claude.app", "Contents", "Info.plist")
 
-	// Read the entire exe
-	data, err := os.ReadFile(exePath)
-	if err != nil {
-		return err
+		// Read the plist
+		data, err := os.ReadFile(plistPath)
+		if err != nil {
+			return fmt.Errorf("reading Info.plist: %v", err)
+		}
+
+		// Replace the hash
+		replaced := bytes.Replace(data, []byte(oldHash), []byte(newHash), 1)
+		if bytes.Equal(replaced, data) {
+			return fmt.Errorf("hash not found in Info.plist")
+		}
+
+		// Write back
+		return os.WriteFile(plistPath, replaced, 0644)
+	} else {
+		// Windows - hash is in the executable
+		data, err := os.ReadFile(appExePath)
+		if err != nil {
+			return err
+		}
+
+		// Search for the hash as a string
+		replaced := bytes.Replace(data, []byte(oldHash), []byte(newHash), 1)
+		if bytes.Equal(replaced, data) {
+			return fmt.Errorf("hash not found in executable")
+		}
+
+		// Write back
+		return os.WriteFile(appExePath, replaced, 0755)
 	}
-
-	// Search for the hash as a string
-	replaced := bytes.Replace(data, []byte(oldHash), []byte(newHash), 1)
-	if bytes.Equal(replaced, data) {
-		return fmt.Errorf("hash not found in exe")
-	}
-
-	// Write back
-	return os.WriteFile(exePath, replaced, 0755)
 }

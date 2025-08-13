@@ -30,13 +30,6 @@ if exist .\builds\%APP_NAME%.exe (
 )
 
 echo.
-echo Converting icon for macOS...
-magick convert .\resources\icons\app.ico -resize 512x512 .\app.icns
-if not exist .\app.icns (
-    echo Warning: Icon conversion failed
-)
-
-echo.
 echo Building for macOS...
 set GOOS=darwin
 set GOARCH=amd64
@@ -87,11 +80,12 @@ xcopy /E /I /Y ".\resources" ".\builds\%APP_NAME%.app\Contents\MacOS\resources" 
     echo ^</plist^>
 ) > ".\builds\%APP_NAME%.app\Contents\Info.plist"
 
-:: Copy icon and then delete the temporary icns
-if exist .\app.icns (
-    copy .\app.icns ".\builds\%APP_NAME%.app\Contents\Resources\" >nul
-    del .\app.icns
+:: Copy icon from resources/icons
+if exist ".\resources\icons\app.icns" (
+    copy ".\resources\icons\app.icns" ".\builds\%APP_NAME%.app\Contents\Resources\" >nul
     echo Icon added to app bundle
+) else (
+    echo Warning: app.icns not found in resources\icons\
 )
 
 echo macOS build complete: builds\%APP_NAME%.app
@@ -105,9 +99,6 @@ echo Created: builds\%APP_NAME%-mac.zip
 rd /s /q ".\builds\%APP_NAME%.app"
 
 :cleanup
-:: Clean up any temporary files
-if exist .\app.icns del .\app.icns
-
 echo.
 echo Builds complete!
 if exist .\builds\%APP_NAME%-windows.zip echo - Windows: builds\%APP_NAME%-windows.zip
