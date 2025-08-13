@@ -393,6 +393,13 @@ func downloadAndExtract(version, downloadURL string) error {
 			}
 		}
 
+		// Also make chrome_crashpad_handler executable
+		crashpadPath := filepath.Join(AppFolder, "Claude.app", "Contents", "Frameworks",
+			"Electron Framework.framework", "Helpers", "chrome_crashpad_handler")
+		if err := os.Chmod(crashpadPath, 0755); err != nil {
+			// Don't warn, might not exist in all versions
+		}
+
 		// Delete ShipIt to prevent self-updates
 		shipItPath := filepath.Join(AppFolder, "Claude.app", "Contents", "Frameworks", "Squirrel.framework", "Resources", "ShipIt")
 		if err := os.Remove(shipItPath); err != nil && !os.IsNotExist(err) {
@@ -552,6 +559,25 @@ func applyPatches(version string) error {
 	fmt.Println("Patching exe...")
 	if err := replaceHashInExe(expectedHash, actualHash); err != nil {
 		return fmt.Errorf("patching exe: %v", err)
+	}
+
+	// Ad-hoc sign on macOS after all modifications
+	if runtime.GOOS == "darwin" {
+		fmt.Println("Signing app with ad-hoc signature...")
+		appPath := filepath.Join(AppFolder, "Claude.app")
+
+		// Remove existing signature first
+		cmd := exec.Command("codesign", "--remove-signature", appPath)
+		cmd.Run() // Ignore errors, might not be signed
+
+		// Sign with ad-hoc signature
+		cmd = exec.Command("codesign", "--force", "--deep", "--sign", "-", appPath)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			fmt.Printf("Warning: Could not sign app: %v\n%s\n", err, string(output))
+			// Continue anyway - might still work
+		} else {
+			fmt.Println("App signed successfully")
+		}
 	}
 
 	fmt.Println("Patches applied successfully!")
