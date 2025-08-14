@@ -127,7 +127,7 @@ func downloadAndExtractExtension(url, folder string) error {
 		path := filepath.Join(extPath, f.Name)
 
 		if f.FileInfo().IsDir() {
-			os.MkdirAll(path, f.Mode())
+			os.MkdirAll(path, 0755)
 			continue
 		}
 

@@ -320,8 +320,17 @@ func downloadAndExtract(version, downloadURL string) error {
 
 		path := filepath.Join(AppFolder, relativePath)
 
-		if f.FileInfo().IsDir() {
-			os.MkdirAll(path, f.Mode())
+		// Handle PowerShell Compress-Archive's broken directory entries
+		normalizedName := strings.ReplaceAll(f.Name, "\\", "/")
+		isDirectory := f.FileInfo().IsDir() || (f.UncompressedSize64 == 0 && (strings.HasSuffix(normalizedName, "/") || strings.HasSuffix(f.Name, "\\")))
+
+		if isDirectory {
+			os.MkdirAll(path, 0755)
+			continue
+		}
+
+		// Skip if path already exists as a directory (created by earlier MkdirAll)
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
 			continue
 		}
 

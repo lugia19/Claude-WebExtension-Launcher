@@ -246,7 +246,7 @@ func CheckAndUpdate() error {
 
 		if isDirectory {
 			fmt.Printf("Creating directory: %s\n", path)
-			os.MkdirAll(path, f.Mode())
+			os.MkdirAll(path, 0755)
 			continue
 		}
 
