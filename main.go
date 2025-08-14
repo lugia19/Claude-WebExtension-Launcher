@@ -11,6 +11,8 @@ import (
 	"runtime"
 )
 
+const launchClaudeInTerminal = false
+
 // Version is the current version of the application
 const Version = "0.0.5"
 
@@ -98,6 +100,16 @@ func main() {
 		// Linux and other Unix-like systems
 		claudePath = filepath.Join(patcher.AppFolder, "claude")
 	}
+
 	cmd := exec.Command(claudePath)
-	cmd.Start()
+	if launchClaudeInTerminal {
+		// In developer mode, run Claude in the same terminal to see debug output
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		cmd.Stdin = os.Stdin
+		cmd.Run()
+	} else {
+		// Normal mode - launch Claude detached
+		cmd.Start()
+	}
 }
