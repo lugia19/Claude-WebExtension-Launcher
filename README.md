@@ -18,8 +18,8 @@ This installer generates a modified version of the Claude Desktop client with ex
 ### First Launch Network Service Crash (macOS only)
 On first launch, you'll see a crash dialog about the network service. This is (likely) because the modified app needs Keychain permission to be granted, given that it uses an ad-hoc signature. Just ignore it.
 
-### Not working on MacOS/AppTranslocator issues
-This is a problem with a MacOS security feature called AppTranslocator. You can fix it by moving the application outside of /Downloads, and running it from there.
+### MacOS issues
+MacOS really doesn't like... a bunch of things that I am doing. Avoid running it from /Downloads, and if it's still borked, try clearing the quarantine flag with `xattr -cr /path/to/Claude_WebExtension_Launcher.app`
 
 ## Installation
 
