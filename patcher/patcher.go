@@ -246,22 +246,30 @@ func getLatestSupportedVersion() (string, string, error) {
 }
 
 func downloadAndExtract(version, downloadURL string) error {
-	var filename string
+	var newVersionZipName string
 	if runtime.GOOS == "darwin" {
-		filename = fmt.Sprintf("Claude-%s.zip", version)
+		newVersionZipName = fmt.Sprintf("Claude-%s.zip", version)
 	} else {
-		filename = fmt.Sprintf("AnthropicClaude-%s-full.nupkg", version)
+		newVersionZipName = fmt.Sprintf("AnthropicClaude-%s-full.nupkg", version)
+	}
+
+	// Define the download path based on whether we keep files or use temp
+	var newVersionDownloadPath string
+	if KeepNupkgFiles {
+		newVersionDownloadPath = utils.ResolvePath(newVersionZipName)
+	} else {
+		newVersionDownloadPath = utils.ResolvePath(newVersionZipName + ".tmp")
 	}
 
 	// Check if file already exists when KeepNupkgFiles is enabled
 	fileExists := false
-	fullPath := utils.ResolvePath(filename)
+	fullPath := utils.ResolvePath(newVersionZipName)
 	if _, err := os.Stat(fullPath); err == nil {
 		fileExists = true
 	}
 
 	if KeepNupkgFiles && fileExists {
-		fmt.Printf("Using existing file: %s\n", filename)
+		fmt.Printf("Using existing file: %s\n", newVersionZipName)
 	} else {
 		// Download if file doesn't exist or if we're not keeping files
 		fmt.Printf("Downloading from: %s\n", downloadURL)
@@ -272,13 +280,8 @@ func downloadAndExtract(version, downloadURL string) error {
 		}
 		defer resp.Body.Close()
 
-		// Use temp file if we're not keeping the files
-		targetFile := utils.ResolvePath(filename)
-		if !KeepNupkgFiles {
-			targetFile = utils.ResolvePath(filename + ".tmp")
-		}
-
-		outFile, err := os.Create(targetFile)
+		// Use the already defined download path
+		outFile, err := os.Create(newVersionDownloadPath)
 		if err != nil {
 			return fmt.Errorf("creating file: %v", err)
 		}
@@ -287,7 +290,7 @@ func downloadAndExtract(version, downloadURL string) error {
 		if err != nil {
 			return fmt.Errorf("saving file: %v", err)
 		}
-		fmt.Printf("Downloaded: %s\n", targetFile)
+		fmt.Printf("Downloaded: %s\n", newVersionDownloadPath)
 	}
 
 	// Extract
@@ -295,15 +298,11 @@ func downloadAndExtract(version, downloadURL string) error {
 	os.RemoveAll(AppFolder)
 	os.MkdirAll(AppFolder, 0755)
 
-	filePath := filename
-	if !KeepNupkgFiles {
-		filePath = filename + ".tmp"
-	}
-	zipReader, err := zip.OpenReader(utils.ResolvePath(filePath))
+	zipReader, err := zip.OpenReader(newVersionDownloadPath)
 	if err != nil {
 		return fmt.Errorf("opening archive: %v", err)
 	}
-	defer zipReader.Close()
+	// Don't defer close - we need to close before deleting temp file
 
 	for _, f := range zipReader.File {
 		var relativePath string
@@ -375,12 +374,15 @@ func downloadAndExtract(version, downloadURL string) error {
 		src.Close()
 	}
 
+	// Close the zip reader before attempting to delete temp file
+	zipReader.Close()
+
 	// Delete the archive file only if KeepNupkgFiles is false
 	if !KeepNupkgFiles {
-		os.Remove(utils.ResolvePath(filePath))
+		os.Remove(newVersionDownloadPath)
 		fmt.Println("Removed temporary archive file")
 	} else {
-		fmt.Printf("Keeping archive file: %s\n", filename)
+		fmt.Printf("Keeping archive file: %s\n", newVersionZipName)
 	}
 
 	// macOS specific: Make sure the executable has execute permissions
