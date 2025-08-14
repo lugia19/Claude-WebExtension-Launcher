@@ -16,13 +16,8 @@ import (
 	"time"
 )
 
-func currentVersion() string {
-	data, err := os.ReadFile(utils.ResolvePath("version.txt"))
-	if err != nil {
-		return "0.0.0" // If no version file, assume ancient
-	}
-	return strings.TrimSpace(string(data))
-}
+// CurrentVersion returns the embedded version from main package
+var CurrentVersion string
 
 // getPlatformSuffix returns the expected platform suffix for release files
 func getPlatformSuffix() string {
@@ -131,7 +126,7 @@ func FinishUpdateIfNeeded() {
 func CheckAndUpdate() error {
 	fmt.Printf("Checking for installer updates on %s...\n", runtime.GOOS)
 
-	currentVer := currentVersion()
+	currentVer := CurrentVersion
 	platformSuffix := getPlatformSuffix()
 
 	// Check latest release
@@ -268,26 +263,11 @@ func CheckAndUpdate() error {
 
 	fmt.Println("Installing update...")
 
-	// Replace resources folder
-	os.RemoveAll(utils.ResolvePath("resources"))
-
 	// Platform-specific extraction
 	var newExeData []byte
 	if runtime.GOOS == "darwin" {
 		// On macOS, extract from the .app bundle structure
 		appName := "Claude_WebExtension_Launcher.app"
-
-		// Extract resources from the app bundle (they're next to the executable in MacOS/)
-		bundleResourcesPath := filepath.Join(tempDir, appName, "Contents", "MacOS")
-		if info, err := os.Stat(bundleResourcesPath); err == nil && info.IsDir() {
-			// Copy resources folder if it exists
-			resourcesSrc := filepath.Join(bundleResourcesPath, "resources")
-			if _, err := os.Stat(resourcesSrc); err == nil {
-				if err := os.Rename(resourcesSrc, utils.ResolvePath("resources")); err != nil {
-					fmt.Printf("Note: Could not update resources folder: %v\n", err)
-				}
-			}
-		}
 
 		// Extract the actual executable from the app bundle
 		bundleExePath := filepath.Join(tempDir, appName, "Contents", "MacOS", "Claude_WebExtension_Launcher")
@@ -298,28 +278,10 @@ func CheckAndUpdate() error {
 			return fmt.Errorf("failed to find executable in app bundle: %v", err)
 		}
 
-		// Look for version.txt next to the executable in the app bundle
-		versionPath := filepath.Join(tempDir, appName, "Contents", "MacOS", "version.txt")
-		if versionData, err := os.ReadFile(versionPath); err == nil {
-			os.WriteFile(utils.ResolvePath("version.txt"), versionData, 0644)
-		} else {
-			fmt.Printf("Note: No version.txt found in update\n")
-		}
-
 	} else {
 		// Windows - flat structure
-		if err := os.Rename(filepath.Join(tempDir, "resources"), utils.ResolvePath("resources")); err != nil {
-			fmt.Printf("Note: No resources folder in update\n")
-		}
-
-		// Update version.txt
-		versionData, err := os.ReadFile(filepath.Join(tempDir, "version.txt"))
-		if err == nil {
-			os.WriteFile(utils.ResolvePath("version.txt"), versionData, 0644)
-		}
-
 		// Look for the executable in the temp dir
-		executableName := getExecutableName() // This returns claude-webext-patcher.exe on Windows
+		executableName := getExecutableName()
 		newExeData, err = os.ReadFile(filepath.Join(tempDir, executableName))
 		if err != nil {
 			os.Remove(tempZip)

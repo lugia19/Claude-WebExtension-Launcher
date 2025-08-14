@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"claude-webext-patcher/utils"
+	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,9 @@ import (
 	"sort"
 	"strings"
 )
+
+// EmbeddedFS is the embedded filesystem from the main package
+var EmbeddedFS embed.FS
 
 const (
 	windowsReleasesURL = "https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest-win-x64/RELEASES"
@@ -65,8 +69,9 @@ func init() {
 
 // Patch functions
 func readInjection(version, filename string) (string, error) {
-	injectionPath := utils.ResolvePath(filepath.Join("resources", "injections", version, filename))
-	content, err := os.ReadFile(injectionPath)
+	// Must use forward slashes for embed.FS, not filepath.Join
+	injectionPath := "resources/injections/" + version + "/" + filename
+	content, err := EmbeddedFS.ReadFile(injectionPath)
 	if err != nil {
 		return "", fmt.Errorf("could not load injection %s for version %s: %v", filename, version, err)
 	}
@@ -429,8 +434,8 @@ func EnsurePatched() error {
 
 	// Get current version
 	currentVersion := ""
-	versionFile := filepath.Join(AppFolder, "version.txt")
-	if data, err := os.ReadFile(versionFile); err == nil {
+	claudeVersionFile := filepath.Join(AppFolder, "claude-version.txt")
+	if data, err := os.ReadFile(claudeVersionFile); err == nil {
 		currentVersion = strings.TrimSpace(string(data))
 		fmt.Printf("Current version: %s\n", currentVersion)
 	}
@@ -452,7 +457,7 @@ func EnsurePatched() error {
 		}
 
 		// Write version
-		os.WriteFile(versionFile, []byte(newestVersion), 0644)
+		os.WriteFile(claudeVersionFile, []byte(newestVersion), 0644)
 
 		// Apply patches
 		if err := applyPatches(newestVersion); err != nil {
@@ -594,36 +599,47 @@ func applyPatches(version string) error {
 }
 
 func replaceIcons() error {
-	iconDir := utils.ResolvePath(filepath.Join("resources", "icons"))
-	if _, err := os.Stat(iconDir); os.IsNotExist(err) {
-		return fmt.Errorf("icons folder not found")
-	}
-
 	fmt.Println("Replacing icons...")
 
 	// OS-specific exe/app icon replacement
 	switch runtime.GOOS {
 	case "windows":
-		rceditPath := utils.ResolvePath(filepath.Join("resources", "rcedit.exe"))
-		icoPath := filepath.Join(iconDir, "app.ico")
+		// Extract rcedit.exe to temp file
+		rceditData, err := EmbeddedFS.ReadFile("resources/rcedit.exe")
+		if err != nil {
+			return fmt.Errorf("reading embedded rcedit.exe: %v", err)
+		}
 
-		cmd := exec.Command(rceditPath, appExePath, "--set-icon", icoPath)
+		tempRcedit := filepath.Join(os.TempDir(), "rcedit-temp.exe")
+		if err := os.WriteFile(tempRcedit, rceditData, 0755); err != nil {
+			return fmt.Errorf("writing temp rcedit.exe: %v", err)
+		}
+		defer os.Remove(tempRcedit)
+
+		// Extract app.ico to temp file
+		icoData, err := EmbeddedFS.ReadFile("resources/icons/app.ico")
+		if err != nil {
+			return fmt.Errorf("reading embedded app.ico: %v", err)
+		}
+
+		tempIco := filepath.Join(os.TempDir(), "app-temp.ico")
+		if err := os.WriteFile(tempIco, icoData, 0644); err != nil {
+			return fmt.Errorf("writing temp app.ico: %v", err)
+		}
+		defer os.Remove(tempIco)
+
+		cmd := exec.Command(tempRcedit, appExePath, "--set-icon", tempIco)
 		if err := cmd.Run(); err != nil {
 			fmt.Printf("Warning: Could not replace exe icon: %v\n", err)
 		}
 	case "darwin":
 		// Replace the app bundle icon
-		icnsPath := filepath.Join(iconDir, "app.icns")
-		if _, err := os.Stat(icnsPath); err == nil {
+		icnsData, err := EmbeddedFS.ReadFile("resources/icons/app.icns")
+		if err == nil {
 			// electron.icns is in Claude.app/Contents/Resources/
 			targetPath := filepath.Join(AppFolder, "Claude.app", "Contents", "Resources", "electron.icns")
 
-			input, err := os.ReadFile(icnsPath)
-			if err != nil {
-				return fmt.Errorf("reading app.icns: %v", err)
-			}
-
-			if err := os.WriteFile(targetPath, input, 0644); err != nil {
+			if err := os.WriteFile(targetPath, icnsData, 0644); err != nil {
 				fmt.Printf("Warning: Could not replace app icon: %v\n", err)
 			} else {
 				fmt.Println("  Replaced electron.icns")
@@ -631,23 +647,24 @@ func replaceIcons() error {
 		}
 	}
 
-	// Copy PNG icons (works for all platforms)
-	entries, err := os.ReadDir(iconDir)
+	// Copy other icons (works for all platforms)
+	iconEntries, err := EmbeddedFS.ReadDir("resources/icons")
 	if err != nil {
 		return err
 	}
 
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".png") {
+	for _, entry := range iconEntries {
+		if entry.IsDir() {
 			continue
 		}
 
-		src := filepath.Join(iconDir, entry.Name())
+		// Must use forward slashes for embed.FS
+		iconPath := "resources/icons/" + entry.Name()
 		dst := filepath.Join(appResourcesDir, entry.Name())
 
 		fmt.Printf("  %s -> %s\n", entry.Name(), dst)
 
-		input, err := os.ReadFile(src)
+		input, err := EmbeddedFS.ReadFile(iconPath)
 		if err != nil {
 			return err
 		}

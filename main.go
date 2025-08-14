@@ -11,7 +11,16 @@ import (
 	"runtime"
 )
 
+// Version is the current version of the application
+const Version = "0.0.5"
+
 func main() {
+	// Set version for selfupdate module
+	selfupdate.CurrentVersion = Version
+
+	// Set embedded FS for patcher module
+	patcher.EmbeddedFS = EmbeddedFS
+
 	// Handle update completion first
 	selfupdate.FinishUpdateIfNeeded()
 
@@ -32,6 +41,7 @@ func main() {
 	}
 
 	fmt.Println("Claude Manager starting...")
+	fmt.Printf("Version: %s\n", Version)
 
 	// Check for self-updates
 	if err := selfupdate.CheckAndUpdate(); err != nil {
