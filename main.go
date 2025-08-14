@@ -14,7 +14,7 @@ import (
 const launchClaudeInTerminal = false
 
 // Version is the current version of the application
-const Version = "0.0.5"
+const Version = "1.0.0"
 
 func main() {
 	// Set version for selfupdate module

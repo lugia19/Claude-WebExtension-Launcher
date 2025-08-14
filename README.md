@@ -13,6 +13,11 @@ A custom installer for Claude Desktop that includes built-in extensions (and the
 
 This installer generates a modified version of the Claude Desktop client with extension support enabled. It creates a standalone installation that can coexist with the official Claude Desktop client, automatically keeping both the client and extensions up to date.
 
+## Known Issues
+
+### First Launch Network Service Crash (macOS only)
+On first launch, you'll see a crash dialog about the network service. This is (likely) because the modified app needs Keychain permission to be granted, given that it uses an ad-hoc signature. Just ignore it.
+
 ## Installation
 
 ### Supported Platforms
