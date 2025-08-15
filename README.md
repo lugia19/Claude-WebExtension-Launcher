@@ -15,8 +15,12 @@ This installer generates a modified version of the Claude Desktop client with ex
 
 ## Known Issues
 
+### Extension not showing up
+
+This can happen due to reasons I'm not really sure of. Restarting the application is enough.
+
 ### First Launch Network Service Crash (macOS only)
-On first launch, you'll see a crash dialog about the network service. This is (likely) because the modified app needs Keychain permission to be granted, given that it uses an ad-hoc signature. Just ignore it.
+On first launch, you might see a crash dialog about the network service. This is (likely) because the modified app needs Keychain permission to be granted, given that it uses an ad-hoc signature. Just ignore it.
 
 ### MacOS issues
 MacOS REALLY doesn't like apps that aren't notarized (aka, that haven't paid the 99$ apple tax).
