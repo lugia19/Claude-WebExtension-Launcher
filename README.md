@@ -19,7 +19,12 @@ This installer generates a modified version of the Claude Desktop client with ex
 On first launch, you'll see a crash dialog about the network service. This is (likely) because the modified app needs Keychain permission to be granted, given that it uses an ad-hoc signature. Just ignore it.
 
 ### MacOS issues
-MacOS really doesn't like... a bunch of things that I am doing. Avoid running it from /Downloads, and if it's still borked, try clearing the quarantine flag with `xattr -cr /path/to/Claude_WebExtension_Launcher.app`
+MacOS REALLY doesn't like apps that aren't notarized (aka, that haven't paid the 99$ apple tax).
+
+If the app doesn't work, you might need to go to settings and security to let it run, or clear the quarantine flag:
+`xattr -cr /path/to/Claude_WebExtension_Launcher.app`
+
+Not much I can do. I can't afford the subscription, and even if I could, this wouldn't be allowed on the app store.
 
 ## Installation
 
