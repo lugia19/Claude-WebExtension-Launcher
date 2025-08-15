@@ -73,52 +73,10 @@ func FinishUpdateIfNeeded() {
 		os.Exit(0)
 	}
 
-	// For Unix-like systems, check for .new suffix
-	if runtime.GOOS != "windows" && strings.HasSuffix(exeName, ".new") {
-		originalExe := strings.TrimSuffix(exePath, ".new")
-
-		// Wait for original to exit
-		time.Sleep(500 * time.Millisecond)
-
-		// Try to replace with retries
-		for i := 0; i < 5; i++ {
-			if err := os.Remove(originalExe); err == nil {
-				break
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-
-		// Copy ourselves to the original name
-		input, _ := os.ReadFile(exePath)
-		if err := os.WriteFile(originalExe, input, 0755); err != nil {
-			fmt.Printf("Failed to write update: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Launch the original - on macOS, make sure it's in Terminal
-		if runtime.GOOS == "darwin" {
-			execDir := filepath.Dir(originalExe)
-			script := fmt.Sprintf(`tell application "Terminal"
-				do script "cd '%s' && '%s' && exit"
-				activate
-			end tell`, execDir, originalExe)
-
-			cmd := exec.Command("osascript", "-e", script)
-			cmd.Start()
-		} else {
-			cmd := exec.Command(originalExe)
-			cmd.Start()
-		}
-
-		os.Exit(0)
-	}
-
-	// Clean up any temporary update files
+	// Clean up any temporary update files (Windows only)
+	// Note: macOS uses shell script for bundle replacement, no .new files
 	if runtime.GOOS == "windows" {
 		newExePath := strings.TrimSuffix(exePath, ".exe") + ".new.exe"
-		os.Remove(newExePath)
-	} else {
-		newExePath := exePath + ".new"
 		os.Remove(newExePath)
 	}
 }
@@ -263,24 +221,48 @@ func CheckAndUpdate() error {
 
 	fmt.Println("Installing update...")
 
-	// Platform-specific extraction
-	var newExeData []byte
+	// Platform-specific extraction and installation
 	if runtime.GOOS == "darwin" {
-		// On macOS, extract from the .app bundle structure
+		// On macOS, replace the entire .app bundle using shell script
 		appName := "Claude_WebExtension_Launcher.app"
+		newAppPath := filepath.Join(tempDir, appName)
 
-		// Extract the actual executable from the app bundle
-		bundleExePath := filepath.Join(tempDir, appName, "Contents", "MacOS", "Claude_WebExtension_Launcher")
-		newExeData, err = os.ReadFile(bundleExePath)
-		if err != nil {
+		// Verify the new app bundle exists
+		if _, err := os.Stat(newAppPath); err != nil {
 			os.Remove(tempZip)
 			os.RemoveAll(tempDir)
-			return fmt.Errorf("failed to find executable in app bundle: %v", err)
+			return fmt.Errorf("failed to find app bundle in update: %v", err)
 		}
 
+		// Get current app bundle path (3 levels up from executable)
+		exePath, _ := os.Executable()
+		currentAppPath := filepath.Dir(filepath.Dir(filepath.Dir(exePath)))
+
+		fmt.Println("Replacing app bundle and restarting...")
+
+		// Create shell script to swap bundles and relaunch
+		script := fmt.Sprintf(`
+sleep 1
+rm -rf "%s"
+mv "%s" "%s"
+open "%s"
+rm -rf "%s"
+`, currentAppPath, newAppPath, currentAppPath, currentAppPath, tempDir)
+
+		// Clean up temp zip immediately
+		os.Remove(tempZip)
+
+		// Execute script in background and exit
+		cmd := exec.Command("sh", "-c", script)
+		if err := cmd.Start(); err != nil {
+			os.RemoveAll(tempDir)
+			return fmt.Errorf("failed to start update script: %v", err)
+		}
+		os.Exit(0)
+
 	} else {
-		// Windows - flat structure
-		// Look for the executable in the temp dir
+		// Windows - flat structure, use existing .new file approach
+		var newExeData []byte
 		executableName := getExecutableName()
 		newExeData, err = os.ReadFile(filepath.Join(tempDir, executableName))
 		if err != nil {
@@ -288,36 +270,31 @@ func CheckAndUpdate() error {
 			os.RemoveAll(tempDir)
 			return fmt.Errorf("failed to find executable in update: %v", err)
 		}
-	}
 
-	// Now write the new executable with platform-specific naming
-	exePath, _ := os.Executable()
-	var newExeName string
-	if runtime.GOOS == "windows" {
-		newExeName = utils.ResolvePath(strings.TrimSuffix(filepath.Base(exePath), ".exe") + ".new.exe")
-	} else {
-		newExeName = utils.ResolvePath(filepath.Base(exePath) + ".new")
-	}
+		// Write the new executable with .new suffix
+		exePath, _ := os.Executable()
+		newExeName := utils.ResolvePath(strings.TrimSuffix(filepath.Base(exePath), ".exe") + ".new.exe")
 
-	if err := os.WriteFile(newExeName, newExeData, 0755); err != nil {
+		if err := os.WriteFile(newExeName, newExeData, 0755); err != nil {
+			os.Remove(tempZip)
+			os.RemoveAll(tempDir)
+			return fmt.Errorf("failed to write new executable: %v", err)
+		}
+
+		// Clean up temp files before restarting
 		os.Remove(tempZip)
 		os.RemoveAll(tempDir)
-		return fmt.Errorf("failed to write new executable: %v", err)
+
+		fmt.Println("Restarting to complete update...")
+
+		// Launch the new exe
+		cmd := exec.Command(newExeName)
+		if err := cmd.Start(); err != nil {
+			return fmt.Errorf("failed to start updated executable: %v", err)
+		}
+		// Exit to let it take over
+		os.Exit(0)
 	}
-
-	// Clean up temp files before restarting
-	os.Remove(tempZip)
-	os.RemoveAll(tempDir)
-
-	fmt.Println("Restarting to complete update...")
-
-	// Launch the new exe
-	cmd := exec.Command(newExeName)
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start updated executable: %v", err)
-	}
-	// Exit to let it take over
-	os.Exit(0)
 
 	return nil
 }
