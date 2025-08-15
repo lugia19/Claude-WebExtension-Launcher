@@ -9,3 +9,4 @@
 # macOS
 .DS_Store
 .DS_Store?
+/copy_macos.ps1

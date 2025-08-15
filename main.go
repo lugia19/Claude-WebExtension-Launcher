@@ -14,7 +14,7 @@ import (
 const launchClaudeInTerminal = false
 
 // Version is the current version of the application
-const Version = "1.0.0"
+const Version = "1.1.0"
 
 func main() {
 	// Set version for selfupdate module
@@ -42,7 +42,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	fmt.Println("Claude Manager starting...")
+	fmt.Println("Claude WebExtension Launcher starting...")
 	fmt.Printf("Version: %s\n", Version)
 
 	// Check for self-updates
