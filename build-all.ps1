@@ -1,4 +1,4 @@
-# build.ps1
+# build-all.ps1
 
 $APP_NAME = "Claude_WebExtension_Launcher"
 $PACKAGE_NAME = "com.lugia19.claudewebextlauncher"
@@ -8,7 +8,8 @@ $mainGoContent = Get-Content ".\main.go" -Raw
 if ($mainGoContent -match 'const\s+Version\s*=\s*"([^"]+)"') {
     $VERSION = $matches[1]
     Write-Host "Building version: $VERSION" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "ERROR: Could not find version in main.go" -ForegroundColor Red
     Write-Host "Make sure main.go contains: const Version = `"x.x.x`"" -ForegroundColor Yellow
     exit 1
@@ -29,12 +30,14 @@ if (Test-Path ".\builds\$APP_NAME.exe") {
     # Add icon if rcedit exists
     if (Test-Path ".\resources\rcedit.exe") {
         & ".\resources\rcedit.exe" ".\builds\$APP_NAME.exe" --set-icon ".\resources\icons\app.ico"
-    } else {
+    }
+    else {
         Write-Host "Warning: rcedit.exe not found, skipping icon embedding" -ForegroundColor Yellow
     }
 
     Write-Host "Windows build complete: builds\$APP_NAME.exe" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "Windows build failed!" -ForegroundColor Red
 }
 
@@ -71,7 +74,8 @@ function Create-MacOSBundle {
         <string>arm64</string>
     </array>
 "@
-    } else { "" }
+    }
+    else { "" }
 
     $infoPlist = @"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -103,7 +107,8 @@ function Create-MacOSBundle {
     if (Test-Path ".\resources\icons\app.icns") {
         Copy-Item ".\resources\icons\app.icns" "$appBundle\Contents\Resources\" -Force
         Write-Host "Icon added to app bundle" -ForegroundColor Green
-    } else {
+    }
+    else {
         Write-Host "Warning: app.icns not found in resources\icons\" -ForegroundColor Yellow
     }
 
@@ -119,7 +124,8 @@ $env:GOARCH = "amd64"
 if (Test-Path ".\$APP_NAME-mac-intel") {
     $intelBundle = Create-MacOSBundle -BinaryPath ".\$APP_NAME-mac-intel" -Architecture "amd64" -MinimumOS "10.12"
     Write-Host "macOS Intel build complete: $intelBundle" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "macOS Intel build failed! Make sure Go can cross-compile to Darwin." -ForegroundColor Red
 }
 
@@ -132,19 +138,38 @@ $env:GOARCH = "arm64"
 if (Test-Path ".\$APP_NAME-mac-arm64") {
     $arm64Bundle = Create-MacOSBundle -BinaryPath ".\$APP_NAME-mac-arm64" -Architecture "arm64" -MinimumOS "11.0"
     Write-Host "macOS ARM64 build complete: $arm64Bundle" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "macOS ARM64 build failed! Make sure Go can cross-compile to Darwin ARM64." -ForegroundColor Red
 }
 
-# Create distribution zips using 7-Zip
-Write-Host "`nCreating distribution zips with 7-Zip..."
+# Create distribution zips using WSL
+Write-Host "`nCreating distribution zips with WSL..."
 
-# Windows zip
+# Helper function to convert Windows path to WSL path
+function ConvertTo-WSLPath {
+    param([string]$WindowsPath)
+    $resolved = (Resolve-Path $WindowsPath).Path
+    $resolved = $resolved -replace '\\', '/'
+    if ($resolved -match '^([A-Z]):(.*)') {
+        return "/mnt/$($matches[1].ToLower())$($matches[2])"
+    }
+    return $resolved
+}
+
+# Get current directory in WSL format
+$currentDirWSL = ConvertTo-WSLPath (Get-Location).Path
+
+# Windows zip (no executable bit needed)
 if (Test-Path ".\builds\$APP_NAME-$VERSION-windows.zip") {
     Remove-Item ".\builds\$APP_NAME-$VERSION-windows.zip"
 }
 if (Test-Path ".\builds\$APP_NAME.exe") {
-    & 7z a -tzip ".\builds\$APP_NAME-$VERSION-windows.zip" ".\builds\$APP_NAME.exe"
+    $zipPath = "$currentDirWSL/builds/$APP_NAME-$VERSION-windows.zip"
+    $exePath = "$currentDirWSL/builds/$APP_NAME.exe"
+    
+    wsl sh -c "cd '$currentDirWSL/builds' && zip '$APP_NAME-$VERSION-windows.zip' '$APP_NAME.exe'"
+    
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Created: builds\$APP_NAME-$VERSION-windows.zip" -ForegroundColor Green
         Remove-Item ".\builds\$APP_NAME.exe"
@@ -153,18 +178,28 @@ if (Test-Path ".\builds\$APP_NAME.exe") {
 
 # macOS Intel zip
 if ($intelBundle -and (Test-Path $intelBundle)) {
-    & 7z a -tzip ".\builds\$APP_NAME-$VERSION-macos-amd64.zip" $intelBundle
+    $bundleName = Split-Path $intelBundle -Leaf
+    $zipName = "$APP_NAME-$VERSION-macos-amd64.zip"
+    
+    # Set executable bit and create zip
+    wsl sh -c "cd '$currentDirWSL/builds' && chmod +x '$bundleName/Contents/MacOS/$APP_NAME' && zip -r '$zipName' '$bundleName'"
+    
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "Created: builds\$APP_NAME-$VERSION-macos-amd64.zip" -ForegroundColor Green
+        Write-Host "Created: builds\$zipName" -ForegroundColor Green
     }
     Remove-Item -Recurse -Force $intelBundle
 }
 
 # macOS ARM64 zip
 if ($arm64Bundle -and (Test-Path $arm64Bundle)) {
-    & 7z a -tzip ".\builds\$APP_NAME-$VERSION-macos-arm64.zip" $arm64Bundle
+    $bundleName = Split-Path $arm64Bundle -Leaf
+    $zipName = "$APP_NAME-$VERSION-macos-arm64.zip"
+    
+    # Set executable bit and create zip
+    wsl sh -c "cd '$currentDirWSL/builds' && chmod +x '$bundleName/Contents/MacOS/$APP_NAME' && zip -r '$zipName' '$bundleName'"
+    
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "Created: builds\$APP_NAME-$VERSION-macos-arm64.zip" -ForegroundColor Green
+        Write-Host "Created: builds\$zipName" -ForegroundColor Green
     }
     Remove-Item -Recurse -Force $arm64Bundle
 }
