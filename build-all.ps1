@@ -34,44 +34,45 @@ if (Test-Path ".\builds\$APP_NAME.exe") {
     }
 
     Write-Host "Windows build complete: builds\$APP_NAME.exe" -ForegroundColor Green
-
-    # Create Windows zip
-    Write-Host "Creating Windows distribution zip..."
-    Compress-Archive -Path ".\builds\$APP_NAME.exe" -DestinationPath ".\builds\$APP_NAME-$VERSION-windows.zip" -Force
-    Write-Host "Created: builds\$APP_NAME-$VERSION-windows.zip" -ForegroundColor Green
-
-    # Clean up loose file
-    Remove-Item ".\builds\$APP_NAME.exe"
 } else {
     Write-Host "Windows build failed!" -ForegroundColor Red
 }
 
-# Build for macOS
-Write-Host "`nBuilding for macOS..." -ForegroundColor Cyan
-$env:GOOS = "darwin"
-$env:GOARCH = "amd64"
-& go build -o ".\$APP_NAME-mac"
-
-if (!(Test-Path ".\$APP_NAME-mac")) {
-    Write-Host "macOS build failed! Make sure Go can cross-compile to Darwin." -ForegroundColor Red
-    Write-Host "Skipping macOS packaging..." -ForegroundColor Yellow
-} else {
-    Write-Host "Creating app bundle..."
+# Function to create macOS app bundle
+function Create-MacOSBundle {
+    param(
+        [string]$BinaryPath,
+        [string]$Architecture,
+        [string]$MinimumOS
+    )
+    
+    $archSuffix = if ($Architecture -eq "arm64") { "-arm64" } else { "" }
+    $appBundle = ".\builds\$APP_NAME$archSuffix.app"
+    
+    Write-Host "Creating app bundle for $Architecture..."
 
     # Clean up old bundle if it exists
-    if (Test-Path ".\builds\$APP_NAME.app") {
-        Remove-Item -Recurse -Force ".\builds\$APP_NAME.app"
+    if (Test-Path $appBundle) {
+        Remove-Item -Recurse -Force $appBundle
     }
 
     # Create directory structure
-    $appBundle = ".\builds\$APP_NAME.app"
     New-Item -ItemType Directory -Path "$appBundle\Contents\MacOS" -Force | Out-Null
     New-Item -ItemType Directory -Path "$appBundle\Contents\Resources" -Force | Out-Null
 
     # Move binary
-    Move-Item ".\$APP_NAME-mac" "$appBundle\Contents\MacOS\$APP_NAME"
+    Move-Item $BinaryPath "$appBundle\Contents\MacOS\$APP_NAME"
 
-    # Create Info.plist
+    # Create Info.plist with architecture-specific settings
+    $archPriority = if ($Architecture -eq "arm64") {
+        @"
+    <key>LSArchitecturePriority</key>
+    <array>
+        <string>arm64</string>
+    </array>
+"@
+    } else { "" }
+
     $infoPlist = @"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -92,7 +93,7 @@ if (!(Test-Path ".\$APP_NAME-mac")) {
     <key>CFBundleShortVersionString</key>
     <string>$VERSION</string>
     <key>LSMinimumSystemVersion</key>
-    <string>10.12</string>
+    <string>$MinimumOS</string>$archPriority
 </dict>
 </plist>
 "@
@@ -106,15 +107,66 @@ if (!(Test-Path ".\$APP_NAME-mac")) {
         Write-Host "Warning: app.icns not found in resources\icons\" -ForegroundColor Yellow
     }
 
-    Write-Host "macOS build complete: builds\$APP_NAME.app" -ForegroundColor Green
+    return $appBundle
+}
 
-    # Create macOS zip
-    Write-Host "Creating macOS distribution zip..."
-    Compress-Archive -Path ".\builds\$APP_NAME.app" -DestinationPath ".\builds\$APP_NAME-$VERSION-macos.zip" -Force
-    Write-Host "Created: builds\$APP_NAME-$VERSION-macos.zip" -ForegroundColor Green
+# Build for macOS Intel (x64)
+Write-Host "`nBuilding for macOS Intel (x64)..." -ForegroundColor Cyan
+$env:GOOS = "darwin"
+$env:GOARCH = "amd64"
+& go build -o ".\$APP_NAME-mac-intel"
 
-    # Clean up the .app folder
-    Remove-Item -Recurse -Force ".\builds\$APP_NAME.app"
+if (Test-Path ".\$APP_NAME-mac-intel") {
+    $intelBundle = Create-MacOSBundle -BinaryPath ".\$APP_NAME-mac-intel" -Architecture "amd64" -MinimumOS "10.12"
+    Write-Host "macOS Intel build complete: $intelBundle" -ForegroundColor Green
+} else {
+    Write-Host "macOS Intel build failed! Make sure Go can cross-compile to Darwin." -ForegroundColor Red
+}
+
+# Build for macOS ARM64 (Apple Silicon)
+Write-Host "`nBuilding for macOS ARM64 (Apple Silicon)..." -ForegroundColor Cyan
+$env:GOOS = "darwin"
+$env:GOARCH = "arm64"
+& go build -o ".\$APP_NAME-mac-arm64"
+
+if (Test-Path ".\$APP_NAME-mac-arm64") {
+    $arm64Bundle = Create-MacOSBundle -BinaryPath ".\$APP_NAME-mac-arm64" -Architecture "arm64" -MinimumOS "11.0"
+    Write-Host "macOS ARM64 build complete: $arm64Bundle" -ForegroundColor Green
+} else {
+    Write-Host "macOS ARM64 build failed! Make sure Go can cross-compile to Darwin ARM64." -ForegroundColor Red
+}
+
+# Create distribution zips using 7-Zip
+Write-Host "`nCreating distribution zips with 7-Zip..."
+
+# Windows zip
+if (Test-Path ".\builds\$APP_NAME-$VERSION-windows.zip") {
+    Remove-Item ".\builds\$APP_NAME-$VERSION-windows.zip"
+}
+if (Test-Path ".\builds\$APP_NAME.exe") {
+    & 7z a -tzip ".\builds\$APP_NAME-$VERSION-windows.zip" ".\builds\$APP_NAME.exe"
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Created: builds\$APP_NAME-$VERSION-windows.zip" -ForegroundColor Green
+        Remove-Item ".\builds\$APP_NAME.exe"
+    }
+}
+
+# macOS Intel zip
+if ($intelBundle -and (Test-Path $intelBundle)) {
+    & 7z a -tzip ".\builds\$APP_NAME-$VERSION-macos-amd64.zip" $intelBundle
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Created: builds\$APP_NAME-$VERSION-macos-amd64.zip" -ForegroundColor Green
+    }
+    Remove-Item -Recurse -Force $intelBundle
+}
+
+# macOS ARM64 zip
+if ($arm64Bundle -and (Test-Path $arm64Bundle)) {
+    & 7z a -tzip ".\builds\$APP_NAME-$VERSION-macos-arm64.zip" $arm64Bundle
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Created: builds\$APP_NAME-$VERSION-macos-arm64.zip" -ForegroundColor Green
+    }
+    Remove-Item -Recurse -Force $arm64Bundle
 }
 
 # Summary
@@ -122,6 +174,9 @@ Write-Host "`nBuilds complete!" -ForegroundColor Green
 if (Test-Path ".\builds\$APP_NAME-$VERSION-windows.zip") {
     Write-Host "- Windows: builds\$APP_NAME-$VERSION-windows.zip" -ForegroundColor White
 }
-if (Test-Path ".\builds\$APP_NAME-$VERSION-macos.zip") {
-    Write-Host "- macOS: builds\$APP_NAME-$VERSION-macos.zip" -ForegroundColor White
+if (Test-Path ".\builds\$APP_NAME-$VERSION-macos-amd64.zip") {
+    Write-Host "- macOS Intel: builds\$APP_NAME-$VERSION-macos-amd64.zip" -ForegroundColor White
+}
+if (Test-Path ".\builds\$APP_NAME-$VERSION-macos-arm64.zip") {
+    Write-Host "- macOS ARM64: builds\$APP_NAME-$VERSION-macos-arm64.zip" -ForegroundColor White
 }

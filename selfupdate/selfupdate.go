@@ -31,6 +31,14 @@ func getPlatformSuffix() string {
 	}
 }
 
+// getArchSuffix returns the architecture suffix for macOS releases
+func getArchSuffix() string {
+	if runtime.GOOS == "darwin" {
+		return strings.ToLower(runtime.GOARCH) // "amd64" or "arm64"
+	}
+	return ""
+}
+
 // getExecutableName returns the expected executable name for the current platform
 func getExecutableName() string {
 	execName := "Claude_WebExtension_Launcher"
@@ -126,12 +134,42 @@ func CheckAndUpdate() error {
 	var downloadURL string
 	var assetName string
 
-	// First try to find exact platform match
-	for _, asset := range release.Assets {
-		if strings.Contains(asset.Name, platformSuffix) && strings.HasSuffix(asset.Name, ".zip") {
-			downloadURL = asset.DownloadURL
-			assetName = asset.Name
-			break
+	if runtime.GOOS == "darwin" {
+		// For macOS, try architecture-specific first, then fall back to generic
+		arch := getArchSuffix()
+		archSpecificSuffix := fmt.Sprintf("-macos-%s", arch)
+
+		fmt.Printf("Looking for macOS release (architecture: %s)...\n", arch)
+
+		// First try: architecture-specific (e.g., "-macos-arm64")
+		for _, asset := range release.Assets {
+			if strings.Contains(asset.Name, archSpecificSuffix) && strings.HasSuffix(asset.Name, ".zip") {
+				downloadURL = asset.DownloadURL
+				assetName = asset.Name
+				fmt.Printf("Found architecture-specific release: %s\n", assetName)
+				break
+			}
+		}
+
+		// Second try: generic macOS (e.g., "-macos")
+		if downloadURL == "" {
+			for _, asset := range release.Assets {
+				if strings.Contains(asset.Name, platformSuffix) && strings.HasSuffix(asset.Name, ".zip") {
+					downloadURL = asset.DownloadURL
+					assetName = asset.Name
+					fmt.Printf("Found generic macOS release: %s\n", assetName)
+					break
+				}
+			}
+		}
+	} else {
+		// For non-macOS platforms, use existing logic
+		for _, asset := range release.Assets {
+			if strings.Contains(asset.Name, platformSuffix) && strings.HasSuffix(asset.Name, ".zip") {
+				downloadURL = asset.DownloadURL
+				assetName = asset.Name
+				break
+			}
 		}
 	}
 
@@ -146,8 +184,6 @@ func CheckAndUpdate() error {
 		}
 		return fmt.Errorf("no compatible release file found for %s", runtime.GOOS)
 	}
-
-	fmt.Printf("Found platform release: %s\n", assetName)
 
 	// Download to temp
 	fmt.Println("Downloading update...")
