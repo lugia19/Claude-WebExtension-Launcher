@@ -5,3 +5,7 @@
 /Tests/
 /Claude-WebExt-Launcher.exe
 /builds/
+
+# macOS
+.DS_Store
+.DS_Store?
