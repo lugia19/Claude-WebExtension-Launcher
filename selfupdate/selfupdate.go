@@ -75,7 +75,8 @@ func FinishUpdateIfNeeded() {
 		}
 
 		// Launch the original in new console window
-		cmd := exec.Command("cmd", "/c", "start", originalExe)
+		// Need to quote the path for cmd /c start to handle spaces
+		cmd := exec.Command("cmd", "/c", "start", "", `"`+originalExe+`"`)
 		cmd.Start()
 
 		os.Exit(0)

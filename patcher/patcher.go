@@ -24,7 +24,7 @@ const (
 	windowsReleasesURL = "https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest-win-x64/RELEASES"
 	macosReleasesURL   = "https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest/update_manifest.json"
 	appFolderName      = "app-latest"
-	KeepNupkgFiles     = false
+	KeepNupkgFiles     = true
 )
 
 type MacOSManifest struct {
@@ -163,8 +163,8 @@ func ensureTools() error {
 	jsBeautifyCmd = filepath.Join(nodeModulesPath, "js-beautify")
 
 	if runtime.GOOS == "windows" {
-		asarCmd += ".cmd"
-		jsBeautifyCmd += ".cmd"
+		asarCmd += ".ps1"
+		jsBeautifyCmd += ".ps1"
 	}
 
 	// Install locally if needed
@@ -487,10 +487,24 @@ func applyPatches(version string) error {
 
 	// Unpack asar
 	fmt.Println("Unpacking asar...")
-	cmd := exec.Command(asarCmd, "extract", asarPath, tempDir)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("unpacking asar: %v", err)
+	fmt.Printf("Running command: %s\n", asarCmd)
+	fmt.Printf("Arguments: extract %s %s\n", asarPath, tempDir)
+
+	var cmd *exec.Cmd
+	// On Windows, .ps1 files need to be run through PowerShell
+	if runtime.GOOS == "windows" && strings.HasSuffix(asarCmd, ".ps1") {
+		fmt.Println("Using PowerShell for Windows .ps1 file")
+		cmd = exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", asarCmd, "extract", asarPath, tempDir)
+	} else {
+		cmd = exec.Command(asarCmd, "extract", asarPath, tempDir)
 	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Printf("Command failed with error: %v\n", err)
+		fmt.Printf("Output: %s\n", string(output))
+		return fmt.Errorf("unpacking asar: %v\nOutput: %s", err, string(output))
+	}
+	fmt.Printf("Unpacking successful\n")
 	defer os.RemoveAll(tempDir)
 
 	// Apply patches
@@ -513,8 +527,14 @@ func applyPatches(version string) error {
 				// Check if already beautified
 				if !bytes.Contains(content, []byte("/* CLAUDE-MANAGER-BEAUTIFIED */")) {
 					// Beautify the file
-					cmd := exec.Command(jsBeautifyCmd, filePath, "-o", filePath)
-					if err := cmd.Run(); err != nil {
+					var beautifyCmd *exec.Cmd
+					// On Windows, .ps1 files need to be run through PowerShell
+					if runtime.GOOS == "windows" && strings.HasSuffix(jsBeautifyCmd, ".ps1") {
+						beautifyCmd = exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", jsBeautifyCmd, filePath, "-o", filePath)
+					} else {
+						beautifyCmd = exec.Command(jsBeautifyCmd, filePath, "-o", filePath)
+					}
+					if err := beautifyCmd.Run(); err != nil {
 						fmt.Printf("Warning: Could not beautify %s: %v\n", file, err)
 					} else {
 						// Add marker comment
@@ -556,11 +576,24 @@ func applyPatches(version string) error {
 
 	// Repack asar
 	fmt.Println("Repacking asar...")
-	cmd = exec.Command(asarCmd, "pack", tempDir, asarPath)
-	if err := cmd.Run(); err != nil {
-		os.Rename(asarPath+".backup", asarPath) // Restore on failure
-		return fmt.Errorf("repacking asar: %v", err)
+	fmt.Printf("Running command: %s\n", asarCmd)
+	fmt.Printf("Arguments: pack %s %s\n", tempDir, asarPath)
+
+	// On Windows, .ps1 files need to be run through PowerShell
+	if runtime.GOOS == "windows" && strings.HasSuffix(asarCmd, ".ps1") {
+		fmt.Println("Using PowerShell for Windows .ps1 file")
+		cmd = exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", asarCmd, "pack", tempDir, asarPath)
+	} else {
+		cmd = exec.Command(asarCmd, "pack", tempDir, asarPath)
 	}
+	output2, err2 := cmd.CombinedOutput()
+	if err2 != nil {
+		fmt.Printf("Command failed with error: %v\n", err)
+		fmt.Printf("Output: %s\n", string(output2))
+		os.Rename(asarPath+".backup", asarPath) // Restore on failure
+		return fmt.Errorf("repacking asar: %v\nOutput: %s", err, string(output2))
+	}
+	fmt.Printf("Repacking successful\n")
 
 	// Fix the hash in the exe
 	fmt.Println("Capturing hash mismatch...")

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 const launchClaudeInTerminal = false
@@ -32,10 +33,13 @@ func main() {
 		execDir := filepath.Dir(executable)
 
 		// Change to the executable's directory, run, then exit terminal
+		// Escape single quotes in paths for AppleScript
+		execDirEscaped := strings.ReplaceAll(execDir, `'`, `'\''`)
+		executableEscaped := strings.ReplaceAll(executable, `'`, `'\''`)
 		script := fmt.Sprintf(`tell application "Terminal"
 			set newTab to do script "cd '%s' && '%s' && exit"
 			activate
-		end tell`, execDir, executable)
+		end tell`, execDirEscaped, executableEscaped)
 
 		cmd := exec.Command("osascript", "-e", script)
 		cmd.Start()
