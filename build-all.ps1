@@ -143,6 +143,36 @@ else {
     Write-Host "macOS ARM64 build failed! Make sure Go can cross-compile to Darwin ARM64." -ForegroundColor Red
 }
 
+# Ad-hoc sign macOS app bundles with rcodesign
+if (Test-Path ".\resources\rcodesign.exe") {
+    Write-Host "`nAd-hoc signing macOS app bundles..." -ForegroundColor Cyan
+
+    # Sign Intel bundle if it exists
+    if ($intelBundle -and (Test-Path $intelBundle)) {
+        Write-Host "Signing Intel app bundle..." -ForegroundColor Cyan
+        & ".\resources\rcodesign.exe" sign $intelBundle
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Intel app bundle signed successfully" -ForegroundColor Green
+        } else {
+            Write-Host "Warning: Failed to sign Intel app bundle" -ForegroundColor Yellow
+        }
+    }
+
+    # Sign ARM64 bundle if it exists
+    if ($arm64Bundle -and (Test-Path $arm64Bundle)) {
+        Write-Host "Signing ARM64 app bundle..." -ForegroundColor Cyan
+        & ".\resources\rcodesign.exe" sign $arm64Bundle
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "ARM64 app bundle signed successfully" -ForegroundColor Green
+        } else {
+            Write-Host "Warning: Failed to sign ARM64 app bundle" -ForegroundColor Yellow
+        }
+    }
+} else {
+    Write-Host "`nWarning: rcodesign.exe not found in resources folder, skipping ad-hoc signing" -ForegroundColor Yellow
+    Write-Host "Download from: https://github.com/indygreg/apple-platform-rs/releases" -ForegroundColor Yellow
+}
+
 # Create distribution zips using WSL
 Write-Host "`nCreating distribution zips with WSL..."
 
