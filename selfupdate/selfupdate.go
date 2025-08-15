@@ -281,9 +281,13 @@ func CheckAndUpdate() error {
 sleep 1
 rm -rf "%s"
 mv "%s" "%s"
-open "%s"
+chmod +x "%s/Contents/MacOS/Claude_WebExtension_Launcher"
+osascript -e 'tell application "Terminal"
+	set newTab to do script "cd \"%s\" && \"%s/Contents/MacOS/Claude_WebExtension_Launcher\" && exit"
+	activate
+end tell'
 rm -rf "%s"
-`, currentAppPath, newAppPath, currentAppPath, currentAppPath, tempDir)
+`, currentAppPath, newAppPath, currentAppPath, currentAppPath, filepath.Dir(currentAppPath), currentAppPath, tempDir)
 
 		// Clean up temp zip immediately
 		os.Remove(tempZip)
