@@ -4,14 +4,19 @@ import (
 	"archive/zip"
 	"bytes"
 	"claude-webext-patcher/utils"
+	"crypto/sha256"
+	"crypto/sha512"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -55,6 +60,12 @@ var (
 	AppFolder       = utils.ResolvePath(appFolderName)
 	appResourcesDir string
 	appExePath      string
+	// SkipPatches controls whether we skip modifying app.asar and related injections.
+	// Can be toggled via CLI (set by main) or by environment variable CLWEL_NO_INJECT.
+	SkipPatches     bool
+	// ForceReinstall forces re-download/extraction even if the newest supported version
+	// is already installed. Can be toggled via CLI (set by main) or env CLWEL_FORCE_REINSTALL.
+	ForceReinstall  bool
 )
 
 func init() {
@@ -429,9 +440,16 @@ func downloadAndExtract(version, downloadURL string) error {
 }
 
 func EnsurePatched() error {
-	if err := ensureTools(); err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+	// Resolve environment variable fallbacks
+	skip := SkipPatches || os.Getenv("CLWEL_NO_INJECT") != ""
+	force := ForceReinstall || os.Getenv("CLWEL_FORCE_REINSTALL") != ""
+
+	// Only require Node/tools when we intend to patch/inject
+	if !skip {
+		if err := ensureTools(); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// Get current version
@@ -450,8 +468,7 @@ func EnsurePatched() error {
 
 	fmt.Printf("Newest supported version: %s\n", newestVersion)
 
-	// Update if needed
-	if currentVersion != newestVersion {
+	if currentVersion != newestVersion || force {
 		fmt.Printf("Updating to %s...\n", newestVersion)
 
 		if err := downloadAndExtract(newestVersion, downloadURL); err != nil {
@@ -461,10 +478,19 @@ func EnsurePatched() error {
 		// Write version
 		os.WriteFile(claudeVersionFile, []byte(newestVersion), 0644)
 
-		// Apply patches
-		if err := applyPatches(newestVersion); err != nil {
-			return fmt.Errorf("applying patches: %v", err)
+		if skip {
+			fmt.Println("Safe mode: skipping asar injection and hash patching.")
+			finalizeApp()
+		} else {
+			// Apply patches
+			if err := applyPatches(newestVersion); err != nil {
+				return fmt.Errorf("applying patches: %v", err)
+			}
 		}
+	} else if skip {
+		// Even if up-to-date, allow finalize step to ensure correct signing/quarantine
+		fmt.Println("Safe mode: up-to-date. Skipping injection; finalizing existing install.")
+		finalizeApp()
 	}
 
 	return nil
@@ -567,7 +593,39 @@ func applyPatches(version string) error {
 		}
 
 		if !patchApplied {
-			return fmt.Errorf("patch %d failed: none of the target files could be patched", i+1)
+			// Fallback: hashed Vite filenames sometimes change. Try scanning .vite/build for index-*.js
+			// and apply the patch if it results in a content change.
+			viteDir := filepath.Join(tempDir, ".vite", "build")
+			entries, err := os.ReadDir(viteDir)
+			if err == nil {
+				for _, e := range entries {
+					name := e.Name()
+					if e.IsDir() || !strings.HasPrefix(name, "index-") || !strings.HasSuffix(name, ".js") {
+						continue
+					}
+					candidate := filepath.Join(viteDir, name)
+					content, err := os.ReadFile(candidate)
+					if err != nil {
+						continue
+					}
+
+					// Attempt patch; only write back if content actually changes
+					newContent := patch.Func(content)
+					if !bytes.Equal(newContent, content) {
+						if err := os.WriteFile(candidate, newContent, 0644); err != nil {
+							fmt.Printf("Failed to write fallback file %s: %v\n", name, err)
+							continue
+						}
+						fmt.Printf("Successfully applied patch via fallback to %s\n", candidate)
+						patchApplied = true
+						break
+					}
+				}
+			}
+
+			if !patchApplied {
+				return fmt.Errorf("patch %d failed: none of the target files could be patched", i+1)
+			}
 		}
 	}
 
@@ -610,35 +668,313 @@ func applyPatches(version string) error {
 		return fmt.Errorf("patching exe: %v", err)
 	}
 
-	// Ad-hoc sign on macOS after all modifications
-	if runtime.GOOS == "darwin" {
-		fmt.Println("Signing app with ad-hoc signature...")
-		appPath := filepath.Join(AppFolder, "Claude.app")
-
-		// Remove existing signature first
-		cmd := exec.Command("codesign", "--remove-signature", appPath)
-		cmd.Run() // Ignore errors, might not be signed
-
-		// Sign with ad-hoc signature
-		cmd = exec.Command("codesign", "--force", "--deep", "--sign", "-", appPath)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			fmt.Printf("Warning: Could not sign app: %v\n%s\n", err, string(output))
-			// Continue anyway - might still work
-		} else {
-			fmt.Println("App signed successfully")
-		}
-
-		// Clear quarantine attributes recursively
-		cmd = exec.Command("xattr", "-dr", "com.apple.quarantine", appPath)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			fmt.Printf("Warning: Could not clear quarantine: %v\n%s\n", err, string(output))
-		} else {
-			fmt.Println("Cleared quarantine attributes on Claude.app")
-		}
-	}
+	// Finalize the app (sign and clear quarantine on macOS)
+	finalizeApp()
 
 	fmt.Println("Patches applied successfully!")
 	return nil
+}
+
+func captureHashMismatch() (string, string, error) {
+    // On macOS, the asar integrity is stored in Info.plist. Running the GUI app won't reliably
+    // print integrity errors to stdout. Instead, parse Info.plist for the asar integrity entry,
+    // compute the hash of app.asar, and return (expected, actual).
+    // Note: Electron expects the SHA256 over the ASAR HEADER only, not the whole file,
+    // specifically the raw header string bytes. See Electron "ASAR Integrity" docs.
+	if runtime.GOOS == "darwin" {
+		return captureHashFromPlist()
+	}
+
+	// Non-macOS fallback: run the executable and parse the integrity error output.
+	cmd := exec.Command(appExePath)
+	output, _ := cmd.CombinedOutput()
+
+	// Parse the error output for the hashes
+	// Looking for pattern: "Integrity check failed for asar archive (EXPECTED vs ACTUAL)"
+	outputStr := string(output)
+	if strings.Contains(outputStr, "Integrity check failed") {
+		// Extract the hashes using a simple string parse
+		start := strings.Index(outputStr, "(")
+		end := strings.Index(outputStr, ")")
+		if start != -1 && end != -1 {
+			hashPart := outputStr[start+1 : end]
+			parts := strings.Split(hashPart, " vs ")
+			if len(parts) == 2 {
+				return parts[0], parts[1], nil
+			}
+		}
+	}
+
+	return "", "", fmt.Errorf("could not parse hash mismatch")
+}
+
+func captureHashFromPlist() (string, string, error) {
+	plistPath := filepath.Join(AppFolder, "Claude.app", "Contents", "Info.plist")
+	data, err := os.ReadFile(plistPath)
+	if err != nil {
+		return "", "", fmt.Errorf("reading Info.plist: %v", err)
+	}
+
+	// Try to locate the asar integrity within the plist (works for XML and often binary too).
+	s := string(data)
+	lower := strings.ToLower(s)
+	idx := strings.Index(lower, "asarintegrity")
+	if idx == -1 {
+		// Some packagers use ElectronAsarIntegrity; be generous and search 'electron' + 'asarintegrity'
+		idx = strings.Index(lower, "electronasarintegrity")
+	}
+	if idx == -1 {
+		return "", "", fmt.Errorf("asar integrity entry not found in Info.plist")
+	}
+
+	// Search within a window around the integrity entry for algorithm and hash fields.
+	start := idx - 200
+	if start < 0 {
+		start = 0
+	}
+	end := idx + 1200
+	if end > len(s) {
+		end = len(s)
+	}
+	window := s[start:end]
+
+	algo := ""
+	expected := ""
+	// JSON-like form
+	algoJSON := regexp.MustCompile(`(?i)"algorithm"\s*:\s*"([^"]+)"`)
+	hashJSON := regexp.MustCompile(`(?i)"hash"\s*:\s*"([A-Za-z0-9+\/=]+|[A-Fa-f0-9]{64,128})"`)
+
+	if m := algoJSON.FindStringSubmatch(window); len(m) == 2 {
+		algo = m[1]
+	}
+	if m := hashJSON.FindStringSubmatch(window); len(m) == 2 {
+		expected = m[1]
+	}
+
+	// XML form fallback
+	if expected == "" {
+		algoXML := regexp.MustCompile(`(?i)<key>\s*algorithm\s*</key>\s*<string>\s*([^<]+)\s*</string>`)
+		hashXML := regexp.MustCompile(`(?i)<key>\s*hash\s*</key>\s*<string>\s*([^<]+)\s*</string>`)
+		if m := algoXML.FindStringSubmatch(window); len(m) == 2 {
+			algo = strings.TrimSpace(m[1])
+		}
+		if m := hashXML.FindStringSubmatch(window); len(m) == 2 {
+			expected = strings.TrimSpace(m[1])
+		}
+	}
+	if expected == "" {
+		return "", "", fmt.Errorf("could not locate expected asar hash in Info.plist")
+	}
+	if algo == "" {
+		// Default to SHA512 if algorithm is not explicitly present
+		algo = "SHA512"
+	}
+
+	// Compute actual HEADER hash of app.asar (not the whole file). Electron expects the
+	// SHA256 of the raw header, as documented in "ASAR Integrity". Use @electron/asar's
+	// getRawHeader via Node to compute the correct value.
+	actual, err := computeAsarHeaderHashHex()
+	if err != nil {
+		return "", "", fmt.Errorf("computing asar header hash: %v", err)
+	}
+	return expected, actual, nil
+}
+
+// computeAsarHeaderHashHex computes the SHA256 hash (hex) of the raw ASAR header
+// using the @electron/asar library's getRawHeader helper via Node.js.
+// Important:
+//   - Electron validates the header string (getRawHeader(...).headerString), not the
+//     entire archive. We therefore hash exactly those bytes.
+//   - We resolve the module via Node's createRequire() pointed at our Application Support
+//     node_modules path (see utils.ResolvePath). We first try '@electron/asar' (Node >= 22)
+//     and fall back to 'asar' for older installs.
+func computeAsarHeaderHashHex() (string, error) {
+	asarPath := filepath.Join(appResourcesDir, "app.asar")
+
+	// Resolve the node_modules base path for module resolution
+	moduleBasePath, err := getNodeModulesBasePath()
+	if err != nil {
+		return "", err
+	}
+
+	// Write a small temporary Node script to compute the header hash
+	script := `const crypto=require('node:crypto');
+const {createRequire}=require('node:module');
+const p=process.argv[2];
+const nm=process.argv[3];
+const req=createRequire(nm.endsWith('/')? nm : nm + '/');
+let asar;
+try { asar = req('@electron/asar'); } catch(_) { asar = req('asar'); }
+try{
+  const result=asar.getRawHeader(p);
+  const raw=(result && result.headerString) ? result.headerString : result;
+  const h=crypto.createHash('sha256').update(typeof raw === 'string' ? Buffer.from(raw) : raw).digest('hex');
+  process.stdout.write(h);
+}catch(e){
+  console.error('ERR:'+e.message);
+  process.exit(1);
+}`
+
+	tmpFile := filepath.Join(os.TempDir(), "clwel_compute_header_hash.js")
+	if err := os.WriteFile(tmpFile, []byte(script), 0644); err != nil {
+		return "", fmt.Errorf("writing temp node script: %v", err)
+	}
+	defer os.Remove(tmpFile)
+
+	cmd := exec.Command("node", tmpFile, asarPath, moduleBasePath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("node compute header hash failed: %v\nOutput: %s", err, string(out))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// getNodeModulesBasePath resolves the node_modules base directory for require() lookups.
+func getNodeModulesBasePath() (string, error) {
+	nodeModulesPath := utils.ResolvePath("node_modules")
+	if info, err := os.Stat(nodeModulesPath); err == nil && info.IsDir() {
+		return nodeModulesPath, nil
+	}
+	return "", fmt.Errorf("node_modules not found; ensure tools are installed")
+}
+
+func computeAsarHashBytes(algorithm string) ([]byte, error) {
+	asarPath := filepath.Join(appResourcesDir, "app.asar")
+	f, err := os.Open(asarPath)
+	if err != nil {
+		return nil, fmt.Errorf("opening app.asar: %v", err)
+	}
+	defer f.Close()
+
+	// Choose hash algorithm; default SHA512
+	algLower := strings.ToLower(algorithm)
+	if strings.Contains(algLower, "256") {
+		h := sha256.New()
+		if _, err := io.Copy(h, f); err != nil {
+			return nil, fmt.Errorf("hashing app.asar (sha256): %v", err)
+		}
+		sum := h.Sum(nil)
+		return sum, nil
+	}
+	// Fallback to sha512
+	h := sha512.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return nil, fmt.Errorf("hashing app.asar (sha512): %v", err)
+	}
+	sum := h.Sum(nil)
+	return sum, nil
+}
+
+func encodeToMatch(exemplar string, b []byte) string {
+	isHex := regexp.MustCompile(`^[A-Fa-f0-9]{64,128}$`).MatchString(exemplar)
+	if isHex {
+		const hexdigits = "0123456789abcdef"
+		out := make([]byte, len(b)*2)
+		for i, v := range b {
+			out[i*2] = hexdigits[v>>4]
+			out[i*2+1] = hexdigits[v&0x0f]
+		}
+		return string(out)
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+func replaceHashInExe(oldHash, newHash string) error {
+	if runtime.GOOS == "darwin" {
+		// On macOS, the hash can appear in multiple Info.plists (app + helpers/frameworks).
+		// Walk all Info.plists under Contents/ and replace occurrences of the old hash
+		// within ElectronAsarIntegrity entries that reference Resources/app.asar.
+		contentsRoot := filepath.Join(AppFolder, "Claude.app", "Contents")
+		updated := 0
+		walkErr := filepath.WalkDir(contentsRoot, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				// Skip problematic entries but continue
+				return nil
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if filepath.Base(path) != "Info.plist" {
+				return nil
+			}
+
+			data, rerr := os.ReadFile(path)
+			if rerr != nil {
+				return nil
+			}
+			// Only consider plists that define ElectronAsarIntegrity and reference app.asar
+			if !bytes.Contains(data, []byte("ElectronAsarIntegrity")) || !bytes.Contains(data, []byte("Resources/app.asar")) {
+				return nil
+			}
+
+			if !bytes.Contains(data, []byte(oldHash)) {
+				return nil
+			}
+
+			replaced := bytes.ReplaceAll(data, []byte(oldHash), []byte(newHash))
+			if bytes.Equal(replaced, data) {
+				return nil
+			}
+			if werr := os.WriteFile(path, replaced, 0644); werr != nil {
+				fmt.Printf("Warning: failed updating %s: %v\n", path, werr)
+				return nil
+			}
+			fmt.Printf("Updated asar integrity hash in %s\n", path)
+			updated++
+			return nil
+		})
+		if walkErr != nil {
+			return fmt.Errorf("updating Info.plist files: %v", walkErr)
+		}
+		if updated == 0 {
+			return fmt.Errorf("hash not found in any Info.plist files")
+		}
+		return nil
+	} else {
+		// Windows - hash is in the executable
+		data, err := os.ReadFile(appExePath)
+		if err != nil {
+			return err
+		}
+
+		// Search for the hash as a string
+		replaced := bytes.Replace(data, []byte(oldHash), []byte(newHash), 1)
+		if bytes.Equal(replaced, data) {
+			return fmt.Errorf("hash not found in executable")
+		}
+
+		// Write back
+		return os.WriteFile(appExePath, replaced, 0755)
+	}
+}
+
+func finalizeApp() {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	fmt.Println("Finalizing app (signing and clearing quarantine)...")
+	appPath := filepath.Join(AppFolder, "Claude.app")
+
+	// Remove existing signature first
+	cmd := exec.Command("codesign", "--remove-signature", appPath)
+	cmd.Run() // Ignore errors, might not be signed
+
+	// Sign with ad-hoc signature
+	cmd = exec.Command("codesign", "--force", "--deep", "--sign", "-", appPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		fmt.Printf("Warning: Could not sign app: %v\n%s\n", err, string(output))
+		// Continue anyway - might still work
+	} else {
+		fmt.Println("App signed successfully")
+	}
+
+	// Clear quarantine attributes recursively
+	cmd = exec.Command("xattr", "-dr", "com.apple.quarantine", appPath)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		fmt.Printf("Warning: Could not clear quarantine: %v\n%s\n", err, string(output))
+	} else {
+		fmt.Println("Cleared quarantine attributes on Claude.app")
+	}
 }
 
 func replaceIcons() error {
@@ -718,64 +1054,4 @@ func replaceIcons() error {
 	}
 
 	return nil
-}
-
-func captureHashMismatch() (string, string, error) {
-	cmd := exec.Command(appExePath)
-	output, _ := cmd.CombinedOutput()
-
-	// Parse the error output for the hashes
-	// Looking for pattern: "Integrity check failed for asar archive (EXPECTED vs ACTUAL)"
-	outputStr := string(output)
-	if strings.Contains(outputStr, "Integrity check failed") {
-		// Extract the hashes using a simple string parse
-		start := strings.Index(outputStr, "(")
-		end := strings.Index(outputStr, ")")
-		if start != -1 && end != -1 {
-			hashPart := outputStr[start+1 : end]
-			parts := strings.Split(hashPart, " vs ")
-			if len(parts) == 2 {
-				return parts[0], parts[1], nil
-			}
-		}
-	}
-
-	return "", "", fmt.Errorf("could not parse hash mismatch")
-}
-
-func replaceHashInExe(oldHash, newHash string) error {
-	if runtime.GOOS == "darwin" {
-		// On macOS, the hash is in Info.plist
-		plistPath := filepath.Join(AppFolder, "Claude.app", "Contents", "Info.plist")
-
-		// Read the plist
-		data, err := os.ReadFile(plistPath)
-		if err != nil {
-			return fmt.Errorf("reading Info.plist: %v", err)
-		}
-
-		// Replace the hash
-		replaced := bytes.Replace(data, []byte(oldHash), []byte(newHash), 1)
-		if bytes.Equal(replaced, data) {
-			return fmt.Errorf("hash not found in Info.plist")
-		}
-
-		// Write back
-		return os.WriteFile(plistPath, replaced, 0644)
-	} else {
-		// Windows - hash is in the executable
-		data, err := os.ReadFile(appExePath)
-		if err != nil {
-			return err
-		}
-
-		// Search for the hash as a string
-		replaced := bytes.Replace(data, []byte(oldHash), []byte(newHash), 1)
-		if bytes.Equal(replaced, data) {
-			return fmt.Errorf("hash not found in executable")
-		}
-
-		// Write back
-		return os.WriteFile(appExePath, replaced, 0755)
-	}
 }

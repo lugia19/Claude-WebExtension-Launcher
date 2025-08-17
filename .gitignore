@@ -6,6 +6,9 @@
 /Claude-WebExt-Launcher.exe
 /builds/
 
+# Local build artifacts and logs
+bin/
+claude_safe_debug.log
 # macOS
 .DS_Store
 .DS_Store?
