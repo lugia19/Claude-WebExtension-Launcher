@@ -277,18 +277,16 @@ func CheckAndUpdate() error {
 
 		fmt.Println("Replacing app bundle and restarting...")
 
-		// Create shell script to swap bundles and relaunch
+		// Create shell script to swap bundles, clear quarantine, and relaunch via LaunchServices
 		script := fmt.Sprintf(`
 sleep 1
 rm -rf "%s"
 mv "%s" "%s"
 chmod +x "%s/Contents/MacOS/Claude_WebExtension_Launcher"
-osascript -e 'tell application "Terminal"
-	set newTab to do script "cd \"%s\" && \"%s/Contents/MacOS/Claude_WebExtension_Launcher\" && exit"
-	activate
-end tell'
+xattr -dr com.apple.quarantine "%s"
+open -n "%s"
 rm -rf "%s"
-`, currentAppPath, newAppPath, currentAppPath, currentAppPath, filepath.Dir(currentAppPath), currentAppPath, tempDir)
+`, currentAppPath, newAppPath, currentAppPath, currentAppPath, currentAppPath, currentAppPath, tempDir)
 
 		// Clean up temp zip immediately
 		os.Remove(tempZip)

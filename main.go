@@ -92,28 +92,36 @@ func main() {
 	}
 
 	// Launch Claude
-	fmt.Println("Launching Claude.")
-	var claudePath string
+	fmt.Println("Launching Claude...")
+
+	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
-		claudePath = filepath.Join(patcher.AppFolder, "claude.exe")
+		claudePath := filepath.Join(patcher.AppFolder, "claude.exe")
+		cmd = exec.Command(claudePath)
 	case "darwin":
-		// macOS app bundle structure
-		claudePath = filepath.Join(patcher.AppFolder, "Claude.app", "Contents", "MacOS", "Claude")
+		// Use LaunchServices for GUI app launch on macOS
+		claudeApp := filepath.Join(patcher.AppFolder, "Claude.app")
+		fmt.Println("Launching Claude via LaunchServices (open -n)...")
+		cmd = exec.Command("open", "-n", claudeApp)
 	default:
 		// Linux and other Unix-like systems
-		claudePath = filepath.Join(patcher.AppFolder, "claude")
+		claudePath := filepath.Join(patcher.AppFolder, "claude")
+		cmd = exec.Command(claudePath)
 	}
 
-	cmd := exec.Command(claudePath)
-	if launchClaudeInTerminal {
-		// In developer mode, run Claude in the same terminal to see debug output
+	if launchClaudeInTerminal && runtime.GOOS != "darwin" {
+		// In developer mode (non-macOS), run Claude in the same terminal to see debug output
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.Stdin = os.Stdin
-		cmd.Run()
+		_ = cmd.Run()
 	} else {
-		// Normal mode - launch Claude detached
-		cmd.Start()
+		// Normal mode - launch detached
+		if err := cmd.Start(); err != nil {
+			fmt.Printf("Failed to launch Claude: %v\n", err)
+		} else {
+			fmt.Println("Claude launch command issued.")
+		}
 	}
 }

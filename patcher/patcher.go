@@ -627,6 +627,14 @@ func applyPatches(version string) error {
 		} else {
 			fmt.Println("App signed successfully")
 		}
+
+		// Clear quarantine attributes recursively
+		cmd = exec.Command("xattr", "-dr", "com.apple.quarantine", appPath)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			fmt.Printf("Warning: Could not clear quarantine: %v\n%s\n", err, string(output))
+		} else {
+			fmt.Println("Cleared quarantine attributes on Claude.app")
+		}
 	}
 
 	fmt.Println("Patches applied successfully!")
