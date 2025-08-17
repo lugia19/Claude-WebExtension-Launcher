@@ -57,33 +57,9 @@ The installer provides:
 3. Applies a custom icon for easy identification
 4. Installs the default extensions
 
-## macOS ASAR Integrity (Crash Fix)
+## Platform Notes
 
-On macOS, Electron validates the integrity of `Resources/app.asar` at runtime using the SHA256 of the ASAR header (not the whole file). If this hash in `Info.plist` does not match, the app can crash immediately on launch.
-
-What this installer does:
-- Computes the SHA256 of the ASAR header using `@electron/asar.getRawHeader()` and hashes the exact header bytes (`headerString`).
-- Updates every `Info.plist` under `Claude.app/Contents/` that includes `ElectronAsarIntegrity` for `Resources/app.asar` to the new hash.
-- Uses Node’s `createRequire()` against the installer’s `node_modules` to reliably resolve `@electron/asar` (or `asar` fallback).
-
-Verify the hash matches:
-- Compute header hash manually:
-  ```bash
-  node -e 'const c=require("node:crypto");const{createRequire}=require("node:module");const req=createRequire(process.argv[2]+"/");let asar;try{asar=req("@electron/asar")}catch{asar=req("asar")}const r=asar.getRawHeader(process.argv[3]);const raw=r&&r.headerString?r.headerString:r;console.log(c.createHash("sha256").update(typeof raw==="string"?Buffer.from(raw):raw).digest("hex"))' \
-    "$HOME/Library/Application Support/Claude WebExtension Launcher/node_modules" \
-    "$HOME/Library/Application Support/Claude WebExtension Launcher/app-latest/Claude.app/Contents/Resources/app.asar"
-  ```
-- Read the plist value:
-  ```bash
-  /usr/libexec/PlistBuddy -c 'Print :ElectronAsarIntegrity:Resources/app.asar:hash' \
-    "$HOME/Library/Application Support/Claude WebExtension Launcher/app-latest/Claude.app/Contents/Info.plist"
-  ```
-- These two hashes must be identical.
-
-Tip: You can force a fresh patch and debug-launch with:
-```bash
-./bin/launcher --debug-launch --force-reinstall --no-term-relaunch
-```
+For macOS ASAR integrity details and ARM build notes, see `ARM_build_notes.md`.
 
 ## Privacy
 
