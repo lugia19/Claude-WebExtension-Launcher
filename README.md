@@ -19,16 +19,15 @@ This installer generates a modified version of the Claude Desktop client with ex
 
 This can happen due to reasons I'm not really sure of. Restarting the application is enough.
 
+### Refuses to open on MacOS (Insecure/Not Verified)
+You might need to go to Settings -> Privacy and Security and click "Open anyway".
+
+MacOS REALLY doesn't like apps that aren't notarized (aka, that haven't paid the 99$ apple tax).
+Not much I can do. I can't afford the subscription, and even if I could, this wouldn't be allowed on the app store.
+
 ### First Launch Network Service Crash (macOS only)
 On first launch, you might see a crash dialog about the network service. This is (likely) because the modified app needs Keychain permission to be granted, given that it uses an ad-hoc signature. Just ignore it.
 
-### MacOS issues
-MacOS REALLY doesn't like apps that aren't notarized (aka, that haven't paid the 99$ apple tax).
-
-If the app doesn't work, you might need to go to settings and security to let it run, or clear the quarantine flag:
-`xattr -cr /path/to/Claude_WebExtension_Launcher.app`
-
-Not much I can do. I can't afford the subscription, and even if I could, this wouldn't be allowed on the app store.
 
 ## Installation
 
