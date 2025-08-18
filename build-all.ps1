@@ -195,14 +195,27 @@ if (Test-Path ".\builds\$APP_NAME-$VERSION-windows.zip") {
     Remove-Item ".\builds\$APP_NAME-$VERSION-windows.zip"
 }
 if (Test-Path ".\builds\$APP_NAME.exe") {
-    $zipPath = "$currentDirWSL/builds/$APP_NAME-$VERSION-windows.zip"
-    $exePath = "$currentDirWSL/builds/$APP_NAME.exe"
+    $tempDir = ".\builds\temp-windows"
     
-    wsl sh -c "cd '$currentDirWSL/builds' && zip '$APP_NAME-$VERSION-windows.zip' '$APP_NAME.exe'"
+    # Create temporary directory for packaging
+    if (Test-Path $tempDir) {
+        Remove-Item $tempDir -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $tempDir | Out-Null
+    
+    # Copy executable and batch scripts to temp directory
+    Copy-Item ".\builds\$APP_NAME.exe" "$tempDir\$APP_NAME.exe"
+    Copy-Item ".\resources\Toggle-Startup.bat" "$tempDir\Toggle-Startup.bat"
+    Copy-Item ".\resources\Toggle-StartMenu.bat" "$tempDir\Toggle-StartMenu.bat"
+    
+    $tempDirWSL = ConvertTo-WSLPath $tempDir
+    
+    wsl sh -c "cd '$tempDirWSL' && zip '$currentDirWSL/builds/$APP_NAME-$VERSION-windows.zip' *"
     
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Created: builds\$APP_NAME-$VERSION-windows.zip" -ForegroundColor Green
         Remove-Item ".\builds\$APP_NAME.exe"
+        Remove-Item $tempDir -Recurse -Force
     }
 }
 

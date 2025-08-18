@@ -157,9 +157,26 @@ GOOS=windows GOARCH=amd64 go build -o "$APP_NAME.exe"
 
 if [ -f "$APP_NAME.exe" ]; then
     echo "  Creating Windows distribution zip..."
-    zip "builds/$APP_NAME-$VERSION-windows.zip" "$APP_NAME.exe"
-    echo "  ✅ Created: builds/$APP_NAME-$VERSION-windows.zip"
+    
+    # Create temporary directory for packaging
+    temp_dir="builds/temp-windows"
+    mkdir -p "$temp_dir"
+    
+    # Copy executable and batch scripts to temp directory
+    cp "$APP_NAME.exe" "$temp_dir/"
+    cp "resources/Toggle-Startup.bat" "$temp_dir/"
+    cp "resources/Toggle-StartMenu.bat" "$temp_dir/"
+    
+    # Create zip from temp directory
+    cd "$temp_dir"
+    zip "../$APP_NAME-$VERSION-windows.zip" *
+    cd ../..
+    
+    # Clean up
     rm "$APP_NAME.exe"
+    rm -rf "$temp_dir"
+    
+    echo "  ✅ Created: builds/$APP_NAME-$VERSION-windows.zip"
 else
     echo "  ❌ Windows build failed!"
 fi

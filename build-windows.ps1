@@ -48,14 +48,26 @@ if (Test-Path ".\builds\$APP_NAME.exe") {
 	Write-Host "`nCreating distribution zip..." -ForegroundColor Cyan
     
 	$zipPath = ".\builds\$APP_NAME-$VERSION-windows.zip"
+	$tempDir = ".\builds\temp-windows"
     
 	# Remove old zip if it exists
 	if (Test-Path $zipPath) {
 		Remove-Item $zipPath -Force
 	}
     
-	# Create the zip file
-	Compress-Archive -Path ".\builds\$APP_NAME.exe" -DestinationPath $zipPath -CompressionLevel Optimal
+	# Create temporary directory for packaging
+	if (Test-Path $tempDir) {
+		Remove-Item $tempDir -Recurse -Force
+	}
+	New-Item -ItemType Directory -Path $tempDir | Out-Null
+    
+	# Copy executable and batch scripts to temp directory
+	Copy-Item ".\builds\$APP_NAME.exe" "$tempDir\$APP_NAME.exe"
+	Copy-Item ".\resources\Toggle-Startup.bat" "$tempDir\Toggle-Startup.bat"
+	Copy-Item ".\resources\Toggle-StartMenu.bat" "$tempDir\Toggle-StartMenu.bat"
+    
+	# Create the zip file from temp directory
+	Compress-Archive -Path "$tempDir\*" -DestinationPath $zipPath -CompressionLevel Optimal
     
 	if (Test-Path $zipPath) {
 		# Get file size for display
@@ -64,8 +76,9 @@ if (Test-Path ".\builds\$APP_NAME.exe") {
         
 		Write-Host "Created: builds\$APP_NAME-$VERSION-windows.zip ($zipSizeFormatted)" -ForegroundColor Green
         
-		# Clean up the executable
+		# Clean up temporary files
 		Remove-Item ".\builds\$APP_NAME.exe"
+		Remove-Item $tempDir -Recurse -Force
         
 		Write-Host "`nBuild complete!" -ForegroundColor Green
 		Write-Host "Distribution package: builds\$APP_NAME-$VERSION-windows.zip" -ForegroundColor White
