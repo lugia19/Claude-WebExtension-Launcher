@@ -377,14 +377,6 @@ func downloadAndExtract(version, downloadURL string) error {
 	// Close the zip reader before attempting to delete temp file
 	zipReader.Close()
 
-	// Delete the archive file only if KeepNupkgFiles is false
-	if !KeepNupkgFiles {
-		os.Remove(newVersionDownloadPath)
-		fmt.Println("Removed temporary archive file")
-	} else {
-		fmt.Printf("Keeping archive file: %s\n", newVersionZipName)
-	}
-
 	// macOS specific: Make sure the executable has execute permissions
 	if runtime.GOOS == "darwin" {
 		// Make the main executable executable
@@ -423,6 +415,14 @@ func downloadAndExtract(version, downloadURL string) error {
 		} else {
 			fmt.Println("Removed ShipIt to prevent self-updates")
 		}
+	}
+
+	// Delete the archive file only if KeepNupkgFiles is false
+	if !KeepNupkgFiles {
+		os.Remove(newVersionDownloadPath)
+		fmt.Println("Removed temporary archive file")
+	} else {
+		fmt.Printf("Keeping archive file: %s\n", newVersionZipName)
 	}
 
 	return nil
@@ -595,7 +595,33 @@ func applyPatches(version string) error {
 	}
 	fmt.Printf("Repacking successful\n")
 
-	// Fix the hash in the exe
+	// Ad-hoc sign on macOS after all modifications
+	if runtime.GOOS == "darwin" {
+		fmt.Println("Signing app with ad-hoc signature...")
+		appPath := filepath.Join(AppFolder, "Claude.app")
+
+		// Remove existing signature first
+		cmd := exec.Command("codesign", "--remove-signature", appPath)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			fmt.Printf("Remove signature output: %s\n", string(output))
+			// Ignore errors, might not be signed
+		} else if len(output) > 0 {
+			fmt.Printf("Remove signature output: %s\n", string(output))
+		}
+
+		// Sign with ad-hoc signature
+		cmd = exec.Command("codesign", "--force", "--deep", "--sign", "-", appPath)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			fmt.Printf("Warning: Could not sign app: %v\n%s\n", err, string(output))
+			// Continue anyway - might still work
+		} else {
+			fmt.Printf("App signed successfully\n")
+			if len(output) > 0 {
+				fmt.Printf("Signing output: %s\n", string(output))
+			}
+		}
+	}
+
 	fmt.Println("Capturing hash mismatch...")
 	expectedHash, actualHash, err := captureHashMismatch()
 	if err != nil {
@@ -617,7 +643,12 @@ func applyPatches(version string) error {
 
 		// Remove existing signature first
 		cmd := exec.Command("codesign", "--remove-signature", appPath)
-		cmd.Run() // Ignore errors, might not be signed
+		if output, err := cmd.CombinedOutput(); err != nil {
+			fmt.Printf("Remove signature output: %s\n", string(output))
+			// Ignore errors, might not be signed
+		} else if len(output) > 0 {
+			fmt.Printf("Remove signature output: %s\n", string(output))
+		}
 
 		// Sign with ad-hoc signature
 		cmd = exec.Command("codesign", "--force", "--deep", "--sign", "-", appPath)
@@ -625,7 +656,10 @@ func applyPatches(version string) error {
 			fmt.Printf("Warning: Could not sign app: %v\n%s\n", err, string(output))
 			// Continue anyway - might still work
 		} else {
-			fmt.Println("App signed successfully")
+			fmt.Printf("App signed successfully\n")
+			if len(output) > 0 {
+				fmt.Printf("Signing output: %s\n", string(output))
+			}
 		}
 	}
 
@@ -719,6 +753,7 @@ func captureHashMismatch() (string, string, error) {
 	// Parse the error output for the hashes
 	// Looking for pattern: "Integrity check failed for asar archive (EXPECTED vs ACTUAL)"
 	outputStr := string(output)
+	fmt.Println(outputStr)
 	if strings.Contains(outputStr, "Integrity check failed") {
 		// Extract the hashes using a simple string parse
 		start := strings.Index(outputStr, "(")
