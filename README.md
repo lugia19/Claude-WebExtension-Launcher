@@ -19,6 +19,10 @@ This installer generates a modified version of the Claude Desktop client with ex
 
 This can happen due to reasons I'm not really sure of. Restarting the application is enough.
 
+### Windows defender flags it as malware
+
+Yep, Waca- etc are a pretty common false positive. Pyinstaller-built exes used to also trigger it. There isn't really anything I can do about that.
+
 ### Refuses to open on MacOS (Insecure/Not Verified)
 You might need to go to Settings -> Privacy and Security and click "Open anyway".
 
