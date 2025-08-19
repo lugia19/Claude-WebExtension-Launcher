@@ -15,9 +15,10 @@ import (
 const launchClaudeInTerminal = false
 
 // Version is the current version of the application
-const Version = "1.1.0"
+const Version = "1.1.1"
 
 func main() {
+	fmt.Printf("Claude_WebExtension_Launcher version: %s\n", Version)
 	// Set version for selfupdate module
 	selfupdate.CurrentVersion = Version
 
