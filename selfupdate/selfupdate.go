@@ -303,23 +303,64 @@ rm -rf "%s"
 
 	} else {
 		// Windows - flat structure, use existing .new file approach
-		var newExeData []byte
 		executableName := getExecutableName()
-		newExeData, err = os.ReadFile(filepath.Join(tempDir, executableName))
-		if err != nil {
+
+		// First, make sure the executable exists
+		newExePath := filepath.Join(tempDir, executableName)
+		if _, err := os.Stat(newExePath); err != nil {
 			os.Remove(tempZip)
 			os.RemoveAll(tempDir)
 			return fmt.Errorf("failed to find executable in update: %v", err)
 		}
 
-		// Write the new executable with .new suffix
-		exePath, _ := os.Executable()
-		newExeName := utils.ResolvePath(strings.TrimSuffix(filepath.Base(exePath), ".exe") + ".new.exe")
-
-		if err := os.WriteFile(newExeName, newExeData, 0755); err != nil {
+		// Copy ALL files from the update package to the application directory
+		// This ensures any helper scripts, resources, etc. are also updated
+		entries, err := os.ReadDir(tempDir)
+		if err != nil {
 			os.Remove(tempZip)
 			os.RemoveAll(tempDir)
-			return fmt.Errorf("failed to write new executable: %v", err)
+			return fmt.Errorf("failed to read update directory: %v", err)
+		}
+
+		exePath, _ := os.Executable()
+		appDir := filepath.Dir(exePath)
+
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue // Skip directories for now (flat structure expected)
+			}
+
+			srcPath := filepath.Join(tempDir, entry.Name())
+
+			// Special handling for the main executable - use .new suffix
+			if entry.Name() == executableName {
+				dstPath := filepath.Join(appDir, strings.TrimSuffix(entry.Name(), ".exe")+".new.exe")
+				srcData, err := os.ReadFile(srcPath)
+				if err != nil {
+					os.Remove(tempZip)
+					os.RemoveAll(tempDir)
+					return fmt.Errorf("failed to read executable: %v", err)
+				}
+				if err := os.WriteFile(dstPath, srcData, 0755); err != nil {
+					os.Remove(tempZip)
+					os.RemoveAll(tempDir)
+					return fmt.Errorf("failed to write new executable: %v", err)
+				}
+				fmt.Printf("Staged update: %s\n", entry.Name())
+			} else {
+				// For all other files, copy them directly
+				dstPath := filepath.Join(appDir, entry.Name())
+				srcData, err := os.ReadFile(srcPath)
+				if err != nil {
+					fmt.Printf("Warning: Failed to read %s: %v\n", entry.Name(), err)
+					continue
+				}
+				if err := os.WriteFile(dstPath, srcData, 0755); err != nil {
+					fmt.Printf("Warning: Failed to update %s: %v\n", entry.Name(), err)
+				} else {
+					fmt.Printf("Updated: %s\n", entry.Name())
+				}
+			}
 		}
 
 		// Clean up temp files before restarting
@@ -329,6 +370,7 @@ rm -rf "%s"
 		fmt.Println("Restarting to complete update...")
 
 		// Launch the new exe
+		newExeName := filepath.Join(appDir, strings.TrimSuffix(executableName, ".exe")+".new.exe")
 		cmd := exec.Command(newExeName)
 		if err := cmd.Start(); err != nil {
 			return fmt.Errorf("failed to start updated executable: %v", err)
