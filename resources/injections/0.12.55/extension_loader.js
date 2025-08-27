@@ -1,9 +1,10 @@
 // Convenience aliases
-const CUTfs = require('fs');
-const CUTpath = require('path');
-const CUTelectron = ue;
 const CUTmainWindow = e;
 const CUTwebView = r;
+
+const CUTfs = require('fs');
+const CUTpath = require('path');
+const CUTelectron = require("electron");
 const CUTsession = CUTelectron.session;
 
 let currentPath = CUTelectron.app.getAppPath();
@@ -19,7 +20,7 @@ while (currentPath !== CUTpath.dirname(currentPath)) {
     }
 }
 
- // Now load extensions
+// Now load extensions
 if (extPath) {
     const hadExtensions = CUTsession.defaultSession.extensions.getAllExtensions().length > 0;
 

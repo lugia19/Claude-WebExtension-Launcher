@@ -12,8 +12,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -46,7 +48,17 @@ var supportedVersions = map[string][]Patch{
 	"0.12.55": {
 		{
 			Files: []string{".vite/build/index-BZRfNpEg.js", ".vite/build/index-DyHP6ri_.js"},
-			Func:  patch_0_12_55,
+			Func: func(content []byte) []byte {
+				return patch_generic(content, "0.12.55")
+			},
+		},
+	},
+	"0.12.112": {
+		{
+			Files: []string{".vite/build/index.js"},
+			Func: func(content []byte) []byte {
+				return patch_generic(content, "0.12.55")
+			},
 		},
 	},
 }
@@ -99,7 +111,7 @@ func readCombinedInjection(version string, filenames []string) (string, error) {
 	return combined.String(), nil
 }
 
-func patch_0_12_55(content []byte) []byte {
+func patch_generic(content []byte, version string) []byte {
 	contentStr := string(content)
 
 	// Load all injection files
@@ -110,21 +122,21 @@ func patch_0_12_55(content []byte) []byte {
 		"tabevents_polyfill.js",
 	}
 
-	injection, err := readCombinedInjection("0.12.55", injectionFiles)
+	injection, err := readCombinedInjection(version, injectionFiles)
 	if err != nil {
 		fmt.Printf("Warning: %v\n", err)
 		return content
 	}
 
-	// First injection point - inside use() function
-	returnPattern := `return a(), i(), e.on("resize"`
-	if idx := strings.Index(contentStr, returnPattern); idx != -1 {
-		contentStr = contentStr[:idx] + "\n" + injection + "\n" + contentStr[idx:]
+	// First injection point - using regex to match return.*.on("resize"
+	returnPattern := regexp.MustCompile(`return.*\.on\("resize`)
+	if loc := returnPattern.FindStringIndex(contentStr); loc != nil {
+		contentStr = contentStr[:loc[0]] + "\n" + injection + "\n" + contentStr[loc[0]:]
 	}
 
 	// Second injection point - add chrome-extension: to the array
-	gxPattern := `gX = ["devtools:", "file:"]`
-	gxReplacement := `gX = ["devtools:", "file:", "chrome-extension:"]`
+	gxPattern := `["devtools:", "file:"]`
+	gxReplacement := `["devtools:", "file:", "chrome-extension:"]`
 	contentStr = strings.Replace(contentStr, gxPattern, gxReplacement, 1)
 
 	return []byte(contentStr)
@@ -195,7 +207,25 @@ func getLatestSupportedVersion() (string, string, error) {
 	for v := range supportedVersions {
 		supportedVersionsList = append(supportedVersionsList, v)
 	}
-	sort.Sort(sort.Reverse(sort.StringSlice(supportedVersionsList)))
+
+	// Sort with proper version comparison (newest first)
+	sort.Slice(supportedVersionsList, func(i, j int) bool {
+		partsI := strings.Split(supportedVersionsList[i], ".")
+		partsJ := strings.Split(supportedVersionsList[j], ".")
+
+		for k := 0; k < len(partsI) && k < len(partsJ); k++ {
+			numI, _ := strconv.Atoi(partsI[k])
+			numJ, _ := strconv.Atoi(partsJ[k])
+
+			if numI != numJ {
+				return numI > numJ // > for descending order (newest first)
+			}
+		}
+
+		// If all compared parts are equal, the one with more parts is newer
+		// e.g., "0.12.55.1" > "0.12.55"
+		return len(partsI) > len(partsJ)
+	})
 
 	if runtime.GOOS == "darwin" {
 		// Parse macOS manifest
