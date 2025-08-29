@@ -475,7 +475,20 @@ func EnsurePatched() error {
 	// Get newest supported version and download URL
 	newestVersion, downloadURL, err := getLatestSupportedVersion()
 	if err != nil {
-		return err
+		// If we have an existing installation, continue using it
+		if currentVersion != "" {
+			fmt.Printf("Warning: %v\n", err)
+			fmt.Printf("Continuing with existing installation (version %s)\n", currentVersion)
+
+			// Check if the app executable exists
+			if _, err := os.Stat(appExePath); os.IsNotExist(err) {
+				return fmt.Errorf("existing installation is incomplete (executable not found)")
+			}
+
+			return nil // Continue with existing installation
+		}
+		// No existing installation and no supported version available
+		return fmt.Errorf("no supported versions available and no existing installation found")
 	}
 
 	fmt.Printf("Newest supported version: %s\n", newestVersion)
@@ -495,6 +508,8 @@ func EnsurePatched() error {
 		if err := applyPatches(newestVersion); err != nil {
 			return fmt.Errorf("applying patches: %v", err)
 		}
+	} else {
+		fmt.Println("Already on the newest supported version")
 	}
 
 	return nil
