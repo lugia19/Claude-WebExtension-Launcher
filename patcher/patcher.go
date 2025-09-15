@@ -45,22 +45,32 @@ type Patch struct {
 }
 
 var supportedVersions = map[string][]Patch{
-	"0.12.55": {
+	// Generic patch that should work for most versions
+	"generic": {
 		{
-			Files: []string{".vite/build/index-BZRfNpEg.js", ".vite/build/index-DyHP6ri_.js"},
+			Files: []string{".vite/build/index.js", ".vite/build/index-BZRfNpEg.js", ".vite/build/index-DyHP6ri_.js"},
 			Func: func(content []byte) []byte {
-				return patch_generic(content, "0.12.55")
+				return patch_generic(content)
 			},
 		},
 	},
-	"0.12.112": {
-		{
-			Files: []string{".vite/build/index.js"},
-			Func: func(content []byte) []byte {
-				return patch_generic(content, "0.12.55")
-			},
-		},
-	},
+	// Add version-specific overrides here when needed
+	// Example:
+	// "0.13.0": {
+	//     {
+	//         Files: []string{"specific-file.js"},
+	//         Func: func(content []byte) []byte {
+	//             return patch_v0_13_0(content)
+	//         },
+	//     },
+	// },
+}
+
+// List of versions verified to work with generic patches
+var versionsVerifiedGenericCompatible = []string{
+	"0.12.125",
+	"0.12.112",
+	"0.12.55",
 }
 
 var (
@@ -77,6 +87,16 @@ func init() {
 		appResourcesDir = filepath.Join(AppFolder, "resources")
 		appExePath = filepath.Join(AppFolder, "claude.exe")
 	}
+}
+
+// Check if a version is verified to work with generic patches
+func isVersionVerified(version string) bool {
+	for _, v := range versionsVerifiedGenericCompatible {
+		if v == version {
+			return true
+		}
+	}
+	return false
 }
 
 // Patch functions
@@ -111,8 +131,38 @@ func readCombinedInjection(version string, filenames []string) (string, error) {
 	return combined.String(), nil
 }
 
-func patch_generic(content []byte, version string) []byte {
+func patch_generic(content []byte) []byte {
 	contentStr := string(content)
+
+	// First, find the injection point
+	returnPattern := regexp.MustCompile(`return\s+(\w+)\.on\("resize"`)
+	matches := returnPattern.FindStringSubmatch(contentStr)
+	if matches == nil || len(matches) < 2 {
+		fmt.Printf("Warning: Could not find injection point (return.*.on(\"resize\"))\n")
+		return content
+	}
+
+	// Extract mainWindow variable name from the pattern
+	mainWindowVar := matches[1]
+	fmt.Printf("Detected mainWindow variable: %s\n", mainWindowVar)
+
+	// Find the webView variable by looking for pattern like: variableName.webContents.on("dom-ready"
+	// We need to find this before the injection point
+	injectionIndex := returnPattern.FindStringIndex(contentStr)[0]
+	contentBeforeInjection := contentStr[:injectionIndex]
+
+	// Look for webView pattern
+	webViewPattern := regexp.MustCompile(`(\w+)\.webContents\.on\("dom-ready"`)
+	webViewMatches := webViewPattern.FindStringSubmatch(contentBeforeInjection)
+
+	webViewVar := ""
+	if webViewMatches != nil && len(webViewMatches) >= 2 {
+		webViewVar = webViewMatches[1]
+		fmt.Printf("Detected webView variable: %s\n", webViewVar)
+	} else {
+		fmt.Printf("Warning: Could not detect webView variable, falling back to 'r'\n")
+		webViewVar = "r" // Fallback to common default
+	}
 
 	// Load all injection files
 	injectionFiles := []string{
@@ -122,15 +172,19 @@ func patch_generic(content []byte, version string) []byte {
 		"tabevents_polyfill.js",
 	}
 
-	injection, err := readCombinedInjection(version, injectionFiles)
+	injection, err := readCombinedInjection("generic", injectionFiles)
 	if err != nil {
 		fmt.Printf("Warning: %v\n", err)
 		return content
 	}
 
-	// First injection point - using regex to match return.*.on("resize"
-	returnPattern := regexp.MustCompile(`return.*\.on\("resize`)
-	if loc := returnPattern.FindStringIndex(contentStr); loc != nil {
+	// Replace placeholders in the injection with detected variable names
+	injection = strings.ReplaceAll(injection, "PLACEHOLDER_MAINWINDOW", mainWindowVar)
+	injection = strings.ReplaceAll(injection, "PLACEHOLDER_WEBVIEW", webViewVar)
+
+	// Insert the injection at the injection point
+	loc := returnPattern.FindStringIndex(contentStr)
+	if loc != nil {
 		contentStr = contentStr[:loc[0]] + "\n" + injection + "\n" + contentStr[loc[0]:]
 	}
 
@@ -201,60 +255,53 @@ func ensureTools() error {
 	return nil
 }
 
-func getLatestSupportedVersion() (string, string, error) {
-	// Get supported supportedVersionsList sorted newest first
-	supportedVersionsList := make([]string, 0, len(supportedVersions))
-	for v := range supportedVersions {
-		supportedVersionsList = append(supportedVersionsList, v)
-	}
-
-	// Sort with proper version comparison (newest first)
-	sort.Slice(supportedVersionsList, func(i, j int) bool {
-		partsI := strings.Split(supportedVersionsList[i], ".")
-		partsJ := strings.Split(supportedVersionsList[j], ".")
-
-		for k := 0; k < len(partsI) && k < len(partsJ); k++ {
-			numI, _ := strconv.Atoi(partsI[k])
-			numJ, _ := strconv.Atoi(partsJ[k])
-
-			if numI != numJ {
-				return numI > numJ // > for descending order (newest first)
-			}
-		}
-
-		// If all compared parts are equal, the one with more parts is newer
-		// e.g., "0.12.55.1" > "0.12.55"
-		return len(partsI) > len(partsJ)
-	})
+func getLatestVersion() (string, string, error) {
+	fmt.Printf("Getting latest version for OS: %s\n", runtime.GOOS)
 
 	if runtime.GOOS == "darwin" {
 		// Parse macOS manifest
+		fmt.Printf("Fetching macOS manifest from: %s\n", macosReleasesURL)
 		resp, err := http.Get(macosReleasesURL)
 		if err != nil {
 			return "", "", fmt.Errorf("fetching macOS manifest: %v", err)
 		}
 		defer resp.Body.Close()
 
+		// Read the response body for debugging
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return "", "", fmt.Errorf("reading macOS manifest body: %v", err)
+		}
+
 		var manifest MacOSManifest
-		if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+		if err := json.Unmarshal(body, &manifest); err != nil {
+			// Print first 500 chars for debugging
+			debugLen := len(body)
+			if debugLen > 500 {
+				debugLen = 500
+			}
+			fmt.Printf("Failed to parse manifest. First %d chars: %s\n", debugLen, string(body[:debugLen]))
 			return "", "", fmt.Errorf("parsing macOS manifest: %v", err)
 		}
 
-		// Build a map of available supportedVersionsList to their URLs
-		availableVersions := make(map[string]string)
-		for _, release := range manifest.Releases {
-			availableVersions[release.Version] = release.UpdateTo.URL
-		}
-
-		// Find newest supported version that's available
-		for _, version := range supportedVersionsList {
-			if url, exists := availableVersions[version]; exists {
-				return version, url, nil
+		// Get the current/latest release
+		if manifest.CurrentRelease != "" {
+			// Find the URL for the current release
+			for _, release := range manifest.Releases {
+				if release.Version == manifest.CurrentRelease {
+					return release.Version, release.UpdateTo.URL, nil
+				}
 			}
 		}
-		return "", "", fmt.Errorf("no supported supportedVersionsList available in macOS manifest")
+
+		// Fallback: if currentRelease is not set or not found, use the first release
+		if len(manifest.Releases) > 0 {
+			return manifest.Releases[0].Version, manifest.Releases[0].UpdateTo.URL, nil
+		}
+
+		return "", "", fmt.Errorf("no releases available in macOS manifest")
 	} else {
-		// Windows - use existing RELEASES logic
+		// Windows - parse RELEASES file to find the latest version
 		resp, err := http.Get(windowsReleasesURL)
 		if err != nil {
 			return "", "", fmt.Errorf("fetching Windows releases: %v", err)
@@ -263,15 +310,69 @@ func getLatestSupportedVersion() (string, string, error) {
 
 		releasesText, _ := io.ReadAll(resp.Body)
 
-		// Find newest supported version
-		for _, version := range supportedVersionsList {
-			filename := fmt.Sprintf("AnthropicClaude-%s-full.nupkg", version)
-			if strings.Contains(string(releasesText), filename) {
-				downloadURL := strings.Replace(windowsReleasesURL, "RELEASES", filename, 1)
-				return version, downloadURL, nil
+		lines := strings.Split(string(releasesText), "\n")
+
+		// Find the latest version from the RELEASES file
+		// The format is typically: SHA1 filename size
+		var versions []struct {
+			version  string
+			url      string
+			filename string
+		}
+
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+
+			if strings.Contains(line, "AnthropicClaude-") && strings.Contains(line, "-full.nupkg") {
+				// Extract version from filename
+				parts := strings.Fields(line)
+				if len(parts) >= 2 {
+					filename := parts[1]
+					// Extract version from AnthropicClaude-X.Y.Z-full.nupkg
+					versionStart := strings.Index(filename, "AnthropicClaude-") + len("AnthropicClaude-")
+					versionEnd := strings.Index(filename, "-full.nupkg")
+					if versionStart > 0 && versionEnd > versionStart {
+						version := filename[versionStart:versionEnd]
+						url := strings.Replace(windowsReleasesURL, "RELEASES", filename, 1)
+						versions = append(versions, struct {
+							version  string
+							url      string
+							filename string
+						}{version, url, filename})
+					}
+				}
 			}
 		}
-		return "", "", fmt.Errorf("no supported supportedVersionsList available in Windows releases")
+
+		if len(versions) == 0 {
+			fmt.Printf("ERROR: No valid releases found in RELEASES file\n")
+			return "", "", fmt.Errorf("no releases found in Windows RELEASES file")
+		}
+
+		// Sort versions to find the latest (newest first)
+		sort.Slice(versions, func(i, j int) bool {
+			partsI := strings.Split(versions[i].version, ".")
+			partsJ := strings.Split(versions[j].version, ".")
+
+			for k := 0; k < len(partsI) && k < len(partsJ); k++ {
+				numI, _ := strconv.Atoi(partsI[k])
+				numJ, _ := strconv.Atoi(partsJ[k])
+
+				if numI != numJ {
+					return numI > numJ
+				}
+			}
+
+			return len(partsI) > len(partsJ)
+		})
+
+		// Use the latest version
+		latest := versions[0]
+		fmt.Printf("Selected latest version: %s, URL: %s\n", latest.version, latest.url)
+		return latest.version, latest.url, nil
 	}
 }
 
@@ -450,7 +551,6 @@ func downloadAndExtract(version, downloadURL string) error {
 	// Delete the archive file only if KeepNupkgFiles is false
 	if !KeepNupkgFiles {
 		os.Remove(newVersionDownloadPath)
-		fmt.Println("Removed temporary archive file")
 	} else {
 		fmt.Printf("Keeping archive file: %s\n", newVersionZipName)
 	}
@@ -472,8 +572,8 @@ func EnsurePatched() error {
 		fmt.Printf("Current version: %s\n", currentVersion)
 	}
 
-	// Get newest supported version and download URL
-	newestVersion, downloadURL, err := getLatestSupportedVersion()
+	// Get latest version and download URL
+	newestVersion, downloadURL, err := getLatestVersion()
 	if err != nil {
 		// If we have an existing installation, continue using it
 		if currentVersion != "" {
@@ -487,14 +587,45 @@ func EnsurePatched() error {
 
 			return nil // Continue with existing installation
 		}
-		// No existing installation and no supported version available
-		return fmt.Errorf("no supported versions available and no existing installation found")
+		// No existing installation and no version available
+		return fmt.Errorf("no versions available and no existing installation found")
 	}
 
-	fmt.Printf("Newest supported version: %s\n", newestVersion)
+	fmt.Printf("Latest version: %s\n", newestVersion)
+
+	// Check if version is verified
+	versionVerified := isVersionVerified(newestVersion)
+
+	// Decide whether to update based on verification status and existing installation
+	shouldUpdate := false
+	if versionVerified {
+		// Always update to verified versions
+		shouldUpdate = (currentVersion != newestVersion)
+		if shouldUpdate {
+			fmt.Printf("Version %s is verified compatible, updating...\n", newestVersion)
+		}
+	} else {
+		// Unverified version
+		if currentVersion == "" {
+			// No existing installation - try the new version
+			shouldUpdate = true
+			fmt.Printf("WARNING: Version %s is not verified compatible, but no existing installation found.\n", newestVersion)
+			fmt.Println("Attempting installation anyway...")
+		} else if currentVersion == newestVersion {
+			// Already on this unverified version
+			shouldUpdate = false
+			fmt.Printf("Already on version %s (unverified but currently installed)\n", newestVersion)
+		} else {
+			// Have existing installation and new version is unverified - stay on current
+			shouldUpdate = false
+			fmt.Printf("WARNING: Version %s is not verified compatible.\n", newestVersion)
+			fmt.Printf("Keeping existing installation (version %s) to avoid potential issues.\n", currentVersion)
+			fmt.Println("To force update, delete the existing installation and run again.")
+		}
+	}
 
 	// Update if needed
-	if currentVersion != newestVersion {
+	if shouldUpdate {
 		fmt.Printf("Updating to %s...\n", newestVersion)
 
 		if err := downloadAndExtract(newestVersion, downloadURL); err != nil {
@@ -508,17 +639,26 @@ func EnsurePatched() error {
 		if err := applyPatches(newestVersion); err != nil {
 			return fmt.Errorf("applying patches: %v", err)
 		}
-	} else {
-		fmt.Println("Already on the newest supported version")
+	} else if currentVersion == newestVersion {
+		fmt.Println("Already on the latest version")
 	}
 
 	return nil
 }
 
 func applyPatches(version string) error {
+	// Try version-specific patches first, fall back to generic
 	patches, ok := supportedVersions[version]
 	if !ok || len(patches) == 0 {
-		return nil
+		// Try generic patches
+		patches, ok = supportedVersions["generic"]
+		if !ok || len(patches) == 0 {
+			fmt.Printf("No patches available for version %s (and no generic patches found)\n", version)
+			return nil
+		}
+		fmt.Printf("Using generic patches for version %s\n", version)
+	} else {
+		fmt.Printf("Using version-specific patches for %s\n", version)
 	}
 
 	fmt.Println("Applying patches...")
