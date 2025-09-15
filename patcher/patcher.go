@@ -48,7 +48,8 @@ var supportedVersions = map[string][]Patch{
 	// Generic patch that should work for most versions
 	"generic": {
 		{
-			Files: []string{".vite/build/index.js", ".vite/build/index-BZRfNpEg.js", ".vite/build/index-DyHP6ri_.js"},
+			// Use pattern to match all index*.js files
+			Files: []string{".vite/build/index*.js"},
 			Func: func(content []byte) []byte {
 				return patch_generic(content)
 			},
@@ -135,7 +136,7 @@ func patch_generic(content []byte) []byte {
 	contentStr := string(content)
 
 	// First, find the injection point
-	returnPattern := regexp.MustCompile(`return\s+(\w+)\.on\("resize"`)
+	returnPattern := regexp.MustCompile(`return\s*.*?(\w+)\.on\("resize"`)
 	matches := returnPattern.FindStringSubmatch(contentStr)
 	if matches == nil || len(matches) < 2 {
 		fmt.Printf("Warning: Could not find injection point (return.*.on(\"resize\"))\n")
@@ -646,6 +647,44 @@ func EnsurePatched() error {
 	return nil
 }
 
+// Helper function to apply a patch to a single file
+func applyPatchToFile(filePath string, content []byte, patchFunc func([]byte) []byte) bool {
+	// Get the base filename for logging
+	fileName := filepath.Base(filePath)
+
+	// Beautify JS files if needed
+	if strings.HasSuffix(fileName, ".js") {
+		if !bytes.Contains(content, []byte("/* CLAUDE-MANAGER-BEAUTIFIED */")) {
+			// Beautify the file
+			var beautifyCmd *exec.Cmd
+			if runtime.GOOS == "windows" && strings.HasSuffix(jsBeautifyCmd, ".ps1") {
+				beautifyCmd = exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", jsBeautifyCmd, filePath, "-o", filePath)
+			} else {
+				beautifyCmd = exec.Command(jsBeautifyCmd, filePath, "-o", filePath)
+			}
+			if err := beautifyCmd.Run(); err != nil {
+				fmt.Printf("Warning: Could not beautify %s: %v\n", fileName, err)
+			} else {
+				// Add marker comment
+				beautifiedContent, _ := os.ReadFile(filePath)
+				markedContent := append([]byte("/* CLAUDE-MANAGER-BEAUTIFIED */\n"), beautifiedContent...)
+				os.WriteFile(filePath, markedContent, 0644)
+				// Re-read for patching
+				content = markedContent
+			}
+		}
+	}
+
+	// Apply the patch
+	newContent := patchFunc(content)
+	if err := os.WriteFile(filePath, newContent, 0644); err != nil {
+		fmt.Printf("Failed to write %s: %v\n", fileName, err)
+		return false
+	}
+
+	return true
+}
+
 func applyPatches(version string) error {
 	// Try version-specific patches first, fall back to generic
 	patches, ok := supportedVersions[version]
@@ -696,59 +735,57 @@ func applyPatches(version string) error {
 	for i, patch := range patches {
 		fmt.Printf("Applying patch %d/%d...\n", i+1, len(patches))
 
-		// Try each file for this patch until one exists and successfully applies
+		// Try each file pattern for this patch
 		patchApplied := false
-		for _, file := range patch.Files {
-			filePath := filepath.Join(tempDir, file)
-			content, err := os.ReadFile(filePath)
-			if err != nil {
-				fmt.Printf("Skipping %s: %v\n", file, err)
-				continue // Try next file
-			}
+		for _, filePattern := range patch.Files {
+			// Check if this is a pattern (contains *) or exact filename
+			if strings.Contains(filePattern, "*") {
+				// Use filepath.Glob to find matching files
+				pattern := filepath.Join(tempDir, filePattern)
+				matches, err := filepath.Glob(pattern)
+				if err != nil {
+					fmt.Printf("Error with pattern %s: %v\n", filePattern, err)
+					continue
+				}
 
-			fmt.Printf("Found file: %s\n", file)
+				fmt.Printf("Pattern %s matched %d files\n", filePattern, len(matches))
 
-			if strings.HasSuffix(file, ".js") {
-				// Check if already beautified
-				if !bytes.Contains(content, []byte("/* CLAUDE-MANAGER-BEAUTIFIED */")) {
-					// Beautify the file
-					var beautifyCmd *exec.Cmd
-					// On Windows, .ps1 files need to be run through PowerShell
-					if runtime.GOOS == "windows" && strings.HasSuffix(jsBeautifyCmd, ".ps1") {
-						beautifyCmd = exec.Command("powershell", "-ExecutionPolicy", "Bypass", "-File", jsBeautifyCmd, filePath, "-o", filePath)
-					} else {
-						beautifyCmd = exec.Command(jsBeautifyCmd, filePath, "-o", filePath)
+				// Apply patch to all matching files
+				for _, matchedFile := range matches {
+					relPath, _ := filepath.Rel(tempDir, matchedFile)
+					fmt.Printf("Trying matched file: %s\n", relPath)
+
+					content, err := os.ReadFile(matchedFile)
+					if err != nil {
+						fmt.Printf("  Skipping %s: %v\n", relPath, err)
+						continue
 					}
-					if err := beautifyCmd.Run(); err != nil {
-						fmt.Printf("Warning: Could not beautify %s: %v\n", file, err)
-					} else {
-						// Add marker comment
-						beautifiedContent, _ := os.ReadFile(filePath)
-						markedContent := append([]byte("/* CLAUDE-MANAGER-BEAUTIFIED */\n"), beautifiedContent...)
-						os.WriteFile(filePath, markedContent, 0644)
 
-						// Re-read for patching
-						content = markedContent
+					if applyPatchToFile(matchedFile, content, patch.Func) {
+						fmt.Printf("  Successfully applied patch to %s\n", relPath)
+						patchApplied = true
 					}
+				}
+			} else {
+				// Exact filename
+				filePath := filepath.Join(tempDir, filePattern)
+				content, err := os.ReadFile(filePath)
+				if err != nil {
+					fmt.Printf("Skipping %s: %v\n", filePattern, err)
+					continue
+				}
+
+				fmt.Printf("Found file: %s\n", filePattern)
+				if applyPatchToFile(filePath, content, patch.Func) {
+					fmt.Printf("Successfully applied patch to %s\n", filePattern)
+					patchApplied = true
+					break // For exact files, one success is enough
 				}
 			}
 
-			// Print first 100 chars for debugging
-			debugLen := len(content)
-			if debugLen > 100 {
-				debugLen = 100
+			if patchApplied {
+				break // Move to next patch
 			}
-			fmt.Printf("Patching %s (first %d chars): %s...\n", file, debugLen, string(content[:debugLen]))
-
-			newContent := patch.Func(content)
-			if err := os.WriteFile(filePath, newContent, 0644); err != nil {
-				fmt.Printf("Failed to write %s: %v\n", file, err)
-				continue // Try next file
-			}
-
-			fmt.Printf("Successfully applied patch to %s\n", file)
-			patchApplied = true
-			break // Move to next patch
 		}
 
 		if !patchApplied {
