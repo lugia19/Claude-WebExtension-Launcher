@@ -1,6 +1,6 @@
 // Convenience aliases
-const CUTmainWindow = e;
-const CUTwebView = r;
+const CUTmainWindow = PLACEHOLDER_MAINWINDOW;
+const CUTwebView = PLACEHOLDER_WEBVIEW;
 
 const CUTfs = require('fs');
 const CUTpath = require('path');
