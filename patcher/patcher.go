@@ -559,7 +559,7 @@ func downloadAndExtract(version, downloadURL string) error {
 	return nil
 }
 
-func EnsurePatched() error {
+func EnsurePatched(forceUpdate bool) error {
 	if err := ensureTools(); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
@@ -599,14 +599,23 @@ func EnsurePatched() error {
 
 	// Decide whether to update based on verification status and existing installation
 	shouldUpdate := false
-	if versionVerified {
+	if forceUpdate {
+		// Force update regardless of version verification
+		shouldUpdate = (currentVersion != newestVersion)
+		if shouldUpdate {
+			fmt.Printf("Force update enabled, updating to version %s...\n", newestVersion)
+			if !versionVerified {
+				fmt.Printf("WARNING: Version %s is not verified compatible.\n", newestVersion)
+			}
+		}
+	} else if versionVerified {
 		// Always update to verified versions
 		shouldUpdate = (currentVersion != newestVersion)
 		if shouldUpdate {
 			fmt.Printf("Version %s is verified compatible, updating...\n", newestVersion)
 		}
 	} else {
-		// Unverified version
+		// Unverified version and not forcing
 		if currentVersion == "" {
 			// No existing installation - try the new version
 			shouldUpdate = true
@@ -621,7 +630,7 @@ func EnsurePatched() error {
 			shouldUpdate = false
 			fmt.Printf("WARNING: Version %s is not verified compatible.\n", newestVersion)
 			fmt.Printf("Keeping existing installation (version %s) to avoid potential issues.\n", currentVersion)
-			fmt.Println("To force update, delete the existing installation and run again.")
+			fmt.Println("To force update, use --force-update flag.")
 		}
 	}
 

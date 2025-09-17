@@ -4,6 +4,7 @@ import (
 	"claude-webext-patcher/extensions"
 	"claude-webext-patcher/patcher"
 	"claude-webext-patcher/selfupdate"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -18,6 +19,10 @@ const launchClaudeInTerminal = false
 const Version = "1.2.0"
 
 func main() {
+	// Parse command-line flags
+	forceUpdate := flag.Bool("force-update", false, "Force update to the latest version even if it's not verified compatible")
+	flag.Parse()
+
 	fmt.Printf("Claude_WebExtension_Launcher version: %s\n", Version)
 	// Set version for selfupdate module
 	selfupdate.CurrentVersion = Version
@@ -57,7 +62,7 @@ func main() {
 	}
 
 	// Ensure app is installed, updated, and patched
-	if err := patcher.EnsurePatched(); err != nil {
+	if err := patcher.EnsurePatched(*forceUpdate); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
