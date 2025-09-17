@@ -72,6 +72,7 @@ var versionsVerifiedGenericCompatible = []string{
 	"0.12.125",
 	"0.12.112",
 	"0.12.55",
+	"0.13.11",
 }
 
 var (
