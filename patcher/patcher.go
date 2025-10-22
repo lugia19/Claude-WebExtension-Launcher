@@ -67,14 +67,10 @@ var supportedVersions = map[string][]Patch{
 	// },
 }
 
-// List of versions verified to work with generic patches
-var versionsVerifiedGenericCompatible = []string{
-	"0.12.125",
-	"0.12.112",
-	"0.12.55",
-	"0.13.11",
-	"0.13.19",
-}
+// Cached verified versions list (loaded on first use)
+var versionsVerifiedGenericCompatible []string
+
+const verifiedVersionsURL = "https://raw.githubusercontent.com/lugia19/Claude-WebExtension-Launcher/master/resources/verified_versions.json"
 
 var (
 	AppFolder       = utils.ResolvePath(appFolderName)
@@ -92,8 +88,49 @@ func init() {
 	}
 }
 
+// Load verified versions from GitHub, with fallback to embedded JSON
+func loadVerifiedVersions() []string {
+	// Try fetching from GitHub first
+	resp, err := http.Get(verifiedVersionsURL)
+	if err == nil {
+		defer resp.Body.Close()
+		if resp.StatusCode == 200 {
+			body, err := io.ReadAll(resp.Body)
+			if err == nil {
+				var versions []string
+				if err := json.Unmarshal(body, &versions); err == nil {
+					fmt.Printf("Loaded %d verified versions from GitHub\n", len(versions))
+					return versions
+				}
+			}
+		}
+	}
+
+	// Fallback to embedded JSON
+	fmt.Println("Falling back to embedded verified versions list")
+	embeddedData, err := EmbeddedFS.ReadFile("resources/verified_versions.json")
+	if err != nil {
+		fmt.Printf("Warning: Could not load embedded verified versions: %v\n", err)
+		return []string{}
+	}
+
+	var versions []string
+	if err := json.Unmarshal(embeddedData, &versions); err != nil {
+		fmt.Printf("Warning: Could not parse embedded verified versions: %v\n", err)
+		return []string{}
+	}
+
+	fmt.Printf("Loaded %d verified versions from embedded file\n", len(versions))
+	return versions
+}
+
 // Check if a version is verified to work with generic patches
 func isVersionVerified(version string) bool {
+	// Load versions on first use
+	if versionsVerifiedGenericCompatible == nil {
+		versionsVerifiedGenericCompatible = loadVerifiedVersions()
+	}
+
 	for _, v := range versionsVerifiedGenericCompatible {
 		if v == version {
 			return true
