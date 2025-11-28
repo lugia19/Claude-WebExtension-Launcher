@@ -49,7 +49,7 @@ The installer provides:
 - **Latest Claude Desktop** - Automatically downloads and updates to the most recent supported version
 - **Custom Icon** - Distinguishes your extended installation from the standard client
 - **Extension Support** - Unpacks resources and enables extension loading capabilities. You can add your own unpacked extensions in the extensions folder. NOTE: Most extensions will need to be adapted to work.
-- **Pre-installed Extensions** - Includes [Usage Tracker](https://github.com/lugia19/Claude-Usage-Extension/) and [Claude Enhanced](https://github.com/lugia19/Claude-Enhanced)
+- **Pre-installed Extensions** - Includes [Usage Tracker](https://github.com/lugia19/Claude-Usage-Extension/) and [Claude QoL](https://github.com/lugia19/Claude-QoL)
 - **Automatic Updates** - Keeps both the client and extensions current
 - **Standalone Installation** - Runs independently alongside the official Claude Desktop
 

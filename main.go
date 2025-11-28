@@ -16,7 +16,7 @@ import (
 const launchClaudeInTerminal = false
 
 // Version is the current version of the application
-const Version = "1.2.1"
+const Version = "1.2.2"
 
 func main() {
 	// Parse command-line flags

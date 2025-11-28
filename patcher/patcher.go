@@ -23,8 +23,8 @@ import (
 var EmbeddedFS embed.FS
 
 const (
-	windowsReleasesURL = "https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest-win-x64/RELEASES"
-	macosReleasesURL   = "https://storage.googleapis.com/osprey-downloads-c02f6a0d-347c-492b-a752-3e0651722e97/nest/update_manifest.json"
+	windowsReleasesURL = "https://downloads.claude.ai/releases/win32/x64/RELEASES"
+	macosReleasesURL   = "https://downloads.claude.ai/releases/darwin/universal/RELEASES.json"
 	appFolderName      = "app-latest"
 	KeepNupkgFiles     = false
 )
