@@ -9,6 +9,12 @@ A custom installer for Claude Desktop that includes built-in extensions (and the
 - This project is neither affiliated with nor endorsed by Anthropic
 - You are responsible for ensuring your use complies with all applicable terms and agreements
 
+## IMPORTANT LIMITATION
+
+Neither the Code nor Cowork views will work in a modified install. This is because of external verification checks I can't do anything about.
+
+I would recommend keeping a separate, unmodified install for it.
+
 ## Overview
 
 This installer generates a modified version of the Claude Desktop client with extension support enabled. It creates a standalone installation that can coexist with the official Claude Desktop client, automatically keeping both the client and extensions up to date.
