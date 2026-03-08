@@ -73,19 +73,179 @@ var versionsVerifiedGenericCompatible []string
 const verifiedVersionsURL = "https://raw.githubusercontent.com/lugia19/Claude-WebExtension-Launcher/master/resources/verified_versions.json"
 
 var (
-	AppFolder       = utils.ResolvePath(appFolderName)
+	AppFolder       string
+	installBaseDir  string
 	appResourcesDir string
 	appExePath      string
 )
 
 func init() {
 	if runtime.GOOS == "darwin" {
+		AppFolder = utils.ResolvePath(appFolderName)
+		installBaseDir = utils.ResolvePath(".")
 		appResourcesDir = filepath.Join(AppFolder, "Claude.app", "Contents", "Resources")
 		appExePath = filepath.Join(AppFolder, "Claude.app", "Contents", "MacOS", "Claude")
 	} else {
+		AppFolder = utils.ResolveInstallPath(appFolderName)
+		installBaseDir = utils.ResolveInstallPath(".")
 		appResourcesDir = filepath.Join(AppFolder, "resources")
 		appExePath = filepath.Join(AppFolder, "claude.exe")
 	}
+}
+
+// isAdmin checks if the current process is running with administrator privileges.
+func isAdmin() bool {
+	cmd := exec.Command("net", "session")
+	err := cmd.Run()
+	return err == nil
+}
+
+// relaunchElevated re-launches the current process with administrator privileges and exits.
+func relaunchElevated() {
+	fmt.Println("Re-launching with administrator privileges...")
+	exe, _ := os.Executable()
+	fmt.Printf("Executable: %s\n", exe)
+
+	var psCmd string
+	if len(os.Args) > 1 {
+		args := strings.Join(os.Args[1:], " ")
+		psCmd = fmt.Sprintf(`Start-Process -FilePath '%s' -ArgumentList '%s' -Verb RunAs -Wait`, exe, args)
+	} else {
+		psCmd = fmt.Sprintf(`Start-Process -FilePath '%s' -Verb RunAs -Wait`, exe)
+	}
+
+	cmd := exec.Command("powershell", "-Command", psCmd)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Run()
+	fmt.Println("Elevated process finished, exiting.")
+	os.Exit(0)
+}
+
+// ensureWindowsAppsFolder creates our subfolder in WindowsApps with proper permissions.
+func ensureWindowsAppsFolder() error {
+	// Check if our folder already exists and is writable
+	testFile := filepath.Join(installBaseDir, ".write-test")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err == nil {
+		os.Remove(testFile)
+		return nil // Already exists and writable
+	}
+
+	// Need admin to create/permission the folder
+	if !isAdmin() {
+		fmt.Println("Administrator privileges required to set up install directory.")
+		fmt.Println("Requesting elevation...")
+		relaunchElevated()
+		// relaunchElevated calls os.Exit, so we never reach here
+	}
+
+	windowsAppsDir := filepath.Dir(installBaseDir)
+
+	// Take ownership of WindowsApps (non-recursive, just the folder)
+	fmt.Println("Setting up install directory in WindowsApps...")
+	cmds := []struct {
+		name string
+		args []string
+	}{
+		{"takeown", []string{"/F", windowsAppsDir}},
+		{"icacls", []string{windowsAppsDir, "/grant:r", "Administrators:(AD)"}},
+	}
+
+	for _, c := range cmds {
+		cmd := exec.Command(c.name, c.args...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("%s failed: %v\n%s", c.name, err, string(output))
+		}
+	}
+
+	// Create our subfolder
+	if err := os.MkdirAll(installBaseDir, 0755); err != nil {
+		return fmt.Errorf("creating install directory: %v", err)
+	}
+
+	// Grant full control on our subfolder (recursive, inheritable)
+	cmd := exec.Command("icacls", installBaseDir, "/grant:r", "Administrators:(OI)(CI)F")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("setting permissions on install dir: %v\n%s", err, string(output))
+	}
+
+	// Restore WindowsApps: remove our added permissions and restore owner
+	cleanupCmds := []struct {
+		name string
+		args []string
+	}{
+		{"icacls", []string{windowsAppsDir, "/remove:g", "Administrators"}},
+		{"icacls", []string{windowsAppsDir, "/setowner", "NT SERVICE\\TrustedInstaller"}},
+	}
+
+	for _, c := range cleanupCmds {
+		cmd := exec.Command(c.name, c.args...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			fmt.Printf("Warning: cleanup step '%s' failed: %v\n%s\n", c.name, err, string(output))
+			// Don't fail on cleanup - our folder is already created
+		}
+	}
+
+	fmt.Println("Install directory created successfully.")
+	return nil
+}
+
+// deployDLL extracts the embedded version.dll next to claude.exe.
+func deployDLL() error {
+	dllData, err := EmbeddedFS.ReadFile("resources/version.dll")
+	if err != nil {
+		return fmt.Errorf("reading embedded version.dll: %v", err)
+	}
+
+	dllPath := filepath.Join(AppFolder, "version.dll")
+	if err := os.WriteFile(dllPath, dllData, 0755); err != nil {
+		return fmt.Errorf("writing version.dll: %v", err)
+	}
+
+	fmt.Println("Deployed version.dll")
+	return nil
+}
+
+// writeHashesFile writes the old/new hash pair to a file next to the DLL.
+func writeHashesFile(expectedHash, actualHash string) error {
+	hashesPath := filepath.Join(AppFolder, "hashes")
+	content := expectedHash + "\n" + actualHash + "\n"
+	if err := os.WriteFile(hashesPath, []byte(content), 0644); err != nil {
+		return fmt.Errorf("writing hashes file: %v", err)
+	}
+	fmt.Println("Wrote hashes file")
+	return nil
+}
+
+// removeHashesFile temporarily removes the hashes file so the DLL is a no-op.
+func removeHashesFile() {
+	hashesPath := filepath.Join(AppFolder, "hashes")
+	os.Remove(hashesPath)
+}
+
+// RecaptureHashes re-captures hash mismatch and writes a new hashes file.
+// Used when Claude fails to launch (e.g., hash changed without an update).
+func RecaptureHashes() error {
+	if runtime.GOOS != "windows" {
+		return fmt.Errorf("RecaptureHashes is only supported on Windows")
+	}
+
+	fmt.Println("Re-capturing hash mismatch...")
+	removeHashesFile()
+
+	expectedHash, actualHash, err := captureHashMismatch()
+	if err != nil {
+		return fmt.Errorf("recapturing hash: %v", err)
+	}
+
+	return writeHashesFile(expectedHash, actualHash)
+}
+
+// ForceRedownload deletes the version file and forces a full re-download and re-patch.
+func ForceRedownload() error {
+	claudeVersionFile := filepath.Join(installBaseDir, "claude-version.txt")
+	os.Remove(claudeVersionFile)
+	return EnsurePatched(true)
 }
 
 // Load verified versions from GitHub, with fallback to embedded JSON
@@ -599,14 +759,21 @@ func downloadAndExtract(version, downloadURL string) error {
 }
 
 func EnsurePatched(forceUpdate bool) error {
+	// On Windows, ensure the WindowsApps install directory exists
+	if runtime.GOOS == "windows" {
+		if err := ensureWindowsAppsFolder(); err != nil {
+			return fmt.Errorf("setting up install directory: %v", err)
+		}
+	}
+
 	if err := ensureTools(); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Get current version
+	// Get current version (stored at installBaseDir level, not inside AppFolder)
 	currentVersion := ""
-	claudeVersionFile := filepath.Join(AppFolder, "claude-version.txt")
+	claudeVersionFile := filepath.Join(installBaseDir, "claude-version.txt")
 	if data, err := os.ReadFile(claudeVersionFile); err == nil {
 		currentVersion = strings.TrimSpace(string(data))
 		fmt.Printf("Current version: %s\n", currentVersion)
@@ -892,6 +1059,15 @@ func applyPatches(version string) error {
 		}
 	}
 
+	// On Windows, deploy the proxy DLL before capturing hash mismatch
+	if runtime.GOOS == "windows" {
+		if err := deployDLL(); err != nil {
+			return fmt.Errorf("deploying DLL: %v", err)
+		}
+		// Remove hashes file so DLL is a no-op during hash capture
+		removeHashesFile()
+	}
+
 	fmt.Println("Capturing hash mismatch...")
 	expectedHash, actualHash, err := captureHashMismatch()
 	if err != nil {
@@ -901,13 +1077,20 @@ func applyPatches(version string) error {
 	fmt.Printf("Expected hash: %s\n", expectedHash)
 	fmt.Printf("Actual hash: %s\n", actualHash)
 
-	fmt.Println("Patching exe...")
-	if err := replaceHashInExe(expectedHash, actualHash); err != nil {
-		return fmt.Errorf("patching exe: %v", err)
-	}
+	if runtime.GOOS == "windows" {
+		// Write hashes file for the proxy DLL (preserves exe signature)
+		fmt.Println("Writing hashes file for DLL...")
+		if err := writeHashesFile(expectedHash, actualHash); err != nil {
+			return fmt.Errorf("writing hashes: %v", err)
+		}
+	} else {
+		// macOS: patch hash in Info.plist as before
+		fmt.Println("Patching exe...")
+		if err := replaceHashInExe(expectedHash, actualHash); err != nil {
+			return fmt.Errorf("patching exe: %v", err)
+		}
 
-	// Ad-hoc sign on macOS after all modifications
-	if runtime.GOOS == "darwin" {
+		// Ad-hoc sign on macOS after all modifications
 		fmt.Println("Signing app with ad-hoc signature...")
 		appPath := filepath.Join(AppFolder, "Claude.app")
 
@@ -915,7 +1098,6 @@ func applyPatches(version string) error {
 		cmd := exec.Command("codesign", "--remove-signature", appPath)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			fmt.Printf("Remove signature output: %s\n", string(output))
-			// Ignore errors, might not be signed
 		} else if len(output) > 0 {
 			fmt.Printf("Remove signature output: %s\n", string(output))
 		}
@@ -924,7 +1106,6 @@ func applyPatches(version string) error {
 		cmd = exec.Command("codesign", "--force", "--deep", "--sign", "-", appPath)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			fmt.Printf("Warning: Could not sign app: %v\n%s\n", err, string(output))
-			// Continue anyway - might still work
 		} else {
 			fmt.Printf("App signed successfully\n")
 			if len(output) > 0 {
@@ -943,34 +1124,8 @@ func replaceIcons() error {
 	// OS-specific exe/app icon replacement
 	switch runtime.GOOS {
 	case "windows":
-		// Extract rcedit.exe to temp file
-		rceditData, err := EmbeddedFS.ReadFile("resources/rcedit.exe")
-		if err != nil {
-			return fmt.Errorf("reading embedded rcedit.exe: %v", err)
-		}
-
-		tempRcedit := filepath.Join(os.TempDir(), "rcedit-temp.exe")
-		if err := os.WriteFile(tempRcedit, rceditData, 0755); err != nil {
-			return fmt.Errorf("writing temp rcedit.exe: %v", err)
-		}
-		defer os.Remove(tempRcedit)
-
-		// Extract app.ico to temp file
-		icoData, err := EmbeddedFS.ReadFile("resources/icons/app.ico")
-		if err != nil {
-			return fmt.Errorf("reading embedded app.ico: %v", err)
-		}
-
-		tempIco := filepath.Join(os.TempDir(), "app-temp.ico")
-		if err := os.WriteFile(tempIco, icoData, 0644); err != nil {
-			return fmt.Errorf("writing temp app.ico: %v", err)
-		}
-		defer os.Remove(tempIco)
-
-		cmd := exec.Command(tempRcedit, appExePath, "--set-icon", tempIco)
-		if err := cmd.Run(); err != nil {
-			fmt.Printf("Warning: Could not replace exe icon: %v\n", err)
-		}
+		// Skip exe icon replacement to preserve code signature
+		fmt.Println("  Skipping exe icon replacement (preserving signature)")
 	case "darwin":
 		// Replace the app bundle icon
 		icnsData, err := EmbeddedFS.ReadFile("resources/icons/app.icns")

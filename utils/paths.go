@@ -8,6 +8,8 @@ import (
 
 var execDir string
 
+const WindowsInstallDir = `C:\Program Files\WindowsApps\ClaudeWebExtLauncher`
+
 func init() {
 	execPath, err := os.Executable()
 	if err != nil {
@@ -20,6 +22,8 @@ func GetExecutableDir() string {
 	return execDir
 }
 
+// ResolvePath resolves a path relative to the launcher's directory.
+// Used for launcher-local files: node_modules, temp zips, asar-temp, etc.
 func ResolvePath(relativePath string) string {
 	if runtime.GOOS == "darwin" {
 		// On macOS, use Application Support directory instead of bundle
@@ -30,4 +34,13 @@ func ResolvePath(relativePath string) string {
 	}
 	// Windows and other platforms: use executable directory
 	return filepath.Join(execDir, relativePath)
+}
+
+// ResolveInstallPath resolves a path relative to the app install directory.
+// On Windows, this is in WindowsApps. On macOS, same as ResolvePath.
+func ResolveInstallPath(relativePath string) string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(WindowsInstallDir, relativePath)
+	}
+	return ResolvePath(relativePath)
 }

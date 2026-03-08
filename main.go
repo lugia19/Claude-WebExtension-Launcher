@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"claude-webext-patcher/extensions"
 	"claude-webext-patcher/patcher"
 	"claude-webext-patcher/selfupdate"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 const launchClaudeInTerminal = false
@@ -118,8 +120,43 @@ func main() {
 		cmd.Stderr = os.Stderr
 		cmd.Stdin = os.Stdin
 		cmd.Run()
+	} else if runtime.GOOS == "windows" {
+		// On Windows, capture output to detect integrity errors
+		var outputBuf bytes.Buffer
+		cmd.Stdout = &outputBuf
+		cmd.Stderr = &outputBuf
+		cmd.Start()
+
+		// Wait briefly to detect immediate integrity failure
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+
+		select {
+		case <-done:
+			output := outputBuf.String()
+			if strings.Contains(output, "Integrity check failed") {
+				fmt.Println("Integrity check failed, recapturing hashes...")
+				if err := patcher.RecaptureHashes(); err != nil {
+					fmt.Printf("Recapture failed: %v\n", err)
+					fmt.Println("Forcing full re-download...")
+					if err := patcher.ForceRedownload(); err != nil {
+						fmt.Printf("Re-download failed: %v\n", err)
+						fmt.Println("Press Enter to exit...")
+						fmt.Scanln()
+						os.Exit(1)
+					}
+				}
+				// Retry launch (one attempt)
+				fmt.Println("Retrying launch...")
+				retryCmd := exec.Command(claudePath)
+				retryCmd.Start()
+			}
+			// Otherwise, process exited for a non-hash reason (e.g., self-restart) — do nothing
+		case <-time.After(5 * time.Second):
+			// Still running after 5s, assume success
+		}
 	} else {
-		// Normal mode - launch Claude detached
+		// macOS/Linux - launch detached
 		cmd.Start()
 	}
 }

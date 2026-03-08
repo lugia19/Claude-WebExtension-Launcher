@@ -28,11 +28,11 @@ func UpdateAll() error {
 	fmt.Println("Checking extensions...")
 
 	// Create extensions dir if needed
-	os.MkdirAll(utils.ResolvePath("web-extensions"), 0755)
+	os.MkdirAll(utils.ResolveInstallPath("web-extensions"), 0755)
 
 	for _, ext := range extensions {
 		// Check current version
-		manifestPath := filepath.Join(utils.ResolvePath("web-extensions"), ext.Folder, "manifest.json")
+		manifestPath := filepath.Join(utils.ResolveInstallPath("web-extensions"), ext.Folder, "manifest.json")
 		currentVersion := ""
 
 		if data, err := os.ReadFile(manifestPath); err == nil {
@@ -112,7 +112,7 @@ func downloadAndExtractExtension(url, folder string) error {
 	defer os.Remove(tempFile)
 
 	// Remove old and extract new
-	extPath := filepath.Join(utils.ResolvePath("web-extensions"), folder)
+	extPath := filepath.Join(utils.ResolveInstallPath("web-extensions"), folder)
 	os.RemoveAll(extPath)
 	os.MkdirAll(extPath, 0755)
 
