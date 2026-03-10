@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="ClaudeDLL/ClaudeDLL.vcxproj" Id="c3feded6-6e58-47ee-9918-744064c2c2f8" />
+</Solution>

@@ -5,6 +5,7 @@ import (
 	"claude-webext-patcher/extensions"
 	"claude-webext-patcher/patcher"
 	"claude-webext-patcher/selfupdate"
+	"claude-webext-patcher/utils"
 	"flag"
 	"fmt"
 	"os"
@@ -15,10 +16,17 @@ import (
 	"time"
 )
 
-const launchClaudeInTerminal = false
+var launchClaudeInTerminal = false
+
+func init() {
+	debugPath := filepath.Join(utils.GetExecutableDir(), "debug_on")
+	if _, err := os.Stat(debugPath); err == nil {
+		launchClaudeInTerminal = true
+	}
+}
 
 // Version is the current version of the application
-const Version = "1.2.2"
+const Version = "2.0.0"
 
 func main() {
 	// Parse command-line flags
@@ -56,6 +64,20 @@ func main() {
 
 	fmt.Println("Claude WebExtension Launcher starting...")
 	fmt.Printf("Version: %s\n", Version)
+
+	// Clean up old installation files next to the executable (from before the move to WindowsApps)
+	if runtime.GOOS == "windows" {
+		execDir := utils.GetExecutableDir()
+		for _, oldDir := range []string{"app-latest", "web-extensions"} {
+			oldPath := filepath.Join(execDir, oldDir)
+			if _, err := os.Stat(oldPath); err == nil {
+				fmt.Printf("Removing old %s from launcher directory...\n", oldDir)
+				if err := os.RemoveAll(oldPath); err != nil {
+					fmt.Printf("Warning: could not remove %s: %v\n", oldPath, err)
+				}
+			}
+		}
+	}
 
 	// Check for self-updates
 	if err := selfupdate.CheckAndUpdate(); err != nil {
@@ -113,50 +135,52 @@ func main() {
 		claudePath = filepath.Join(patcher.AppFolder, "claude")
 	}
 
-	cmd := exec.Command(claudePath)
 	if launchClaudeInTerminal {
 		// In developer mode, run Claude in the same terminal to see debug output
+		cmd := exec.Command(claudePath)
+		cmd.Dir = filepath.Dir(claudePath)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.Stdin = os.Stdin
 		cmd.Run()
 	} else if runtime.GOOS == "windows" {
-		// On Windows, capture output to detect integrity errors
+		// Quick elevated test launch to detect integrity errors before the real launch
 		var outputBuf bytes.Buffer
-		cmd.Stdout = &outputBuf
-		cmd.Stderr = &outputBuf
-		cmd.Start()
+		testCmd := exec.Command(claudePath)
+		testCmd.Dir = filepath.Dir(claudePath)
+		testCmd.Stdout = &outputBuf
+		testCmd.Stderr = &outputBuf
+		testCmd.Start()
 
-		// Wait briefly to detect immediate integrity failure
 		done := make(chan error, 1)
-		go func() { done <- cmd.Wait() }()
+		go func() { done <- testCmd.Wait() }()
 
 		select {
 		case <-done:
 			output := outputBuf.String()
 			if strings.Contains(output, "Integrity check failed") {
-				fmt.Println("Integrity check failed, recapturing hashes...")
-				if err := patcher.RecaptureHashes(); err != nil {
-					fmt.Printf("Recapture failed: %v\n", err)
-					fmt.Println("Forcing full re-download...")
-					if err := patcher.ForceRedownload(); err != nil {
-						fmt.Printf("Re-download failed: %v\n", err)
-						fmt.Println("Press Enter to exit...")
-						fmt.Scanln()
-						os.Exit(1)
-					}
+				fmt.Println("Integrity check failed, forcing re-patch...")
+				if err := patcher.EnsurePatched(true); err != nil {
+					fmt.Printf("Re-patch failed: %v\n", err)
+					fmt.Println("Press Enter to exit...")
+					fmt.Scanln()
+					os.Exit(1)
 				}
-				// Retry launch (one attempt)
-				fmt.Println("Retrying launch...")
-				retryCmd := exec.Command(claudePath)
-				retryCmd.Start()
 			}
-			// Otherwise, process exited for a non-hash reason (e.g., self-restart) — do nothing
-		case <-time.After(5 * time.Second):
-			// Still running after 5s, assume success
+		case <-time.After(2 * time.Second):
+			// Still running after 2s — no integrity error, kill the test instance
+			testCmd.Process.Kill()
 		}
+
+		// Launch for real via explorer.exe to drop admin elevation.
+		fmt.Println("Launching Claude without elevation...")
+		launchCmd := exec.Command("explorer.exe", claudePath)
+		launchCmd.Dir = filepath.Dir(claudePath)
+		launchCmd.Start()
 	} else {
 		// macOS/Linux - launch detached
+		cmd := exec.Command(claudePath)
+		cmd.Dir = filepath.Dir(claudePath)
 		cmd.Start()
 	}
 }

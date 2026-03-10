@@ -5,6 +5,9 @@
 /Tests/
 /Claude-WebExt-Launcher.exe
 /builds/
+*/.vs/*
+*/x64*
+*.syso
 
 # macOS
 .DS_Store
