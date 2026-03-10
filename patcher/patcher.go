@@ -85,78 +85,71 @@ func init() {
 		installBaseDir = utils.ResolvePath(".")
 		appResourcesDir = filepath.Join(AppFolder, "Claude.app", "Contents", "Resources")
 		appExePath = filepath.Join(AppFolder, "Claude.app", "Contents", "MacOS", "Claude")
+	} else {
+		AppFolder = utils.ResolveInstallPath(appFolderName)
+		installBaseDir = utils.ResolveInstallPath(".")
+		appResourcesDir = filepath.Join(AppFolder, "resources")
+		appExePath = filepath.Join(AppFolder, "claude.exe")
 	}
-	// Windows paths are set dynamically in EnsurePatched after finding Claude install
 }
 
-// findClaudeInstall searches for an existing Claude Desktop installation in WindowsApps.
-func findClaudeInstall() (string, error) {
-	// Try PowerShell Get-AppxPackage first (most reliable)
-	cmd := exec.Command("powershell", "-NoProfile", "-Command",
-		`Get-AppxPackage | Where-Object { $_.Name -match "Claude" } | Sort-Object Version -Descending | Select-Object -First 1 -ExpandProperty InstallLocation`)
-	output, err := cmd.CombinedOutput()
-	if err == nil {
-		installPath := strings.TrimSpace(string(output))
-		if installPath != "" {
-			return installPath, nil
-		}
-	}
-
-	// Fallback: scan WindowsApps directory directly
-	windowsAppsDir := `C:\Program Files\WindowsApps`
-	entries, err := os.ReadDir(windowsAppsDir)
-	if err != nil {
-		return "", fmt.Errorf("Claude Desktop not found (Get-AppxPackage returned nothing and cannot read WindowsApps)")
-	}
-
-	var bestMatch string
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if strings.HasPrefix(name, "Claude_") && strings.Contains(name, "_x64__") {
-			if bestMatch == "" || name > filepath.Base(bestMatch) {
-				bestMatch = filepath.Join(windowsAppsDir, name)
-			}
-		}
-	}
-
-	if bestMatch == "" {
-		return "", fmt.Errorf("Claude Desktop is not installed")
-	}
-
-	return bestMatch, nil
-}
-
-// ensureClaudeFolderWritable grants write access to the Claude installation folder.
-func ensureClaudeFolderWritable(claudeDir string) error {
-	// Test if already writable
-	testFile := filepath.Join(claudeDir, ".write-test")
+// ensureWindowsAppsFolder creates our subfolder in WindowsApps with proper permissions.
+func ensureWindowsAppsFolder() error {
+	// Check if our folder already exists and is writable
+	testFile := filepath.Join(installBaseDir, ".write-test")
 	if err := os.WriteFile(testFile, []byte("test"), 0644); err == nil {
 		os.Remove(testFile)
-		return nil
+		return nil // Already exists and writable
 	}
 
-	fmt.Println("Granting write access to Claude installation folder...")
+	windowsAppsDir := filepath.Dir(installBaseDir)
+
+	// Take ownership of WindowsApps (non-recursive, just the folder)
+	fmt.Println("Setting up install directory in WindowsApps...")
 	cmds := []struct {
 		name string
 		args []string
 	}{
-		{"takeown", []string{"/F", claudeDir, "/R", "/D", "Y"}},
-		{"icacls", []string{claudeDir, "/grant:r", "Administrators:(OI)(CI)F"}},
+		{"takeown", []string{"/F", windowsAppsDir}},
+		{"icacls", []string{windowsAppsDir, "/grant:r", "Administrators:(AD)"}},
 	}
 
 	for _, c := range cmds {
 		cmd := exec.Command(c.name, c.args...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("%s failed: %v", c.name, err)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("%s failed: %v\n%s", c.name, err, string(output))
 		}
 	}
 
-	fmt.Println("Write access granted.")
+	// Create our subfolder
+	if err := os.MkdirAll(installBaseDir, 0755); err != nil {
+		return fmt.Errorf("creating install directory: %v", err)
+	}
+
+	// Grant full control on our subfolder (recursive, inheritable)
+	cmd := exec.Command("icacls", installBaseDir, "/grant:r", "Administrators:(OI)(CI)F")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("setting permissions on install dir: %v\n%s", err, string(output))
+	}
+
+	// Restore WindowsApps: remove our added permissions and restore owner
+	cleanupCmds := []struct {
+		name string
+		args []string
+	}{
+		{"icacls", []string{windowsAppsDir, "/remove:g", "Administrators"}},
+		{"icacls", []string{windowsAppsDir, "/setowner", "NT SERVICE\\TrustedInstaller"}},
+	}
+
+	for _, c := range cleanupCmds {
+		cmd := exec.Command(c.name, c.args...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			fmt.Printf("Warning: cleanup step '%s' failed: %v\n%s\n", c.name, err, string(output))
+			// Don't fail on cleanup - our folder is already created
+		}
+	}
+
+	fmt.Println("Install directory created successfully.")
 	return nil
 }
 
@@ -193,6 +186,30 @@ func removeHashesFile() {
 	os.Remove(hashesPath)
 }
 
+// RecaptureHashes re-captures hash mismatch and writes a new hashes file.
+// Used when Claude fails to launch (e.g., hash changed without an update).
+func RecaptureHashes() error {
+	if runtime.GOOS != "windows" {
+		return fmt.Errorf("RecaptureHashes is only supported on Windows")
+	}
+
+	fmt.Println("Re-capturing hash mismatch...")
+	removeHashesFile()
+
+	expectedHash, actualHash, err := captureHashMismatch()
+	if err != nil {
+		return fmt.Errorf("recapturing hash: %v", err)
+	}
+
+	return writeHashesFile(expectedHash, actualHash)
+}
+
+// ForceRedownload deletes the version file and forces a full re-download and re-patch.
+func ForceRedownload() error {
+	claudeVersionFile := filepath.Join(installBaseDir, "claude-version.txt")
+	os.Remove(claudeVersionFile)
+	return EnsurePatched(true)
+}
 
 // Load verified versions from GitHub, with fallback to embedded JSON
 func loadVerifiedVersions() []string {
@@ -279,12 +296,6 @@ func readCombinedInjection(version string, filenames []string) (string, error) {
 
 func patch_generic(content []byte) []byte {
 	contentStr := string(content)
-
-	// Check if already patched to avoid double-patching
-	if strings.Contains(contentStr, "CUTmainWindow") {
-		fmt.Println("File already patched, skipping.")
-		return content
-	}
 
 	// First, find the injection point
 	returnPattern := regexp.MustCompile(`return\s*.*?(\w+)\.on\("resize"`)
@@ -375,8 +386,8 @@ func ensureTools() error {
 
 	fmt.Printf("Found Node.js %s\n", versionStr)
 
-	// Set tool paths - always next to the launcher executable
-	nodeModulesPath := utils.ResolvePath(filepath.Join("node_modules", ".bin"))
+	// Set tool paths
+	nodeModulesPath := utils.ResolveInstallPath(filepath.Join("node_modules", ".bin"))
 	asarCmd = filepath.Join(nodeModulesPath, "asar")
 	jsBeautifyCmd = filepath.Join(nodeModulesPath, "js-beautify")
 
@@ -395,7 +406,7 @@ func ensureTools() error {
 			asarPackage = "@electron/asar"
 		}
 
-		installDir := utils.ResolvePath(".")
+		installDir := utils.ResolveInstallPath(".")
 		cmd := exec.Command("npm", "install", "--prefix", installDir, "--no-save", asarPackage, "js-beautify")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -711,67 +722,13 @@ func downloadAndExtract(version, downloadURL string) error {
 }
 
 func EnsurePatched(forceUpdate bool) error {
+	// On Windows, ensure the WindowsApps install directory exists
 	if runtime.GOOS == "windows" {
-		return ensurePatchedWindows(forceUpdate)
-	}
-	return ensurePatchedDarwin(forceUpdate)
-}
-
-func ensurePatchedWindows(forceUpdate bool) error {
-	// Find existing Claude installation
-	claudeDir, err := findClaudeInstall()
-	if err != nil {
-		fmt.Println("\nClaude Desktop is not installed.")
-		fmt.Println("Please install Claude Desktop from https://claude.ai/download and run this launcher again.")
-		fmt.Println("\nPress Enter to exit...")
-		fmt.Scanln()
-		return fmt.Errorf("Claude not installed: %v", err)
+		if err := ensureWindowsAppsFolder(); err != nil {
+			return fmt.Errorf("setting up install directory: %v", err)
+		}
 	}
 
-	fmt.Printf("Found Claude installation: %s\n", claudeDir)
-
-	// Set paths for this installation
-	// Structure: Claude_version_x64__hash/app/claude.exe, app/resources/, etc.
-	AppFolder = filepath.Join(claudeDir, "app")
-	installBaseDir = claudeDir
-	appResourcesDir = filepath.Join(AppFolder, "resources")
-	appExePath = filepath.Join(AppFolder, "claude.exe")
-	utils.WindowsInstallDir = claudeDir
-
-	// Check if already patched (marker file in the Claude folder)
-	markerFile := filepath.Join(claudeDir, "launcher-patched.txt")
-	if _, err := os.Stat(markerFile); err == nil && !forceUpdate {
-		fmt.Println("Claude installation is already patched.")
-		return nil
-	}
-
-	// Ensure we have write access to the Claude folder
-	if err := ensureClaudeFolderWritable(claudeDir); err != nil {
-		return fmt.Errorf("cannot get write access to Claude folder: %v", err)
-	}
-
-	if err := ensureTools(); err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Apply patches
-	if err := applyPatches("generic"); err != nil {
-		fmt.Println("\n=== ASAR PATCHING FAILED ===")
-		fmt.Println("You will need to wait for an update to the installer.")
-		fmt.Println("Please report this on GitHub: https://github.com/lugia19/Claude-WebExtension-Launcher/issues")
-		fmt.Println("\nPress Enter to exit...")
-		fmt.Scanln()
-		return fmt.Errorf("applying patches: %v", err)
-	}
-
-	// Write marker file
-	os.WriteFile(markerFile, []byte("patched"), 0644)
-
-	return nil
-}
-
-func ensurePatchedDarwin(forceUpdate bool) error {
 	if err := ensureTools(); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
@@ -812,6 +769,7 @@ func ensurePatchedDarwin(forceUpdate bool) error {
 	// Decide whether to update based on verification status and existing installation
 	shouldUpdate := false
 	if forceUpdate {
+		// Force update regardless of version verification
 		shouldUpdate = (currentVersion != newestVersion)
 		if shouldUpdate {
 			fmt.Printf("Force update enabled, updating to version %s...\n", newestVersion)
@@ -820,19 +778,24 @@ func ensurePatchedDarwin(forceUpdate bool) error {
 			}
 		}
 	} else if versionVerified {
+		// Always update to verified versions
 		shouldUpdate = (currentVersion != newestVersion)
 		if shouldUpdate {
 			fmt.Printf("Version %s is verified compatible, updating...\n", newestVersion)
 		}
 	} else {
+		// Unverified version and not forcing
 		if currentVersion == "" {
+			// No existing installation - try the new version
 			shouldUpdate = true
 			fmt.Printf("WARNING: Version %s is not verified compatible, but no existing installation found.\n", newestVersion)
 			fmt.Println("Attempting installation anyway...")
 		} else if currentVersion == newestVersion {
+			// Already on this unverified version
 			shouldUpdate = false
 			fmt.Printf("Already on version %s (unverified but currently installed)\n", newestVersion)
 		} else {
+			// Have existing installation and new version is unverified - stay on current
 			shouldUpdate = false
 			fmt.Printf("WARNING: Version %s is not verified compatible.\n", newestVersion)
 			fmt.Printf("Keeping existing installation (version %s) to avoid potential issues.\n", currentVersion)
@@ -840,6 +803,7 @@ func ensurePatchedDarwin(forceUpdate bool) error {
 		}
 	}
 
+	// Update if needed
 	if shouldUpdate {
 		fmt.Printf("Updating to %s...\n", newestVersion)
 
@@ -847,8 +811,10 @@ func ensurePatchedDarwin(forceUpdate bool) error {
 			return err
 		}
 
+		// Write version
 		os.WriteFile(claudeVersionFile, []byte(newestVersion), 0644)
 
+		// Apply patches
 		if err := applyPatches(newestVersion); err != nil {
 			return fmt.Errorf("applying patches: %v", err)
 		}

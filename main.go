@@ -159,12 +159,16 @@ func main() {
 		case <-done:
 			output := outputBuf.String()
 			if strings.Contains(output, "Integrity check failed") {
-				fmt.Println("Integrity check failed, forcing re-patch...")
-				if err := patcher.EnsurePatched(true); err != nil {
-					fmt.Printf("Re-patch failed: %v\n", err)
-					fmt.Println("Press Enter to exit...")
-					fmt.Scanln()
-					os.Exit(1)
+				fmt.Println("Integrity check failed, recapturing hashes...")
+				if err := patcher.RecaptureHashes(); err != nil {
+					fmt.Printf("Recapture failed: %v\n", err)
+					fmt.Println("Forcing full re-download...")
+					if err := patcher.ForceRedownload(); err != nil {
+						fmt.Printf("Re-download failed: %v\n", err)
+						fmt.Println("Press Enter to exit...")
+						fmt.Scanln()
+						os.Exit(1)
+					}
 				}
 			}
 		case <-time.After(2 * time.Second):
@@ -173,6 +177,7 @@ func main() {
 		}
 
 		// Launch for real via explorer.exe to drop admin elevation.
+		// explorer.exe delegates to the shell which runs at the user's normal integrity level.
 		fmt.Println("Launching Claude without elevation...")
 		launchCmd := exec.Command("explorer.exe", claudePath)
 		launchCmd.Dir = filepath.Dir(claudePath)

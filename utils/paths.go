@@ -8,8 +8,7 @@ import (
 
 var execDir string
 
-// WindowsInstallDir is set dynamically by the patcher after finding the Claude installation.
-var WindowsInstallDir string
+const WindowsInstallDir = `C:\Program Files\WindowsApps\ClaudeWebExtLauncher`
 
 func init() {
 	execPath, err := os.Executable()
