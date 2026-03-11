@@ -169,41 +169,6 @@ func deployDLL() error {
 	return nil
 }
 
-// writeHashesFile writes the old/new hash pair to a file next to the DLL.
-func writeHashesFile(expectedHash, actualHash string) error {
-	hashesPath := filepath.Join(AppFolder, "hashes")
-	content := expectedHash + "\n" + actualHash + "\n"
-	if err := os.WriteFile(hashesPath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("writing hashes file: %v", err)
-	}
-	fmt.Println("Wrote hashes file")
-	return nil
-}
-
-// removeHashesFile temporarily removes the hashes file so the DLL is a no-op.
-func removeHashesFile() {
-	hashesPath := filepath.Join(AppFolder, "hashes")
-	os.Remove(hashesPath)
-}
-
-// RecaptureHashes re-captures hash mismatch and writes a new hashes file.
-// Used when Claude fails to launch (e.g., hash changed without an update).
-func RecaptureHashes() error {
-	if runtime.GOOS != "windows" {
-		return fmt.Errorf("RecaptureHashes is only supported on Windows")
-	}
-
-	fmt.Println("Re-capturing hash mismatch...")
-	removeHashesFile()
-
-	expectedHash, actualHash, err := captureHashMismatch()
-	if err != nil {
-		return fmt.Errorf("recapturing hash: %v", err)
-	}
-
-	return writeHashesFile(expectedHash, actualHash)
-}
-
 // ForceRedownload deletes the version file and forces a full re-download and re-patch.
 func ForceRedownload() error {
 	claudeVersionFile := filepath.Join(installBaseDir, "claude-version.txt")
@@ -1022,32 +987,22 @@ func applyPatches(version string) error {
 		}
 	}
 
-	// On Windows, deploy the proxy DLL before capturing hash mismatch
+	// On Windows, deploy the proxy DLL (it handles integrity patching at runtime)
 	if runtime.GOOS == "windows" {
 		if err := deployDLL(); err != nil {
 			return fmt.Errorf("deploying DLL: %v", err)
 		}
-		// Remove hashes file so DLL is a no-op during hash capture
-		removeHashesFile()
-	}
-
-	fmt.Println("Capturing hash mismatch...")
-	expectedHash, actualHash, err := captureHashMismatch()
-	if err != nil {
-		return fmt.Errorf("capturing hash: %v", err)
-	}
-
-	fmt.Printf("Expected hash: %s\n", expectedHash)
-	fmt.Printf("Actual hash: %s\n", actualHash)
-
-	if runtime.GOOS == "windows" {
-		// Write hashes file for the proxy DLL (preserves exe signature)
-		fmt.Println("Writing hashes file for DLL...")
-		if err := writeHashesFile(expectedHash, actualHash); err != nil {
-			return fmt.Errorf("writing hashes: %v", err)
-		}
 	} else {
-		// macOS: patch hash in Info.plist as before
+		// macOS: capture hash mismatch, patch Info.plist, re-sign
+		fmt.Println("Capturing hash mismatch...")
+		expectedHash, actualHash, err := captureHashMismatch()
+		if err != nil {
+			return fmt.Errorf("capturing hash: %v", err)
+		}
+
+		fmt.Printf("Expected hash: %s\n", expectedHash)
+		fmt.Printf("Actual hash: %s\n", actualHash)
+
 		fmt.Println("Patching exe...")
 		if err := replaceHashInExe(expectedHash, actualHash); err != nil {
 			return fmt.Errorf("patching exe: %v", err)

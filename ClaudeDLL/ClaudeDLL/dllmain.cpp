@@ -4,6 +4,9 @@
 #include <string.h>
 #include <stdio.h>
 #include <psapi.h>
+#include <bcrypt.h>
+
+#pragma comment(lib, "bcrypt.lib")
 
 #define ORIG_DLL "C:\\Windows\\System32\\version"
 
@@ -25,14 +28,8 @@
 #pragma comment(linker, "/export:VerQueryValueA=" ORIG_DLL ".VerQueryValueA,@16")
 #pragma comment(linker, "/export:VerQueryValueW=" ORIG_DLL ".VerQueryValueW,@17")
 
-#define MAX_HASH_LEN 256
-
-static void TrimNewline(char* str) {
-    size_t len = strlen(str);
-    while (len > 0 && (str[len - 1] == '\n' || str[len - 1] == '\r')) {
-        str[--len] = '\0';
-    }
-}
+#define SHA256_LEN 32
+#define HEX_HASH_LEN 65
 
 static void Log(const char* msg) {
     char logPath[MAX_PATH];
@@ -47,63 +44,144 @@ static void Log(const char* msg) {
     fclose(f);
 }
 
-static void PatchHash(HMODULE hDll) {
-    // Build path to hashes file next to the DLL
-    char hashPath[MAX_PATH];
-    GetModuleFileNameA(hDll, hashPath, MAX_PATH);
-    char* lastSlash = strrchr(hashPath, '\\');
-    if (!lastSlash) return;
-    strcpy(lastSlash + 1, "hashes");
+// Compute SHA256 of the asar header (skip first 16 bytes, hash the JSON string)
+static BOOL ComputeAsarHeaderHash(const char* asarPath, char* hexHash) {
+    FILE* f = fopen(asarPath, "rb");
+    if (!f) return FALSE;
 
-    // Try to open the file
-    FILE* f = fopen(hashPath, "r");
-    Log("PatchHash started");
-    if (!f) return;
-
-    char oldHash[MAX_HASH_LEN] = { 0 };
-    char newHash[MAX_HASH_LEN] = { 0 };
-
-    if (!fgets(oldHash, MAX_HASH_LEN, f) || !fgets(newHash, MAX_HASH_LEN, f)) {
+    // First 16 bytes: two Pickle structures
+    // Bytes 0-3:   first pickle payload size (always 4)
+    // Bytes 4-7:   header size value
+    // Bytes 8-11:  second pickle payload size
+    // Bytes 12-15: header string length
+    unsigned char prefix[16];
+    if (fread(prefix, 1, 16, f) != 16) {
         fclose(f);
-        return;
+        return FALSE;
+    }
+
+    DWORD stringLen = *(DWORD*)(prefix + 12);
+
+    char buf[128];
+    sprintf(buf, "Asar header string length: %u", stringLen);
+    Log(buf);
+
+    // Read the header JSON string
+    unsigned char* headerData = (unsigned char*)malloc(stringLen);
+    if (!headerData) {
+        fclose(f);
+        return FALSE;
+    }
+
+    if (fread(headerData, 1, stringLen, f) != stringLen) {
+        free(headerData);
+        fclose(f);
+        return FALSE;
     }
     fclose(f);
 
-    TrimNewline(oldHash);
-    TrimNewline(newHash);
+    // SHA256 hash using Windows CNG
+    BCRYPT_ALG_HANDLE hAlg = NULL;
+    BCRYPT_HASH_HANDLE hHash = NULL;
+    BYTE hash[SHA256_LEN];
+    BOOL success = FALSE;
 
-    Log(oldHash);
-    Log(newHash);
+    if (BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_SHA256_ALGORITHM, NULL, 0) == 0) {
+        if (BCryptCreateHash(hAlg, &hHash, NULL, 0, NULL, 0, 0) == 0) {
+            if (BCryptHashData(hHash, headerData, stringLen, 0) == 0) {
+                if (BCryptFinishHash(hHash, hash, SHA256_LEN, 0) == 0) {
+                    for (int i = 0; i < SHA256_LEN; i++) {
+                        sprintf(hexHash + (i * 2), "%02x", hash[i]);
+                    }
+                    hexHash[64] = '\0';
+                    success = TRUE;
+                }
+            }
+            BCryptDestroyHash(hHash);
+        }
+        BCryptCloseAlgorithmProvider(hAlg, 0);
+    }
 
-    if (strlen(oldHash) == 0 || strlen(newHash) == 0) return;
-    if (strlen(oldHash) != strlen(newHash)) return;
+    free(headerData);
+    return success;
+}
+
+static void PatchHash(HMODULE hDll) {
+    Log("PatchHash started");
 
     // Get exe module info
     HMODULE hExe = GetModuleHandle(NULL);
     MODULEINFO modInfo;
-    if (!GetModuleInformation(GetCurrentProcess(), hExe, &modInfo, sizeof(modInfo))) return;
+    if (!GetModuleInformation(GetCurrentProcess(), hExe, &modInfo, sizeof(modInfo))) {
+        Log("Failed to get module info");
+        return;
+    }
 
     BYTE* base = (BYTE*)modInfo.lpBaseOfDll;
     DWORD size = modInfo.SizeOfImage;
-    size_t hashLen = strlen(oldHash);
 
-    char buf[128];
-    sprintf(buf, "Scanning %u bytes at %p", size, base);
-    Log(buf);
+    // Find the expected hash in process memory
+    const char* sentinel = "\"alg\":\"SHA256\",\"value\":\"";
+    size_t sentinelLen = strlen(sentinel);
+    char* hashLocation = NULL;
 
-    // Scan and replace
-    for (DWORD i = 0; i < size - hashLen; i++) {
-        if (memcmp(base + i, oldHash, hashLen) == 0) {
-            Log("Hash found in memory, patching...");
-            DWORD oldProtect;
-            VirtualProtect(base + i, hashLen, PAGE_READWRITE, &oldProtect);
-            memcpy(base + i, newHash, hashLen);
-            Log("Patch applied");
-            VirtualProtect(base + i, hashLen, oldProtect, &oldProtect);
+    for (DWORD i = 0; i < size - sentinelLen - 64; i++) {
+        if (memcmp(base + i, sentinel, sentinelLen) == 0) {
+            hashLocation = (char*)(base + i + sentinelLen);
             break;
         }
     }
 
+    if (!hashLocation) {
+        Log("Could not find expected hash in exe memory");
+        return;
+    }
+
+    // Extract the expected hash (64 hex chars)
+    char expectedHash[HEX_HASH_LEN];
+    memcpy(expectedHash, hashLocation, 64);
+    expectedHash[64] = '\0';
+
+    char buf[256];
+    sprintf(buf, "Expected hash from exe: %s", expectedHash);
+    Log(buf);
+
+    // Build path to app.asar relative to the exe
+    char asarPath[MAX_PATH];
+    GetModuleFileNameA(NULL, asarPath, MAX_PATH);
+    char* lastSlash = strrchr(asarPath, '\\');
+    if (!lastSlash) {
+        Log("Could not determine exe directory");
+        return;
+    }
+    strcpy(lastSlash + 1, "resources\\app.asar");
+
+    sprintf(buf, "Asar path: %s", asarPath);
+    Log(buf);
+
+    // Compute actual hash of the asar header
+    char actualHash[HEX_HASH_LEN];
+    if (!ComputeAsarHeaderHash(asarPath, actualHash)) {
+        Log("Failed to compute asar header hash");
+        return;
+    }
+
+    sprintf(buf, "Computed hash from asar: %s", actualHash);
+    Log(buf);
+
+    // If they already match, nothing to do
+    if (memcmp(expectedHash, actualHash, 64) == 0) {
+        Log("Hashes already match, no patching needed");
+        return;
+    }
+
+    // Patch the expected hash in memory with the actual hash
+    Log("Hashes differ, patching...");
+    DWORD oldProtect;
+    VirtualProtect(hashLocation, 64, PAGE_READWRITE, &oldProtect);
+    memcpy(hashLocation, actualHash, 64);
+    VirtualProtect(hashLocation, 64, oldProtect, &oldProtect);
+    Log("Patch applied successfully");
 }
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {

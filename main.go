@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"claude-webext-patcher/extensions"
 	"claude-webext-patcher/patcher"
 	"claude-webext-patcher/selfupdate"
@@ -13,7 +12,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 )
 
 var launchClaudeInTerminal = false
@@ -143,47 +141,8 @@ func main() {
 		cmd.Stderr = os.Stderr
 		cmd.Stdin = os.Stdin
 		cmd.Run()
-	} else if runtime.GOOS == "windows" {
-		// Quick elevated test launch to detect integrity errors before the real launch
-		var outputBuf bytes.Buffer
-		testCmd := exec.Command(claudePath)
-		testCmd.Dir = filepath.Dir(claudePath)
-		testCmd.Stdout = &outputBuf
-		testCmd.Stderr = &outputBuf
-		testCmd.Start()
-
-		done := make(chan error, 1)
-		go func() { done <- testCmd.Wait() }()
-
-		select {
-		case <-done:
-			output := outputBuf.String()
-			if strings.Contains(output, "Integrity check failed") {
-				fmt.Println("Integrity check failed, recapturing hashes...")
-				if err := patcher.RecaptureHashes(); err != nil {
-					fmt.Printf("Recapture failed: %v\n", err)
-					fmt.Println("Forcing full re-download...")
-					if err := patcher.ForceRedownload(); err != nil {
-						fmt.Printf("Re-download failed: %v\n", err)
-						fmt.Println("Press Enter to exit...")
-						fmt.Scanln()
-						os.Exit(1)
-					}
-				}
-			}
-		case <-time.After(2 * time.Second):
-			// Still running after 2s — no integrity error, kill the test instance
-			testCmd.Process.Kill()
-		}
-
-		// Launch for real via explorer.exe to drop admin elevation.
-		// explorer.exe delegates to the shell which runs at the user's normal integrity level.
-		fmt.Println("Launching Claude without elevation...")
-		launchCmd := exec.Command("explorer.exe", claudePath)
-		launchCmd.Dir = filepath.Dir(claudePath)
-		launchCmd.Start()
 	} else {
-		// macOS/Linux - launch detached
+		// Launch detached
 		cmd := exec.Command(claudePath)
 		cmd.Dir = filepath.Dir(claudePath)
 		cmd.Start()
