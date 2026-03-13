@@ -41,6 +41,17 @@ func main() {
 	// Handle update completion first
 	selfupdate.FinishUpdateIfNeeded()
 
+	// On Windows, ensure we're running as admin (needed for WindowsApps folder setup).
+	// We use programmatic elevation instead of a manifest so the self-update flow works.
+	if runtime.GOOS == "windows" && !utils.IsAdmin() {
+		fmt.Println("Requesting administrator privileges...")
+		if err := utils.RelaunchAsAdmin(); err != nil {
+			fmt.Printf("Failed to elevate: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	// On macOS, if not running in terminal, relaunch in Terminal.app
 	if runtime.GOOS == "darwin" && os.Getenv("TERM") == "" {
 		executable, _ := os.Executable()

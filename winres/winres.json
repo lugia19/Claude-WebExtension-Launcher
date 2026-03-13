@@ -16,7 +16,7 @@
         },
         "description": "",
         "minimum-os": "win7",
-        "execution-level": "require administrator",
+        "execution-level": "as invoker",
         "ui-access": false,
         "auto-elevate": false,
         "dpi-awareness": "system",
