@@ -9,9 +9,15 @@ A custom installer for Claude Desktop that includes built-in extensions (and the
 - This project is neither affiliated with nor endorsed by Anthropic
 - You are responsible for ensuring your use complies with all applicable terms and agreements
 
-## IMPORTANT LIMITATION
+## Known limitations
 
-Neither the Code nor Cowork views will work in a modified install. This is because of external verification checks I can't do anything about.
+### Windows requires admin perms
+This is to make Cowork function. The app will block cowork if the application is not inside of C:\Program Files\WindowsApps, which requires admin permissions to be written to and read from.
+
+### Cowork does not work on MacOS (Corrupt install)
+This is because the app is signed, and cowork checks for the signature.
+On windows, this is circumvented by not modifying the exe and instead using a .dll, but that cannot be done on MacOS.
+
 
 I would recommend keeping a separate, unmodified install for it.
 
@@ -28,6 +34,12 @@ This can happen due to reasons I'm not really sure of. Restarting the applicatio
 ### Windows defender flags it as malware
 
 Yep, Waca- etc are a pretty common false positive. Pyinstaller-built exes used to also trigger it. There isn't really anything I can do about that.
+<details>
+<summary>How does patching work on windows?</summary>
+Basically, it uses the fact that exes will load DLLs that are next to the exe first, to load a modified version.dll.
+Its source code is inside the ClaudeDLL folder, but it basically just tells the exe that whatever hash app.asar has, it's the right one.
+It's a way to circumvent the asar integrity check without modifying the exe itself, which is what I used to do (and it broke cowork).
+</details>
 
 ### Refuses to open on MacOS (Insecure/Not Verified)
 You might need to go to Settings -> Privacy and Security and click "Open anyway".
@@ -46,7 +58,7 @@ On first launch, you might see a crash dialog about the network service. This is
 - **Windows** - Windows 10/11
 
 ### Quick Start
-Download the latest installer from [Releases](../../releases) and run it. The installer will handle everything automatically.
+Download the latest installer from [Releases](https://github.com/lugia19/Claude-WebExtension-Launcher/releases) and run it. The installer will handle everything automatically.
 
 ## Features
 
@@ -68,7 +80,7 @@ The installer provides:
 
 ## Privacy
 
-The installer only modifies your local Claude Desktop installation. No data is collected or transmitted by the installer itself. Individual extensions may have their own privacy policies.
+The installer only creates a local modified Claude Desktop installation. No data is collected or transmitted by the installer itself. Individual extensions may have their own privacy policies.
 
 ## Troubleshooting
 
