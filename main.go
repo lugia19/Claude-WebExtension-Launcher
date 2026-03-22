@@ -24,7 +24,7 @@ func init() {
 }
 
 // Version is the current version of the application
-const Version = "2.0.0"
+const Version = "2.0.1"
 
 func main() {
 	// Parse command-line flags
@@ -50,6 +50,13 @@ func main() {
 			os.Exit(1)
 		}
 		os.Exit(0)
+	}
+
+	// Take ownership of WindowsApps early so all subsequent operations can access it
+	if runtime.GOOS == "windows" {
+		if err := patcher.TakeWindowsAppsOwnership(); err != nil {
+			fmt.Printf("Warning: failed to take WindowsApps ownership: %v\n", err)
+		}
 	}
 
 	// On macOS, if not running in terminal, relaunch in Terminal.app
@@ -128,6 +135,11 @@ func main() {
 		os.RemoveAll(serviceWorkerPath)
 		os.RemoveAll(webStoragePath)
 		fmt.Println("Cache cleared successfully")
+	}
+
+	// Release WindowsApps permissions before launching Claude
+	if runtime.GOOS == "windows" {
+		patcher.ReleaseWindowsAppsOwnership()
 	}
 
 	// Launch Claude

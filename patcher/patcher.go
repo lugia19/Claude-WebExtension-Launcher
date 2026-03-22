@@ -93,7 +93,46 @@ func init() {
 	}
 }
 
+// TakeWindowsAppsOwnership grants Administrators read/traverse/create access on the WindowsApps directory.
+// Call this early in the program, and ReleaseWindowsAppsOwnership before launching Claude.
+func TakeWindowsAppsOwnership() error {
+	windowsAppsDir := filepath.Dir(installBaseDir)
+	cmds := []struct {
+		name string
+		args []string
+	}{
+		{"takeown", []string{"/F", windowsAppsDir}},
+		{"icacls", []string{windowsAppsDir, "/grant:r", "*S-1-5-32-544:(RX,AD)"}},
+	}
+	for _, c := range cmds {
+		cmd := exec.Command(c.name, c.args...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("%s failed: %v\n%s", c.name, err, string(output))
+		}
+	}
+	return nil
+}
+
+// ReleaseWindowsAppsOwnership removes our added permissions and restores TrustedInstaller as owner.
+func ReleaseWindowsAppsOwnership() {
+	windowsAppsDir := filepath.Dir(installBaseDir)
+	cmds := []struct {
+		name string
+		args []string
+	}{
+		{"icacls", []string{windowsAppsDir, "/remove:g", "*S-1-5-32-544"}},
+		{"icacls", []string{windowsAppsDir, "/setowner", "NT SERVICE\\TrustedInstaller"}},
+	}
+	for _, c := range cmds {
+		cmd := exec.Command(c.name, c.args...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			fmt.Printf("Warning: cleanup step '%s' failed: %v\n%s\n", c.name, err, string(output))
+		}
+	}
+}
+
 // ensureWindowsAppsFolder creates our subfolder in WindowsApps with proper permissions.
+// Assumes TakeWindowsAppsOwnership has already been called.
 func ensureWindowsAppsFolder() error {
 	// Check if our folder already exists and is writable
 	testFile := filepath.Join(installBaseDir, ".write-test")
@@ -102,24 +141,7 @@ func ensureWindowsAppsFolder() error {
 		return nil // Already exists and writable
 	}
 
-	windowsAppsDir := filepath.Dir(installBaseDir)
-
-	// Take ownership of WindowsApps (non-recursive, just the folder)
 	fmt.Println("Setting up install directory in WindowsApps...")
-	cmds := []struct {
-		name string
-		args []string
-	}{
-		{"takeown", []string{"/F", windowsAppsDir}},
-		{"icacls", []string{windowsAppsDir, "/grant:r", "Administrators:(AD)"}},
-	}
-
-	for _, c := range cmds {
-		cmd := exec.Command(c.name, c.args...)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("%s failed: %v\n%s", c.name, err, string(output))
-		}
-	}
 
 	// Create our subfolder
 	if err := os.MkdirAll(installBaseDir, 0755); err != nil {
@@ -127,26 +149,9 @@ func ensureWindowsAppsFolder() error {
 	}
 
 	// Grant full control on our subfolder (recursive, inheritable)
-	cmd := exec.Command("icacls", installBaseDir, "/grant:r", "Administrators:(OI)(CI)F")
+	cmd := exec.Command("icacls", installBaseDir, "/grant:r", "*S-1-5-32-544:(OI)(CI)F")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("setting permissions on install dir: %v\n%s", err, string(output))
-	}
-
-	// Restore WindowsApps: remove our added permissions and restore owner
-	cleanupCmds := []struct {
-		name string
-		args []string
-	}{
-		{"icacls", []string{windowsAppsDir, "/remove:g", "Administrators"}},
-		{"icacls", []string{windowsAppsDir, "/setowner", "NT SERVICE\\TrustedInstaller"}},
-	}
-
-	for _, c := range cleanupCmds {
-		cmd := exec.Command(c.name, c.args...)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			fmt.Printf("Warning: cleanup step '%s' failed: %v\n%s\n", c.name, err, string(output))
-			// Don't fail on cleanup - our folder is already created
-		}
 	}
 
 	fmt.Println("Install directory created successfully.")
@@ -372,6 +377,11 @@ func ensureTools() error {
 		}
 
 		installDir := utils.ResolveInstallPath(".")
+		// Ensure a package.json exists so npm doesn't walk up into the locked WindowsApps directory
+		pkgJsonPath := filepath.Join(installDir, "package.json")
+		if _, err := os.Stat(pkgJsonPath); os.IsNotExist(err) {
+			os.WriteFile(pkgJsonPath, []byte("{}"), 0644)
+		}
 		cmd := exec.Command("npm", "install", "--prefix", installDir, "--no-save", asarPackage, "js-beautify")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
