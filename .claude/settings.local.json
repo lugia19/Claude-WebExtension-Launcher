@@ -3,7 +3,14 @@
     "allow": [
       "Bash(grep:*)",
       "Bash(go install:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "WebSearch",
+      "WebFetch(domain:v8.dev)",
+      "WebFetch(domain:cocalc.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.island.io)",
+      "WebFetch(domain:www.electronjs.org)",
+      "WebFetch(domain:chromium.googlesource.com)"
     ]
   }
 }

@@ -27,6 +27,7 @@ const (
 	macosReleasesURL   = "https://downloads.claude.ai/releases/darwin/universal/RELEASES.json"
 	appFolderName      = "app-latest"
 	KeepNupkgFiles     = false
+	PatchVersion       = "1"
 )
 
 type MacOSManifest struct {
@@ -779,6 +780,7 @@ func EnsurePatched(forceUpdate bool) error {
 	}
 
 	// Update if needed
+	patchVersionFile := filepath.Join(installBaseDir, "patch-version.txt")
 	if shouldUpdate {
 		fmt.Printf("Updating to %s...\n", newestVersion)
 
@@ -793,8 +795,27 @@ func EnsurePatched(forceUpdate bool) error {
 		if err := applyPatches(newestVersion); err != nil {
 			return fmt.Errorf("applying patches: %v", err)
 		}
-	} else if currentVersion == newestVersion {
-		fmt.Println("Already on the latest version")
+		os.WriteFile(patchVersionFile, []byte(PatchVersion), 0644)
+	} else {
+		if currentVersion == newestVersion {
+			fmt.Println("Already on the latest version")
+		}
+
+		// Check if injection code needs updating
+		currentPatchVersion := ""
+		if data, err := os.ReadFile(patchVersionFile); err == nil {
+			currentPatchVersion = strings.TrimSpace(string(data))
+		}
+		if currentPatchVersion != PatchVersion {
+			fmt.Printf("Patch version changed (%s -> %s), re-downloading and re-patching...\n", currentPatchVersion, PatchVersion)
+			if err := downloadAndExtract(currentVersion, downloadURL); err != nil {
+				return err
+			}
+			if err := applyPatches(currentVersion); err != nil {
+				return fmt.Errorf("applying patches: %v", err)
+			}
+			os.WriteFile(patchVersionFile, []byte(PatchVersion), 0644)
+		}
 	}
 
 	return nil

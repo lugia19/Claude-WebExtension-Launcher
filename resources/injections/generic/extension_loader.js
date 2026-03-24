@@ -7,6 +7,9 @@ const CUTpath = require('path');
 const CUTelectron = require("electron");
 const CUTsession = CUTelectron.session;
 
+// Clear session cache to prevent stale SPA from loading before extensions
+CUTsession.defaultSession.clearCache();
+
 let currentPath = CUTelectron.app.getAppPath();
 let extPath = null;
 
@@ -20,30 +23,31 @@ while (currentPath !== CUTpath.dirname(currentPath)) {
     }
 }
 
-// Now load extensions
+// Load extensions and await them before page navigation
 if (extPath) {
-    const hadExtensions = CUTsession.defaultSession.extensions.getAllExtensions().length > 0;
+    const extDirs = CUTfs.readdirSync(extPath).filter(f =>
+        CUTfs.existsSync(CUTpath.join(extPath, f, 'manifest.json'))
+    );
 
-    CUTwebView.webContents.once('did-finish-load', () => {
+    if (extDirs.length > 0) {
         console.log('Loading web extensions...');
-        let loadedAny = false;
-
-        CUTfs.readdirSync(extPath).forEach(f => {
+        const loadPromises = extDirs.map(f => {
             const p = CUTpath.join(extPath, f);
-            if (CUTfs.existsSync(CUTpath.join(p, 'manifest.json'))) {
-                console.log('Loading extension:', f);
-                CUTsession.defaultSession.extensions.loadExtension(p);
-                loadedAny = true;
-            }
+            console.log('Loading extension:', f);
+            return CUTsession.defaultSession.extensions.loadExtension(p).catch(err => {
+                console.error('Failed to load extension:', f, err);
+            });
         });
 
-        if (!hadExtensions && loadedAny) {
-            console.log('First time loading web extensions, reloading page...');
-            setTimeout(() => {
-                CUTwebView.webContents.reload();
-            }, 100);
-        }
-    });
+        Promise.all(loadPromises).then(() => {
+            const loaded = CUTsession.defaultSession.extensions.getAllExtensions().length;
+            console.log(`Extensions loaded: ${loaded}/${extDirs.length}`);
+            if (loaded < extDirs.length) {
+                console.log('Not all extensions loaded, reloading page...');
+                CUTwebView.webContents.reloadIgnoringCache();
+            }
+        });
+    }
 }
 
 //Generic logging function

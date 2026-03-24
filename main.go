@@ -113,27 +113,25 @@ func main() {
 		os.Exit(1)
 	}
 
-	//Clear service worker cache
-	var serviceWorkerPath, webStoragePath string
+	//Clear caches that interfere with extension loading and updates
+	var claudeDataDir string
 
 	switch runtime.GOOS {
 	case "windows":
-		serviceWorkerPath = filepath.Join(os.Getenv("APPDATA"), "Claude", "Service Worker")
-		webStoragePath = filepath.Join(os.Getenv("APPDATA"), "Claude", "WebStorage")
+		claudeDataDir = filepath.Join(os.Getenv("APPDATA"), "Claude")
 	case "darwin":
 		home, _ := os.UserHomeDir()
-		appSupport := filepath.Join(home, "Library", "Application Support", "Claude")
-		serviceWorkerPath = filepath.Join(appSupport, "Service Worker")
-		webStoragePath = filepath.Join(appSupport, "WebStorage")
+		claudeDataDir = filepath.Join(home, "Library", "Application Support", "Claude")
 	}
 
-	if serviceWorkerPath != "" {
+	if claudeDataDir != "" {
+		cacheDirs := []string{"Service Worker", "WebStorage", "Cache", "Code Cache"}
 		fmt.Printf("Clearing cache folders:\n")
-		fmt.Printf("  Service Worker: %s\n", serviceWorkerPath)
-		fmt.Printf("  Web Storage: %s\n", webStoragePath)
-
-		os.RemoveAll(serviceWorkerPath)
-		os.RemoveAll(webStoragePath)
+		for _, dir := range cacheDirs {
+			p := filepath.Join(claudeDataDir, dir)
+			fmt.Printf("  %s\n", p)
+			os.RemoveAll(p)
+		}
 		fmt.Println("Cache cleared successfully")
 	}
 
