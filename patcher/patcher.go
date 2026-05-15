@@ -32,7 +32,7 @@ type MacOSManifest struct {
 		Version  string `json:"version"`
 		UpdateTo struct {
 			URL string `json:"url"`
-		} `json:"releases"`
+		} `json:"updateTo"`
 	} `json:"releases"`
 }
 
@@ -360,6 +360,11 @@ func ensureTools() error {
 	return nil
 }
 
+func canFallbackToExisting() bool {
+	_, err := os.Stat(appExePath)
+	return err == nil
+}
+
 func EnsurePatched(forceUpdate bool) error {
 	if err := prepareInstallDir(); err != nil {
 		return fmt.Errorf("setting up install directory: %v", err)
@@ -445,6 +450,10 @@ func EnsurePatched(forceUpdate bool) error {
 		fmt.Printf("Updating to %s...\n", newestVersion)
 
 		if err := downloadAndExtract(newestVersion, downloadURL); err != nil {
+			if canFallbackToExisting() {
+				fmt.Printf("Warning: download/extract failed (%v), continuing with existing installation.\n", err)
+				return nil
+			}
 			return err
 		}
 
@@ -453,6 +462,10 @@ func EnsurePatched(forceUpdate bool) error {
 
 		// Apply patches
 		if err := applyPatches(newestVersion); err != nil {
+			if canFallbackToExisting() {
+				fmt.Printf("Warning: patching failed (%v), continuing with existing installation.\n", err)
+				return nil
+			}
 			return fmt.Errorf("applying patches: %v", err)
 		}
 		os.WriteFile(patchVersionFile, []byte(PatchVersion), 0644)
@@ -468,12 +481,21 @@ func EnsurePatched(forceUpdate bool) error {
 		}
 		if currentPatchVersion != PatchVersion {
 			fmt.Printf("Patch version changed (%s -> %s), re-downloading and re-patching...\n", currentPatchVersion, PatchVersion)
-			if err := downloadAndExtract(currentVersion, downloadURL); err != nil {
+			if err := downloadAndExtract(newestVersion, downloadURL); err != nil {
+				if canFallbackToExisting() {
+					fmt.Printf("Warning: re-download failed (%v), continuing with existing installation.\n", err)
+					return nil
+				}
 				return err
 			}
-			if err := applyPatches(currentVersion); err != nil {
+			if err := applyPatches(newestVersion); err != nil {
+				if canFallbackToExisting() {
+					fmt.Printf("Warning: re-patching failed (%v), continuing with existing installation.\n", err)
+					return nil
+				}
 				return fmt.Errorf("applying patches: %v", err)
 			}
+			os.WriteFile(claudeVersionFile, []byte(newestVersion), 0644)
 			os.WriteFile(patchVersionFile, []byte(PatchVersion), 0644)
 		}
 	}

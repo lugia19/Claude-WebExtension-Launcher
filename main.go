@@ -64,8 +64,13 @@ func main() {
 	// On Windows this may invoke an elevated patcher subprocess via UAC.
 	// On macOS this runs in-process.
 	if err := ensureClaudeReady(*forceUpdate); err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+		if _, statErr := os.Stat(claudeExecutablePath()); statErr == nil {
+			fmt.Printf("Warning: %v\n", err)
+			fmt.Println("Continuing with existing installation...")
+		} else {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	// Release any platform-specific privileges before launching Claude

@@ -56,13 +56,23 @@ func claudeExecutablePath() string {
 	return filepath.Join(patcher.AppFolder, "claude")
 }
 
+// claudeInstalled returns true if the Claude executable exists in the install directory.
+func claudeInstalled() bool {
+	_, err := os.Stat(claudeExecutablePath())
+	return err == nil
+}
+
 // ensureClaudeReady runs patching and extension updates in-process on macOS.
 func ensureClaudeReady(forceUpdate bool) error {
 	if err := patcher.EnsurePatched(forceUpdate); err != nil {
-		return err
+		if claudeInstalled() {
+			fmt.Printf("Warning: patching failed (%v), launching existing installation.\n", err)
+		} else {
+			return err
+		}
 	}
 	if err := extensions.UpdateAll(); err != nil {
-		return err
+		fmt.Printf("Warning: extension update failed: %v\n", err)
 	}
 	if err := patcher.DeploySentinelExtension(); err != nil {
 		fmt.Printf("Warning: sentinel extension deployment failed: %v\n", err)
