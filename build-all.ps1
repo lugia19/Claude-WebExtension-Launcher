@@ -207,6 +207,7 @@ if (Test-Path ".\builds\$APP_NAME.exe") {
     Copy-Item ".\builds\$APP_NAME.exe" "$tempDir\$APP_NAME.exe"
     Copy-Item ".\resources\Toggle-Startup.bat" "$tempDir\Toggle-Startup.bat"
     Copy-Item ".\resources\Toggle-StartMenu.bat" "$tempDir\Toggle-StartMenu.bat"
+    Copy-Item ".\resources\Uninstall.bat" "$tempDir\Uninstall.bat"
     
     $tempDirWSL = ConvertTo-WSLPath $tempDir
     
@@ -224,27 +225,35 @@ if ($intelBundle -and (Test-Path $intelBundle)) {
     $bundleName = Split-Path $intelBundle -Leaf
     $zipName = "$APP_NAME-$VERSION-macos-amd64.zip"
     
-    # Set executable bit and create zip
-    wsl sh -c "cd '$currentDirWSL/builds' && chmod +x '$bundleName/Contents/MacOS/$APP_NAME' && zip -r '$zipName' '$bundleName'"
-    
+    # Copy uninstall script alongside the app bundle
+    Copy-Item ".\resources\Uninstall.command" ".\builds\Uninstall.command"
+
+    # Set executable bits and create zip
+    wsl sh -c "cd '$currentDirWSL/builds' && chmod +x '$bundleName/Contents/MacOS/$APP_NAME' && chmod +x 'Uninstall.command' && zip -r '$zipName' '$bundleName' 'Uninstall.command'"
+
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Created: builds\$zipName" -ForegroundColor Green
     }
     Remove-Item -Recurse -Force $intelBundle
+    Remove-Item ".\builds\Uninstall.command" -ErrorAction SilentlyContinue
 }
 
 # macOS ARM64 zip
 if ($arm64Bundle -and (Test-Path $arm64Bundle)) {
     $bundleName = Split-Path $arm64Bundle -Leaf
     $zipName = "$APP_NAME-$VERSION-macos-arm64.zip"
-    
-    # Set executable bit and create zip
-    wsl sh -c "cd '$currentDirWSL/builds' && chmod +x '$bundleName/Contents/MacOS/$APP_NAME' && zip -r '$zipName' '$bundleName'"
-    
+
+    # Copy uninstall script alongside the app bundle
+    Copy-Item ".\resources\Uninstall.command" ".\builds\Uninstall.command"
+
+    # Set executable bits and create zip
+    wsl sh -c "cd '$currentDirWSL/builds' && chmod +x '$bundleName/Contents/MacOS/$APP_NAME' && chmod +x 'Uninstall.command' && zip -r '$zipName' '$bundleName' 'Uninstall.command'"
+
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Created: builds\$zipName" -ForegroundColor Green
     }
     Remove-Item -Recurse -Force $arm64Bundle
+    Remove-Item ".\builds\Uninstall.command" -ErrorAction SilentlyContinue
 }
 
 # Summary

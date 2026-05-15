@@ -85,25 +85,3 @@ func runPatcherMode(forceUpdate bool) int {
 	fmt.Println("--patcher is not supported on this platform")
 	return 1
 }
-
-func runUninstall() int {
-	installDir := patcher.InstallBaseDir()
-	if _, err := os.Stat(installDir); os.IsNotExist(err) {
-		fmt.Println("Nothing to uninstall — install directory does not exist.")
-		return 0
-	}
-
-	fmt.Printf("Removing %s...\n", installDir)
-	if err := os.RemoveAll(installDir); err != nil {
-		fmt.Printf("Failed to remove install directory: %v\n", err)
-		return 1
-	}
-
-	fmt.Println("Uninstall complete.")
-	return 0
-}
-
-func runUninstallElevated() int {
-	fmt.Println("--uninstall-elevated is not supported on this platform")
-	return 1
-}

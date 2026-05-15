@@ -65,6 +65,7 @@ if (Test-Path ".\builds\$APP_NAME.exe") {
 	Copy-Item ".\builds\$APP_NAME.exe" "$tempDir\$APP_NAME.exe"
 	Copy-Item ".\resources\Toggle-Startup.bat" "$tempDir\Toggle-Startup.bat"
 	Copy-Item ".\resources\Toggle-StartMenu.bat" "$tempDir\Toggle-StartMenu.bat"
+	Copy-Item ".\resources\Uninstall.bat" "$tempDir\Uninstall.bat"
     
 	# Create the zip file from temp directory
 	Compress-Archive -Path "$tempDir\*" -DestinationPath $zipPath -CompressionLevel Optimal
