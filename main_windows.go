@@ -163,3 +163,48 @@ func claudeInstalled() bool {
 	_, err := os.Stat(claudeExecutablePath())
 	return err == nil
 }
+
+func runUninstall() int {
+	installDir := patcher.InstallBaseDir()
+	if _, err := os.Stat(installDir); os.IsNotExist(err) {
+		fmt.Println("Nothing to uninstall — install directory does not exist.")
+		return 0
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return 1
+	}
+
+	fmt.Println("Administrator privileges required for uninstall...")
+	exitCode, err := utils.RunElevatedAndWait(exe, "--uninstall-elevated")
+	if err != nil {
+		fmt.Printf("Elevation failed: %v\n", err)
+		return 1
+	}
+	return exitCode
+}
+
+func runUninstallElevated() int {
+	if err := patcher.TakeWindowsAppsOwnership(); err != nil {
+		fmt.Printf("Failed to take WindowsApps ownership: %v\n", err)
+		fmt.Println("Press Enter to exit...")
+		fmt.Scanln()
+		return 1
+	}
+
+	installDir := patcher.InstallBaseDir()
+	fmt.Printf("Removing %s...\n", installDir)
+	if err := os.RemoveAll(installDir); err != nil {
+		fmt.Printf("Failed to remove install directory: %v\n", err)
+		patcher.ReleaseWindowsAppsOwnership()
+		fmt.Println("Press Enter to exit...")
+		fmt.Scanln()
+		return 1
+	}
+
+	patcher.ReleaseWindowsAppsOwnership()
+	fmt.Println("Uninstall complete.")
+	return 0
+}

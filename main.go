@@ -21,13 +21,15 @@ func init() {
 }
 
 // Version is the current version of the application
-const Version = "2.1.1"
+const Version = "2.1.2"
 
 func main() {
 	// Parse command-line flags
 	forceUpdate := flag.Bool("force-update", false, "Force update to the latest version even if it's not verified compatible")
 	instanceName := flag.String("instance", "modified", "Instance name for separate data directory and lock")
 	patcherMode := flag.Bool("patcher", false, "Run in elevated patcher mode (internal)")
+	uninstall := flag.Bool("uninstall", false, "Remove the patched Claude installation")
+	uninstallElevated := flag.Bool("uninstall-elevated", false, "Run elevated uninstall (internal)")
 	flag.Parse()
 
 	fmt.Printf("Claude_WebExtension_Launcher version: %s\n", Version)
@@ -40,6 +42,16 @@ func main() {
 	// Patcher mode: do admin work and exit (Windows only)
 	if *patcherMode {
 		os.Exit(runPatcherMode(*forceUpdate))
+	}
+
+	// Elevated uninstall mode (Windows internal)
+	if *uninstallElevated {
+		os.Exit(runUninstallElevated())
+	}
+
+	// Uninstall mode: remove the patched installation
+	if *uninstall {
+		os.Exit(runUninstall())
 	}
 
 	// Handle update completion first

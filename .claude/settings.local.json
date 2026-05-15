@@ -10,7 +10,8 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:www.island.io)",
       "WebFetch(domain:www.electronjs.org)",
-      "WebFetch(domain:chromium.googlesource.com)"
+      "WebFetch(domain:chromium.googlesource.com)",
+      "Bash(go build *)"
     ]
   }
 }

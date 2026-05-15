@@ -23,7 +23,7 @@ const (
 	macosReleasesURL   = "https://downloads.claude.ai/releases/darwin/universal/RELEASES.json"
 	appFolderName      = "app-latest"
 	KeepNupkgFiles     = false
-	PatchVersion       = "4"
+	PatchVersion       = "5"
 )
 
 type MacOSManifest struct {
@@ -37,16 +37,17 @@ type MacOSManifest struct {
 }
 
 type Patch struct {
-	Files []string
-	Func  func(content []byte) []byte
+	Files   []string
+	Exclude []string
+	Func    func(content []byte) []byte
 }
 
 var supportedVersions = map[string][]Patch{
 	// Generic patch that should work for most versions
 	"generic": {
 		{
-			// Use pattern to match all index*.js files
-			Files: []string{".vite/build/index*.js"},
+			Files:   []string{".vite/build/index*.js"},
+			Exclude: []string{"index.pre"},
 			Func: func(content []byte) []byte {
 				return patch_generic(content)
 			},
@@ -223,21 +224,39 @@ func patch_index_pre(content []byte) []byte {
 func patch_generic(content []byte) []byte {
 	contentStr := string(content)
 
-	// First, find the injection point
-	returnPattern := regexp.MustCompile(`return\s*.*?(\w+)\.on\("resize"`)
-	matches := returnPattern.FindStringSubmatch(contentStr)
-	if matches == nil || len(matches) < 2 {
-		fmt.Printf("Warning: Could not find injection point (return.*.on(\"resize\"))\n")
+	// First, find the injection point — match any X.on("resize" and pick the
+	// one that is NOT on a line containing "fullScreen" (which is a different call).
+	resizePattern := regexp.MustCompile(`(\w+)\.on\("resize"`)
+	allMatches := resizePattern.FindAllStringSubmatchIndex(contentStr, -1)
+	var mainWindowVar string
+	var injectionIndex int
+	found := false
+	for _, loc := range allMatches {
+		lineStart := strings.LastIndex(contentStr[:loc[0]], "\n") + 1
+		lineEnd := strings.Index(contentStr[loc[0]:], "\n")
+		if lineEnd == -1 {
+			lineEnd = len(contentStr)
+		} else {
+			lineEnd += loc[0]
+		}
+		line := contentStr[lineStart:lineEnd]
+		if strings.Contains(strings.ToLower(line), "fullscreen") {
+			continue
+		}
+		mainWindowVar = contentStr[loc[2]:loc[3]]
+		injectionIndex = loc[0]
+		found = true
+		break
+	}
+	if !found {
+		fmt.Printf("Warning: Could not find injection point (*.on(\"resize\") without fullScreen)\n")
 		return content
 	}
 
-	// Extract mainWindow variable name from the pattern
-	mainWindowVar := matches[1]
 	fmt.Printf("Detected mainWindow variable: %s\n", mainWindowVar)
 
 	// Find the webView variable by looking for pattern like: variableName.webContents.on("dom-ready"
 	// We need to find this before the injection point
-	injectionIndex := returnPattern.FindStringIndex(contentStr)[0]
 	contentBeforeInjection := contentStr[:injectionIndex]
 
 	// Look for webView pattern
@@ -291,10 +310,30 @@ func patch_generic(content []byte) []byte {
 	injection = strings.ReplaceAll(injection, "PLACEHOLDER_MAINWINDOW", mainWindowVar)
 	injection = strings.ReplaceAll(injection, "PLACEHOLDER_WEBVIEW", webViewVar)
 
-	// Insert the injection at the injection point
-	loc := returnPattern.FindStringIndex(contentStr)
-	if loc != nil {
-		contentStr = contentStr[:loc[0]] + "\n" + injection + "\n" + contentStr[loc[0]:]
+	// Re-find the injection point (content may have shifted from earlier insertions)
+	allMatches = resizePattern.FindAllStringSubmatchIndex(contentStr, -1)
+	for _, loc := range allMatches {
+		lineStart := strings.LastIndex(contentStr[:loc[0]], "\n") + 1
+		lineEnd := strings.Index(contentStr[loc[0]:], "\n")
+		if lineEnd == -1 {
+			lineEnd = len(contentStr)
+		} else {
+			lineEnd += loc[0]
+		}
+		line := contentStr[lineStart:lineEnd]
+		if strings.Contains(strings.ToLower(line), "fullscreen") {
+			continue
+		}
+		// Insert after the closest preceding semicolon to avoid injecting
+		// inside a comma-separated expression.
+		insertPos := strings.LastIndex(contentStr[:loc[0]], ";")
+		if insertPos == -1 {
+			insertPos = loc[0]
+		} else {
+			insertPos++ // after the semicolon
+		}
+		contentStr = contentStr[:insertPos] + "\n" + injection + "\n" + contentStr[insertPos:]
+		break
 	}
 
 	// Second injection point - add chrome-extension: to the array
@@ -595,6 +634,18 @@ func applyPatches(version string) error {
 
 				// Apply patch to all matching files
 				for _, matchedFile := range matches {
+					baseName := filepath.Base(matchedFile)
+					excluded := false
+					for _, ex := range patch.Exclude {
+						if strings.Contains(baseName, ex) {
+							excluded = true
+							break
+						}
+					}
+					if excluded {
+						continue
+					}
+
 					relPath, _ := filepath.Rel(tempDir, matchedFile)
 					fmt.Printf("Trying matched file: %s\n", relPath)
 
