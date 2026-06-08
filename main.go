@@ -3,7 +3,6 @@ package main
 import (
 	"claude-webext-patcher/patcher"
 	"claude-webext-patcher/selfupdate"
-	"claude-webext-patcher/utils"
 	"flag"
 	"fmt"
 	"os"
@@ -13,33 +12,30 @@ import (
 
 var launchClaudeInTerminal = false
 
-func init() {
-	debugPath := filepath.Join(utils.GetExecutableDir(), "debug_on")
-	if _, err := os.Stat(debugPath); err == nil {
-		launchClaudeInTerminal = true
-	}
-}
-
 // Version is the current version of the application
-const Version = "2.1.2"
+const Version = "3.0.0"
 
 func main() {
 	// Parse command-line flags
 	forceUpdate := flag.Bool("force-update", false, "Force update to the latest version even if it's not verified compatible")
 	instanceName := flag.String("instance", "modified", "Instance name for separate data directory and lock")
 	patcherMode := flag.Bool("patcher", false, "Run in elevated patcher mode (internal)")
+	debug := flag.Bool("debug", false, "Keep console windows open and launch Claude attached to terminal")
 	flag.Parse()
+
+	launchClaudeInTerminal = *debug
 
 	fmt.Printf("Claude_WebExtension_Launcher version: %s\n", Version)
 	// Set version for selfupdate module
 	selfupdate.CurrentVersion = Version
 
-	// Set embedded FS for patcher module
+	// Set embedded FS and debug flag for patcher module
 	patcher.EmbeddedFS = EmbeddedFS
+	patcher.Debug = *debug
 
 	// Patcher mode: do admin work and exit (Windows only)
 	if *patcherMode {
-		os.Exit(runPatcherMode(*forceUpdate))
+		os.Exit(runPatcherMode(*forceUpdate, *debug))
 	}
 
 	// Handle update completion first

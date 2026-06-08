@@ -1,7 +1,6 @@
 package patcher
 
 import (
-	"bytes"
 	"claude-webext-patcher/utils"
 	"embed"
 	"encoding/json"
@@ -11,19 +10,28 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 )
 
 // EmbeddedFS is the embedded filesystem from the main package
 var EmbeddedFS embed.FS
 
+// Debug enables pausing on warnings/errors during patching
+var Debug bool
+
+func debugPause() {
+	if Debug {
+		fmt.Println("Press Enter to continue...")
+		fmt.Scanln()
+	}
+}
+
 const (
 	windowsReleasesURL = "https://downloads.claude.ai/releases/win32/x64/RELEASES"
 	macosReleasesURL   = "https://downloads.claude.ai/releases/darwin/universal/RELEASES.json"
 	appFolderName      = "app-latest"
 	KeepNupkgFiles     = false
-	PatchVersion       = "5"
+	PatchVersion       = "6"
 )
 
 type MacOSManifest struct {
@@ -43,21 +51,15 @@ type Patch struct {
 }
 
 var supportedVersions = map[string][]Patch{
-	// Generic patch that should work for most versions
+	// Generic patch that should work for most versions.
+	// The wrapper (installed separately) handles instance isolation, multi-instance
+	// lock, extension loading, and polyfills. These content patches handle things
+	// that can't be done from the wrapper.
 	"generic": {
 		{
 			Files:   []string{".vite/build/index*.js"},
-			Exclude: []string{"index.pre"},
-			Func: func(content []byte) []byte {
-				return patch_generic(content)
-			},
-		},
-		{
-			// Patch index.pre.js to redirect userData path for instance isolation
-			Files: []string{".vite/build/index.pre*.js"},
-			Func: func(content []byte) []byte {
-				return patch_index_pre(content)
-			},
+			Exclude: []string{"index.pre", "wrapper"},
+			Func:    patchProtocolArray,
 		},
 	},
 	// Add version-specific overrides here when needed
@@ -75,10 +77,7 @@ var (
 	appExePath      string
 )
 
-var (
-	asarCmd       string
-	jsBeautifyCmd string
-)
+var asarCmd string
 
 func init() {
 	initPaths()
@@ -164,184 +163,95 @@ func DeploySentinelExtension() error {
 	return nil
 }
 
-// Patch functions
-func readInjection(version, filename string) (string, error) {
-	// Must use forward slashes for embed.FS, not filepath.Join
-	injectionPath := "resources/injections/" + version + "/" + filename
-	content, err := EmbeddedFS.ReadFile(injectionPath)
-	if err != nil {
-		return "", fmt.Errorf("could not load injection %s for version %s: %v", filename, version, err)
-	}
-	return string(content), nil
-}
-
-func readCombinedInjection(version string, filenames []string) (string, error) {
-	var combined strings.Builder
-
-	for i, filename := range filenames {
-		content, err := readInjection(version, filename)
-		if err != nil {
-			return "", err
-		}
-
-		// Add the content
-		combined.WriteString(content)
-
-		// Add newlines between files for clarity
-		if i < len(filenames)-1 {
-			combined.WriteString("\n\n")
-		}
-	}
-
-	return combined.String(), nil
-}
-
-func patch_index_pre(content []byte) []byte {
+// patchProtocolArray adds "chrome-extension:" to the allowed protocols array.
+// Matches the prefix ["devtools:","file:" and inserts before the closing ].
+func patchProtocolArray(content []byte) []byte {
 	contentStr := string(content)
 
-	// Find "use strict" at top of file
-	useStrictPattern := `"use strict";`
-	idx := strings.Index(contentStr, useStrictPattern)
+	prefix := `["devtools:","file:"`
+	idx := strings.Index(contentStr, prefix)
 	if idx == -1 {
-		fmt.Printf("Warning: Could not find \"use strict\" in index.pre file\n")
+		fmt.Println("Warning: Could not find protocol array prefix in bundle")
+		debugPause()
 		return content
 	}
 
-	// Load the userData injection
-	injection, err := readInjection("generic", "instance_userdata.js")
-	if err != nil {
-		fmt.Printf("Warning: %v\n", err)
+	// Find the closing ] after the prefix
+	closingIdx := strings.Index(contentStr[idx:], "]")
+	if closingIdx == -1 {
+		fmt.Println("Warning: Could not find closing ] for protocol array")
+		debugPause()
+		return content
+	}
+	closingIdx += idx
+
+	// Check if chrome-extension: is already present
+	arrayContent := contentStr[idx : closingIdx+1]
+	if strings.Contains(arrayContent, "chrome-extension:") {
+		fmt.Println("Protocol array already contains chrome-extension:, skipping")
 		return content
 	}
 
-	// Insert after "use strict";
-	insertPos := idx + len(useStrictPattern)
-	contentStr = contentStr[:insertPos] + "\n" + injection + "\n" + contentStr[insertPos:]
-
+	// Insert ,"chrome-extension:" before the ]
+	contentStr = contentStr[:closingIdx] + `,"chrome-extension:"` + contentStr[closingIdx:]
+	fmt.Println("Added chrome-extension: to protocol array")
 	return []byte(contentStr)
 }
 
-func patch_generic(content []byte) []byte {
-	contentStr := string(content)
-
-	// First, find the injection point — match any X.on("resize" and pick the
-	// one that is NOT on a line containing "fullScreen" (which is a different call).
-	resizePattern := regexp.MustCompile(`(\w+)\.on\("resize"`)
-	allMatches := resizePattern.FindAllStringSubmatchIndex(contentStr, -1)
-	var mainWindowVar string
-	var injectionIndex int
-	found := false
-	for _, loc := range allMatches {
-		lineStart := strings.LastIndex(contentStr[:loc[0]], "\n") + 1
-		lineEnd := strings.Index(contentStr[loc[0]:], "\n")
-		if lineEnd == -1 {
-			lineEnd = len(contentStr)
-		} else {
-			lineEnd += loc[0]
-		}
-		line := contentStr[lineStart:lineEnd]
-		if strings.Contains(strings.ToLower(line), "fullscreen") {
-			continue
-		}
-		mainWindowVar = contentStr[loc[2]:loc[3]]
-		injectionIndex = loc[0]
-		found = true
-		break
-	}
-	if !found {
-		fmt.Printf("Warning: Could not find injection point (*.on(\"resize\") without fullScreen)\n")
-		return content
-	}
-
-	fmt.Printf("Detected mainWindow variable: %s\n", mainWindowVar)
-
-	// Find the webView variable by looking for pattern like: variableName.webContents.on("dom-ready"
-	// We need to find this before the injection point
-	contentBeforeInjection := contentStr[:injectionIndex]
-
-	// Look for webView pattern
-	webViewPattern := regexp.MustCompile(`(\w+)\.webContents\.on\("dom-ready"`)
-	webViewMatches := webViewPattern.FindStringSubmatch(contentBeforeInjection)
-
-	webViewVar := ""
-	if webViewMatches != nil && len(webViewMatches) >= 2 {
-		webViewVar = webViewMatches[1]
-		fmt.Printf("Detected webView variable: %s\n", webViewVar)
-	} else {
-		fmt.Printf("Warning: Could not detect webView variable, falling back to 'r'\n")
-		webViewVar = "r" // Fallback to common default
-	}
-
-	// Replace requestSingleInstanceLock calls with our wrapper BEFORE injecting
-	// the helper function (which itself contains a requestSingleInstanceLock call)
-	lockPattern := regexp.MustCompile(`\w+\.app\.requestSingleInstanceLock\(\)`)
-	contentStr = lockPattern.ReplaceAllString(contentStr, "__modifiedLock()")
-
-	// Inject instance lock helper function after "use strict"
-	useStrictPattern := `"use strict";`
-	useStrictIdx := strings.Index(contentStr, useStrictPattern)
-	if useStrictIdx != -1 {
-		lockInjection, err := readInjection("generic", "instance_lock.js")
-		if err != nil {
-			fmt.Printf("Warning: %v\n", err)
-		} else {
-			insertPos := useStrictIdx + len(useStrictPattern)
-			contentStr = contentStr[:insertPos] + "\n" + lockInjection + "\n" + contentStr[insertPos:]
-		}
-	} else {
-		fmt.Printf("Warning: Could not find \"use strict\" for lock injection\n")
-	}
-
-	// Load all injection files
-	injectionFiles := []string{
-		"extension_loader.js",
-		"alarm_polyfill.js",
-		"notification_polyfill.js",
-		"tabevents_polyfill.js",
-	}
-
-	injection, err := readCombinedInjection("generic", injectionFiles)
+// installWrapper copies the wrapper.js into the unpacked asar and redirects
+// package.json to load it instead of the original entry point.
+func installWrapper(tempDir string, version string) error {
+	// Read and modify package.json
+	pkgPath := filepath.Join(tempDir, "package.json")
+	pkgData, err := os.ReadFile(pkgPath)
 	if err != nil {
-		fmt.Printf("Warning: %v\n", err)
-		return content
+		return fmt.Errorf("reading package.json: %v", err)
 	}
 
-	// Replace placeholders in the injection with detected variable names
-	injection = strings.ReplaceAll(injection, "PLACEHOLDER_MAINWINDOW", mainWindowVar)
-	injection = strings.ReplaceAll(injection, "PLACEHOLDER_WEBVIEW", webViewVar)
-
-	// Re-find the injection point (content may have shifted from earlier insertions)
-	allMatches = resizePattern.FindAllStringSubmatchIndex(contentStr, -1)
-	for _, loc := range allMatches {
-		lineStart := strings.LastIndex(contentStr[:loc[0]], "\n") + 1
-		lineEnd := strings.Index(contentStr[loc[0]:], "\n")
-		if lineEnd == -1 {
-			lineEnd = len(contentStr)
-		} else {
-			lineEnd += loc[0]
-		}
-		line := contentStr[lineStart:lineEnd]
-		if strings.Contains(strings.ToLower(line), "fullscreen") {
-			continue
-		}
-		// Insert after the closest preceding semicolon to avoid injecting
-		// inside a comma-separated expression.
-		insertPos := strings.LastIndex(contentStr[:loc[0]], ";")
-		if insertPos == -1 {
-			insertPos = loc[0]
-		} else {
-			insertPos++ // after the semicolon
-		}
-		contentStr = contentStr[:insertPos] + "\n" + injection + "\n" + contentStr[insertPos:]
-		break
+	var pkg map[string]interface{}
+	if err := json.Unmarshal(pkgData, &pkg); err != nil {
+		return fmt.Errorf("parsing package.json: %v", err)
 	}
 
-	// Second injection point - add chrome-extension: to the array
-	gxPattern := `["devtools:", "file:"]`
-	gxReplacement := `["devtools:", "file:", "chrome-extension:"]`
-	contentStr = strings.Replace(contentStr, gxPattern, gxReplacement, 1)
+	originalMain, _ := pkg["main"].(string)
+	if originalMain == "" {
+		return fmt.Errorf("package.json has no main field")
+	}
+	fmt.Printf("Original main entry: %s\n", originalMain)
 
-	return []byte(contentStr)
+	pkg["main"] = ".vite/build/wrapper.js"
+	pkg["_originalMain"] = originalMain
+
+	newPkgData, err := json.MarshalIndent(pkg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling package.json: %v", err)
+	}
+	if err := os.WriteFile(pkgPath, newPkgData, 0644); err != nil {
+		return fmt.Errorf("writing package.json: %v", err)
+	}
+	fmt.Println("Redirected package.json main to wrapper.js")
+
+	// Try version-specific wrapper first, fall back to generic
+	wrapperPath := "resources/injections/" + version + "/wrapper.js"
+	wrapperData, err := EmbeddedFS.ReadFile(wrapperPath)
+	if err != nil {
+		wrapperPath = "resources/injections/generic/wrapper.js"
+		wrapperData, err = EmbeddedFS.ReadFile(wrapperPath)
+		if err != nil {
+			return fmt.Errorf("reading embedded wrapper.js: %v", err)
+		}
+		fmt.Println("Using generic wrapper.js")
+	} else {
+		fmt.Printf("Using version-specific wrapper.js for %s\n", version)
+	}
+
+	wrapperDst := filepath.Join(tempDir, ".vite", "build", "wrapper.js")
+	if err := os.WriteFile(wrapperDst, wrapperData, 0644); err != nil {
+		return fmt.Errorf("writing wrapper.js: %v", err)
+	}
+	fmt.Println("Installed wrapper.js")
+
+	return nil
 }
 
 func ensureTools() error {
@@ -350,8 +260,7 @@ func ensureTools() error {
 	output, err := cmd.Output()
 	if err != nil {
 		fmt.Println("Error: Node.js not found. Please install Node.js first.")
-		fmt.Println("Press Enter to exit...")
-		fmt.Scanln()
+		debugPause()
 		return fmt.Errorf("Node.js not found")
 	}
 
@@ -369,30 +278,27 @@ func ensureTools() error {
 	// Set tool paths
 	nodeModulesPath := utils.ResolveInstallPath(filepath.Join("node_modules", ".bin"))
 	asarCmd = filepath.Join(nodeModulesPath, "asar")
-	jsBeautifyCmd = filepath.Join(nodeModulesPath, "js-beautify")
 	applyPlatformToolSuffix()
 
 	// Install locally if needed
 	if _, err := os.Stat(asarCmd); os.IsNotExist(err) {
-		fmt.Println("Installing tools locally...")
+		fmt.Println("Installing asar tool locally...")
 
-		// Choose asar package based on Node version
 		asarPackage := "asar"
 		if majorVersion >= 22 {
 			asarPackage = "@electron/asar"
 		}
 
 		installDir := utils.ResolveInstallPath(".")
-		// Ensure a package.json exists so npm doesn't walk up into the locked WindowsApps directory
 		pkgJsonPath := filepath.Join(installDir, "package.json")
 		if _, err := os.Stat(pkgJsonPath); os.IsNotExist(err) {
 			os.WriteFile(pkgJsonPath, []byte("{}"), 0644)
 		}
-		cmd := exec.Command("npm", "install", "--prefix", installDir, "--no-save", asarPackage, "js-beautify")
+		cmd := exec.Command("npm", "install", "--prefix", installDir, "--no-save", asarPackage)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to install tools: %v", err)
+			return fmt.Errorf("failed to install asar: %v", err)
 		}
 	}
 
@@ -429,6 +335,7 @@ func EnsurePatched(forceUpdate bool) error {
 		if currentVersion != "" {
 			fmt.Printf("Warning: %v\n", err)
 			fmt.Printf("Continuing with existing installation (version %s)\n", currentVersion)
+			debugPause()
 
 			// Check if the app executable exists
 			if _, err := os.Stat(appExePath); os.IsNotExist(err) {
@@ -443,43 +350,12 @@ func EnsurePatched(forceUpdate bool) error {
 
 	fmt.Printf("Latest version: %s\n", newestVersion)
 
-	// Check if version is verified
-	versionVerified := IsVersionVerified(newestVersion)
-
-	// Decide whether to update based on verification status and existing installation
-	shouldUpdate := false
-	if forceUpdate {
-		// Force update regardless of version verification
-		shouldUpdate = (currentVersion != newestVersion)
-		if shouldUpdate {
-			fmt.Printf("Force update enabled, updating to version %s...\n", newestVersion)
-			if !versionVerified {
-				fmt.Printf("WARNING: Version %s is not verified compatible.\n", newestVersion)
-			}
-		}
-	} else if versionVerified {
-		// Always update to verified versions
-		shouldUpdate = (currentVersion != newestVersion)
-		if shouldUpdate {
-			fmt.Printf("Version %s is verified compatible, updating...\n", newestVersion)
-		}
-	} else {
-		// Unverified version and not forcing
-		if currentVersion == "" {
-			// No existing installation - try the new version
-			shouldUpdate = true
-			fmt.Printf("WARNING: Version %s is not verified compatible, but no existing installation found.\n", newestVersion)
-			fmt.Println("Attempting installation anyway...")
-		} else if currentVersion == newestVersion {
-			// Already on this unverified version
-			shouldUpdate = false
-			fmt.Printf("Already on version %s (unverified but currently installed)\n", newestVersion)
-		} else {
-			// Have existing installation and new version is unverified - stay on current
-			shouldUpdate = false
-			fmt.Printf("WARNING: Version %s is not verified compatible.\n", newestVersion)
-			fmt.Printf("Keeping existing installation (version %s) to avoid potential issues.\n", currentVersion)
-			fmt.Println("To force update, use --force-update flag.")
+	// Always update to the latest version
+	shouldUpdate := currentVersion != newestVersion
+	if shouldUpdate {
+		if !IsVersionVerified(newestVersion) {
+			fmt.Printf("Note: Version %s has not been explicitly verified, but should work fine.\n", newestVersion)
+			fmt.Println("If you run into issues, let me know on GitHub.")
 		}
 	}
 
@@ -491,6 +367,7 @@ func EnsurePatched(forceUpdate bool) error {
 		if err := downloadAndExtract(newestVersion, downloadURL); err != nil {
 			if canFallbackToExisting() {
 				fmt.Printf("Warning: download/extract failed (%v), continuing with existing installation.\n", err)
+				debugPause()
 				return nil
 			}
 			return err
@@ -503,6 +380,7 @@ func EnsurePatched(forceUpdate bool) error {
 		if err := applyPatches(newestVersion); err != nil {
 			if canFallbackToExisting() {
 				fmt.Printf("Warning: patching failed (%v), continuing with existing installation.\n", err)
+				debugPause()
 				return nil
 			}
 			return fmt.Errorf("applying patches: %v", err)
@@ -523,6 +401,7 @@ func EnsurePatched(forceUpdate bool) error {
 			if err := downloadAndExtract(newestVersion, downloadURL); err != nil {
 				if canFallbackToExisting() {
 					fmt.Printf("Warning: re-download failed (%v), continuing with existing installation.\n", err)
+					debugPause()
 					return nil
 				}
 				return err
@@ -530,6 +409,7 @@ func EnsurePatched(forceUpdate bool) error {
 			if err := applyPatches(newestVersion); err != nil {
 				if canFallbackToExisting() {
 					fmt.Printf("Warning: re-patching failed (%v), continuing with existing installation.\n", err)
+					debugPause()
 					return nil
 				}
 				return fmt.Errorf("applying patches: %v", err)
@@ -542,43 +422,10 @@ func EnsurePatched(forceUpdate bool) error {
 	return nil
 }
 
-// Helper function to apply a patch to a single file
-func applyPatchToFile(filePath string, content []byte, patchFunc func([]byte) []byte) bool {
-	// Get the base filename for logging
-	fileName := filepath.Base(filePath)
-
-	// Beautify JS files if needed
-	if strings.HasSuffix(fileName, ".js") {
-		if !bytes.Contains(content, []byte("/* CLAUDE-MANAGER-BEAUTIFIED */")) {
-			beautifyCmd := jsBeautifyCommand(filePath, "-o", filePath)
-			if err := beautifyCmd.Run(); err != nil {
-				fmt.Printf("Warning: Could not beautify %s: %v\n", fileName, err)
-			} else {
-				// Add marker comment
-				beautifiedContent, _ := os.ReadFile(filePath)
-				markedContent := append([]byte("/* CLAUDE-MANAGER-BEAUTIFIED */\n"), beautifiedContent...)
-				os.WriteFile(filePath, markedContent, 0644)
-				// Re-read for patching
-				content = markedContent
-			}
-		}
-	}
-
-	// Apply the patch
-	newContent := patchFunc(content)
-	if err := os.WriteFile(filePath, newContent, 0644); err != nil {
-		fmt.Printf("Failed to write %s: %v\n", fileName, err)
-		return false
-	}
-
-	return true
-}
-
 func applyPatches(version string) error {
 	// Try version-specific patches first, fall back to generic
 	patches, ok := supportedVersions[version]
 	if !ok || len(patches) == 0 {
-		// Try generic patches
 		patches, ok = supportedVersions["generic"]
 		if !ok || len(patches) == 0 {
 			fmt.Printf("No patches available for version %s (and no generic patches found)\n", version)
@@ -592,7 +439,7 @@ func applyPatches(version string) error {
 	fmt.Println("Applying patches...")
 	if err := replaceIcons(); err != nil {
 		fmt.Printf("Warning: Could not replace icons: %v\n", err)
-		// Don't fail the whole process if icons can't be replaced
+		debugPause()
 	}
 
 	asarPath := filepath.Join(appResourcesDir, "app.asar")
@@ -600,9 +447,6 @@ func applyPatches(version string) error {
 
 	// Unpack asar
 	fmt.Println("Unpacking asar...")
-	fmt.Printf("Running command: %s\n", asarCmd)
-	fmt.Printf("Arguments: extract %s %s\n", asarPath, tempDir)
-
 	cmd := asarCommand("extract", asarPath, tempDir)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -610,100 +454,81 @@ func applyPatches(version string) error {
 		fmt.Printf("Output: %s\n", string(output))
 		return fmt.Errorf("unpacking asar: %v\nOutput: %s", err, string(output))
 	}
-	fmt.Printf("Unpacking successful\n")
+	fmt.Println("Unpacking successful")
 	defer os.RemoveAll(tempDir)
 
-	// Apply patches
-	for i, patch := range patches {
-		fmt.Printf("Applying patch %d/%d...\n", i+1, len(patches))
+	// Install the wrapper (redirects package.json entry point)
+	if err := installWrapper(tempDir, version); err != nil {
+		return fmt.Errorf("installing wrapper: %v", err)
+	}
 
-		// Try each file pattern for this patch
+	// Apply content patches (e.g. protocol array)
+	for i, patch := range patches {
+		fmt.Printf("Applying content patch %d/%d...\n", i+1, len(patches))
+
 		patchApplied := false
 		for _, filePattern := range patch.Files {
-			// Check if this is a pattern (contains *) or exact filename
-			if strings.Contains(filePattern, "*") {
-				// Use filepath.Glob to find matching files
-				pattern := filepath.Join(tempDir, filePattern)
-				matches, err := filepath.Glob(pattern)
-				if err != nil {
-					fmt.Printf("Error with pattern %s: %v\n", filePattern, err)
+			pattern := filepath.Join(tempDir, filePattern)
+			matches, err := filepath.Glob(pattern)
+			if err != nil {
+				fmt.Printf("Error with pattern %s: %v\n", filePattern, err)
+				continue
+			}
+
+			for _, matchedFile := range matches {
+				baseName := filepath.Base(matchedFile)
+				excluded := false
+				for _, ex := range patch.Exclude {
+					if strings.Contains(baseName, ex) {
+						excluded = true
+						break
+					}
+				}
+				if excluded {
 					continue
 				}
 
-				fmt.Printf("Pattern %s matched %d files\n", filePattern, len(matches))
+				relPath, _ := filepath.Rel(tempDir, matchedFile)
+				fmt.Printf("Patching %s\n", relPath)
 
-				// Apply patch to all matching files
-				for _, matchedFile := range matches {
-					baseName := filepath.Base(matchedFile)
-					excluded := false
-					for _, ex := range patch.Exclude {
-						if strings.Contains(baseName, ex) {
-							excluded = true
-							break
-						}
-					}
-					if excluded {
-						continue
-					}
-
-					relPath, _ := filepath.Rel(tempDir, matchedFile)
-					fmt.Printf("Trying matched file: %s\n", relPath)
-
-					content, err := os.ReadFile(matchedFile)
-					if err != nil {
-						fmt.Printf("  Skipping %s: %v\n", relPath, err)
-						continue
-					}
-
-					if applyPatchToFile(matchedFile, content, patch.Func) {
-						fmt.Printf("  Successfully applied patch to %s\n", relPath)
-						patchApplied = true
-					}
-				}
-			} else {
-				// Exact filename
-				filePath := filepath.Join(tempDir, filePattern)
-				content, err := os.ReadFile(filePath)
+				content, err := os.ReadFile(matchedFile)
 				if err != nil {
-					fmt.Printf("Skipping %s: %v\n", filePattern, err)
+					fmt.Printf("  Skipping %s: %v\n", relPath, err)
 					continue
 				}
 
-				fmt.Printf("Found file: %s\n", filePattern)
-				if applyPatchToFile(filePath, content, patch.Func) {
-					fmt.Printf("Successfully applied patch to %s\n", filePattern)
-					patchApplied = true
-					break // For exact files, one success is enough
+				newContent := patch.Func(content)
+				if err := os.WriteFile(matchedFile, newContent, 0644); err != nil {
+					fmt.Printf("  Failed to write %s: %v\n", relPath, err)
+					continue
 				}
+				patchApplied = true
 			}
 
 			if patchApplied {
-				break // Move to next patch
+				break
 			}
 		}
 
 		if !patchApplied {
-			return fmt.Errorf("patch %d failed: none of the target files could be patched", i+1)
+			fmt.Printf("Warning: content patch %d did not match any files\n", i+1)
+			debugPause()
 		}
 	}
 
-	// Backup original
+	// Backup original and repack
 	os.Rename(asarPath, asarPath+".backup")
 
-	// Repack asar
 	fmt.Println("Repacking asar...")
-	fmt.Printf("Running command: %s\n", asarCmd)
-	fmt.Printf("Arguments: pack %s %s\n", tempDir, asarPath)
-
 	cmd = asarCommand("pack", tempDir, asarPath)
 	output2, err2 := cmd.CombinedOutput()
 	if err2 != nil {
 		fmt.Printf("Command failed with error: %v\n", err2)
 		fmt.Printf("Output: %s\n", string(output2))
-		os.Rename(asarPath+".backup", asarPath) // Restore on failure
+		os.Rename(asarPath+".backup", asarPath)
 		return fmt.Errorf("repacking asar: %v\nOutput: %s", err2, string(output2))
 	}
-	fmt.Printf("Repacking successful\n")
+	fmt.Println("Repacking successful")
 
 	if err := finalizePatches(); err != nil {
 		return err

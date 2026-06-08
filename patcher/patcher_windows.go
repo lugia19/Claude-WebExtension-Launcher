@@ -57,6 +57,7 @@ func ReleaseWindowsAppsOwnership() {
 		cmd := exec.Command(c.name, c.args...)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			fmt.Printf("Warning: cleanup step '%s' failed: %v\n%s\n", c.name, err, string(output))
+			debugPause()
 		}
 	}
 }
@@ -110,7 +111,6 @@ func prepareInstallDir() error {
 
 func applyPlatformToolSuffix() {
 	asarCmd += ".ps1"
-	jsBeautifyCmd += ".ps1"
 }
 
 func asarCommand(args ...string) *exec.Cmd {
@@ -120,14 +120,6 @@ func asarCommand(args ...string) *exec.Cmd {
 		return exec.Command("powershell", fullArgs...)
 	}
 	return exec.Command(asarCmd, args...)
-}
-
-func jsBeautifyCommand(args ...string) *exec.Cmd {
-	if strings.HasSuffix(jsBeautifyCmd, ".ps1") {
-		fullArgs := append([]string{"-ExecutionPolicy", "Bypass", "-File", jsBeautifyCmd}, args...)
-		return exec.Command("powershell", fullArgs...)
-	}
-	return exec.Command(jsBeautifyCmd, args...)
 }
 
 func finalizePatches() error {
@@ -144,6 +136,7 @@ func GrantUserReadAccess() {
 	cmd := exec.Command("icacls", installBaseDir, "/grant:r", "*S-1-5-32-545:(OI)(CI)RX")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		fmt.Printf("Warning: failed to grant user read access: %v\n%s\n", err, string(output))
+		debugPause()
 	}
 }
 

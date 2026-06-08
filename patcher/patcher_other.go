@@ -35,10 +35,6 @@ func asarCommand(args ...string) *exec.Cmd {
 	return exec.Command(asarCmd, args...)
 }
 
-func jsBeautifyCommand(args ...string) *exec.Cmd {
-	return exec.Command(jsBeautifyCmd, args...)
-}
-
 func finalizePatches() error {
 	// Ad-hoc sign on macOS after asar modifications
 	fmt.Println("Signing app with ad-hoc signature...")
@@ -55,7 +51,7 @@ func finalizePatches() error {
 	cmd = exec.Command("codesign", "--force", "--deep", "--sign", "-", appPath)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		fmt.Printf("Warning: Could not sign app: %v\n%s\n", err, string(output))
-		// Continue anyway - might still work
+		debugPause()
 	} else {
 		fmt.Printf("App signed successfully\n")
 		if len(output) > 0 {
@@ -91,6 +87,7 @@ func finalizePatches() error {
 	cmd = exec.Command("codesign", "--force", "--deep", "--sign", "-", appPath)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		fmt.Printf("Warning: Could not sign app: %v\n%s\n", err, string(output))
+		debugPause()
 	} else {
 		fmt.Printf("App signed successfully\n")
 		if len(output) > 0 {

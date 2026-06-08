@@ -81,7 +81,7 @@ func ensureClaudeReady(forceUpdate bool) error {
 }
 
 // runPatcherMode is not used on non-Windows platforms.
-func runPatcherMode(forceUpdate bool) int {
+func runPatcherMode(forceUpdate bool, debug bool) int {
 	fmt.Println("--patcher is not supported on this platform")
 	return 1
 }

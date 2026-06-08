@@ -42,7 +42,7 @@ func claudeExecutablePath() string {
 
 // runPatcherMode runs the elevated patcher code path. Called when the launcher
 // is re-invoked with --patcher via UAC.
-func runPatcherMode(forceUpdate bool) int {
+func runPatcherMode(forceUpdate bool, debug bool) int {
 	fmt.Println("Running in elevated patcher mode...")
 
 	if err := patcher.TakeWindowsAppsOwnership(); err != nil {
@@ -62,16 +62,28 @@ func runPatcherMode(forceUpdate bool) int {
 
 	if err := extensions.UpdateAll(); err != nil {
 		fmt.Printf("Warning: extension update failed: %v\n", err)
+		if debug {
+			fmt.Println("Press Enter to continue...")
+			fmt.Scanln()
+		}
 	}
 
 	if err := patcher.DeploySentinelExtension(); err != nil {
 		fmt.Printf("Warning: sentinel extension deployment failed: %v\n", err)
+		if debug {
+			fmt.Println("Press Enter to continue...")
+			fmt.Scanln()
+		}
 	}
 
 	patcher.GrantUserReadAccess()
 	patcher.ReleaseWindowsAppsOwnership()
 
 	fmt.Println("Patching complete.")
+	if debug {
+		fmt.Println("Press Enter to exit...")
+		fmt.Scanln()
+	}
 	return 0
 }
 
@@ -93,6 +105,9 @@ func ensureClaudeReady(forceUpdate bool) error {
 	args := "--patcher"
 	if forceUpdate {
 		args += " --force-update"
+	}
+	if launchClaudeInTerminal {
+		args += " --debug"
 	}
 
 	fmt.Println("Administrator privileges required for patching...")
@@ -140,13 +155,13 @@ func checkNeedsAdmin(forceUpdate bool) bool {
 		return true
 	}
 
-	// Check if a newer verified Claude version is available
+	// Check if a newer Claude version is available
 	newestVersion, _, err := patcher.GetLatestVersion()
 	if err != nil {
 		// Can't reach update server — assume current install is fine
 		return false
 	}
-	if currentVersion != newestVersion && patcher.IsVersionVerified(newestVersion) {
+	if currentVersion != newestVersion {
 		return true
 	}
 
