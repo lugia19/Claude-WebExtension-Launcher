@@ -58,6 +58,9 @@ Not much I can do. I can't afford the subscription, and even if I could, this wo
 ### First Launch Network Service Crash (macOS only)
 On first launch, you might see a crash dialog about the network service. This is (likely) because the modified app needs Keychain permission to be granted, given that it uses an ad-hoc signature. Just ignore it.
 
+### Debug flag
+
+If anything else happens or goes wrong, execute the launcher with the --debug flag to be able to see the full logs.
 
 ## Installation
 
