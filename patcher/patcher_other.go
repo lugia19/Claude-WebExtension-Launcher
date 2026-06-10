@@ -28,13 +28,6 @@ func prepareInstallDir() error {
 	return nil
 }
 
-// applyPlatformToolSuffix is a no-op on non-Windows platforms.
-func applyPlatformToolSuffix() {}
-
-func asarCommand(args ...string) *exec.Cmd {
-	return exec.Command(asarCmd, args...)
-}
-
 func finalizePatches() error {
 	// Ad-hoc sign on macOS after asar modifications
 	fmt.Println("Signing app with ad-hoc signature...")

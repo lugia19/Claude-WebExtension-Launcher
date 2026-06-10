@@ -1,6 +1,7 @@
 package patcher
 
 import (
+	"claude-webext-patcher/asar"
 	"claude-webext-patcher/utils"
 	"embed"
 	"encoding/json"
@@ -8,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -76,8 +76,6 @@ var (
 	appResourcesDir string
 	appExePath      string
 )
-
-var asarCmd string
 
 func init() {
 	initPaths()
@@ -254,57 +252,6 @@ func installWrapper(tempDir string, version string) error {
 	return nil
 }
 
-func ensureTools() error {
-	// Check if node exists and get version
-	cmd := exec.Command("node", "--version")
-	output, err := cmd.Output()
-	if err != nil {
-		fmt.Println("Error: Node.js not found. Please install Node.js first.")
-		debugPause()
-		return fmt.Errorf("Node.js not found")
-	}
-
-	// Parse Node version (format: v22.0.0)
-	versionStr := strings.TrimSpace(string(output))
-	versionStr = strings.TrimPrefix(versionStr, "v")
-	versionParts := strings.Split(versionStr, ".")
-	majorVersion := 0
-	if len(versionParts) > 0 {
-		fmt.Sscanf(versionParts[0], "%d", &majorVersion)
-	}
-
-	fmt.Printf("Found Node.js %s\n", versionStr)
-
-	// Set tool paths
-	nodeModulesPath := utils.ResolveInstallPath(filepath.Join("node_modules", ".bin"))
-	asarCmd = filepath.Join(nodeModulesPath, "asar")
-	applyPlatformToolSuffix()
-
-	// Install locally if needed
-	if _, err := os.Stat(asarCmd); os.IsNotExist(err) {
-		fmt.Println("Installing asar tool locally...")
-
-		asarPackage := "asar"
-		if majorVersion >= 22 {
-			asarPackage = "@electron/asar"
-		}
-
-		installDir := utils.ResolveInstallPath(".")
-		pkgJsonPath := filepath.Join(installDir, "package.json")
-		if _, err := os.Stat(pkgJsonPath); os.IsNotExist(err) {
-			os.WriteFile(pkgJsonPath, []byte("{}"), 0644)
-		}
-		cmd := exec.Command("npm", "install", "--prefix", installDir, "--no-save", asarPackage)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("failed to install asar: %v", err)
-		}
-	}
-
-	return nil
-}
-
 func canFallbackToExisting() bool {
 	_, err := os.Stat(appExePath)
 	return err == nil
@@ -313,11 +260,6 @@ func canFallbackToExisting() bool {
 func EnsurePatched(forceUpdate bool) error {
 	if err := prepareInstallDir(); err != nil {
 		return fmt.Errorf("setting up install directory: %v", err)
-	}
-
-	if err := ensureTools(); err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
 	}
 
 	// Get current version (stored at installBaseDir level, not inside AppFolder)
@@ -447,12 +389,9 @@ func applyPatches(version string) error {
 
 	// Unpack asar
 	fmt.Println("Unpacking asar...")
-	cmd := asarCommand("extract", asarPath, tempDir)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		fmt.Printf("Command failed with error: %v\n", err)
-		fmt.Printf("Output: %s\n", string(output))
-		return fmt.Errorf("unpacking asar: %v\nOutput: %s", err, string(output))
+	if err := asar.Extract(asarPath, tempDir); err != nil {
+		fmt.Printf("Unpacking failed: %v\n", err)
+		return fmt.Errorf("unpacking asar: %v", err)
 	}
 	fmt.Println("Unpacking successful")
 	defer os.RemoveAll(tempDir)
@@ -520,13 +459,10 @@ func applyPatches(version string) error {
 	os.Rename(asarPath, asarPath+".backup")
 
 	fmt.Println("Repacking asar...")
-	cmd = asarCommand("pack", tempDir, asarPath)
-	output2, err2 := cmd.CombinedOutput()
-	if err2 != nil {
-		fmt.Printf("Command failed with error: %v\n", err2)
-		fmt.Printf("Output: %s\n", string(output2))
+	if err := asar.Pack(tempDir, asarPath); err != nil {
+		fmt.Printf("Repacking failed: %v\n", err)
 		os.Rename(asarPath+".backup", asarPath)
-		return fmt.Errorf("repacking asar: %v\nOutput: %s", err2, string(output2))
+		return fmt.Errorf("repacking asar: %v", err)
 	}
 	fmt.Println("Repacking successful")
 

@@ -109,19 +109,6 @@ func prepareInstallDir() error {
 	return ensureWindowsAppsFolder()
 }
 
-func applyPlatformToolSuffix() {
-	asarCmd += ".ps1"
-}
-
-func asarCommand(args ...string) *exec.Cmd {
-	if strings.HasSuffix(asarCmd, ".ps1") {
-		fmt.Println("Using PowerShell for Windows .ps1 file")
-		fullArgs := append([]string{"-ExecutionPolicy", "Bypass", "-File", asarCmd}, args...)
-		return exec.Command("powershell", fullArgs...)
-	}
-	return exec.Command(asarCmd, args...)
-}
-
 func finalizePatches() error {
 	// On Windows, deploy the proxy DLL (it handles integrity patching at runtime)
 	if err := deployDLL(); err != nil {
