@@ -8,11 +8,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
 )
 
@@ -135,81 +134,59 @@ func replacePlatformAppIcon() {
 func GetLatestVersion() (string, string, error) {
 	fmt.Println("Getting latest version for OS: windows")
 
-	resp, err := http.Get(windowsReleasesURL)
+	// Resolve the MSIX redirect without following it — the 307 response carries the
+	// real download URL in its Location header, and we avoid pulling the ~222 MB body.
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Get(windowsMSIXRedirectURL)
 	if err != nil {
-		return "", "", fmt.Errorf("fetching Windows releases: %v", err)
+		return "", "", fmt.Errorf("resolving MSIX redirect: %v", err)
 	}
 	defer resp.Body.Close()
 
-	releasesText, _ := io.ReadAll(resp.Body)
-
-	lines := strings.Split(string(releasesText), "\n")
-
-	// Find the latest version from the RELEASES file
-	// The format is typically: SHA1 filename size
-	var versions []struct {
-		version  string
-		url      string
-		filename string
+	if resp.StatusCode < 300 || resp.StatusCode >= 400 {
+		return "", "", fmt.Errorf("unexpected status from MSIX redirect endpoint: %d", resp.StatusCode)
 	}
 
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		if strings.Contains(line, "AnthropicClaude-") && strings.Contains(line, "-full.nupkg") {
-			// Extract version from filename
-			parts := strings.Fields(line)
-			if len(parts) >= 2 {
-				filename := parts[1]
-				// Extract version from AnthropicClaude-X.Y.Z-full.nupkg
-				versionStart := strings.Index(filename, "AnthropicClaude-") + len("AnthropicClaude-")
-				versionEnd := strings.Index(filename, "-full.nupkg")
-				if versionStart > 0 && versionEnd > versionStart {
-					version := filename[versionStart:versionEnd]
-					url := strings.Replace(windowsReleasesURL, "RELEASES", filename, 1)
-					versions = append(versions, struct {
-						version  string
-						url      string
-						filename string
-					}{version, url, filename})
-				}
-			}
-		}
+	loc := resp.Header.Get("Location")
+	if loc == "" {
+		return "", "", fmt.Errorf("MSIX redirect endpoint returned no Location header")
 	}
 
-	if len(versions) == 0 {
-		fmt.Printf("ERROR: No valid releases found in RELEASES file\n")
-		return "", "", fmt.Errorf("no releases found in Windows RELEASES file")
+	version, err := parseVersionFromMSIXURL(loc)
+	if err != nil {
+		return "", "", err
 	}
 
-	// Sort versions to find the latest (newest first)
-	sort.Slice(versions, func(i, j int) bool {
-		partsI := strings.Split(versions[i].version, ".")
-		partsJ := strings.Split(versions[j].version, ".")
+	fmt.Printf("Selected latest version: %s, URL: %s\n", version, loc)
+	return version, loc, nil
+}
 
-		for k := 0; k < len(partsI) && k < len(partsJ); k++ {
-			numI, _ := strconv.Atoi(partsI[k])
-			numJ, _ := strconv.Atoi(partsJ[k])
-
-			if numI != numJ {
-				return numI > numJ
-			}
-		}
-
-		return len(partsI) > len(partsJ)
-	})
-
-	// Use the latest version
-	latest := versions[0]
-	fmt.Printf("Selected latest version: %s, URL: %s\n", latest.version, latest.url)
-	return latest.version, latest.url, nil
+// parseVersionFromMSIXURL extracts the version segment from a Claude MSIX download URL of the
+// form https://downloads.claude.ai/releases/win32/x64/{VERSION}/Claude-{hash}.msix.
+func parseVersionFromMSIXURL(rawURL string) (string, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("parsing MSIX URL %q: %v", rawURL, err)
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("cannot parse version from MSIX URL path: %s", u.Path)
+	}
+	// The version is the path segment just before the filename.
+	version := parts[len(parts)-2]
+	// Defensive: a version looks like a dotted number (e.g. 1.11847.5).
+	if version == "" || !strings.Contains(version, ".") {
+		return "", fmt.Errorf("unexpected version segment %q in MSIX URL: %s", version, u.Path)
+	}
+	return version, nil
 }
 
 func downloadAndExtract(version, downloadURL string) error {
-	newVersionZipName := fmt.Sprintf("AnthropicClaude-%s-full.nupkg", version)
+	newVersionZipName := fmt.Sprintf("Claude-%s.msix", version)
 
 	// Define the download path based on whether we keep files or use temp
 	var newVersionDownloadPath string
@@ -263,14 +240,23 @@ func downloadAndExtract(version, downloadURL string) error {
 	// Don't defer close - we need to close before deleting temp file
 
 	for _, f := range zipReader.File {
-		// Windows - only extract files from lib/net45/
-		if !strings.HasPrefix(f.Name, "lib/net45/") {
+		// Windows - the MSIX wraps the whole app under app/; everything else
+		// (AppxManifest.xml, AppxBlockMap.xml, Assets/, signature, etc.) is skipped.
+		if !strings.HasPrefix(f.Name, "app/") {
 			continue
 		}
-		relativePath := strings.TrimPrefix(f.Name, "lib/net45/")
+		relativePath := strings.TrimPrefix(f.Name, "app/")
 
 		if relativePath == "" {
 			continue
+		}
+
+		// MSIX part names follow OPC, which percent-encodes reserved characters
+		// (e.g. "@" -> "%40"). Decode so files land on disk with their real names —
+		// app.asar's unpacked entries (e.g. node_modules/@ant/...) reference the
+		// decoded form, and the asar repack copies them by that name.
+		if decoded, err := url.PathUnescape(relativePath); err == nil {
+			relativePath = decoded
 		}
 
 		path := filepath.Join(AppFolder, relativePath)

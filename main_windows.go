@@ -77,6 +77,15 @@ func runPatcherMode(forceUpdate bool, debug bool) int {
 	}
 
 	patcher.GrantUserReadAccess()
+
+	if err := patcher.RegisterCoworkService(); err != nil {
+		fmt.Printf("Warning: Cowork service registration failed: %v\n", err)
+		if debug {
+			fmt.Println("Press Enter to continue...")
+			fmt.Scanln()
+		}
+	}
+
 	patcher.ReleaseWindowsAppsOwnership()
 
 	fmt.Println("Patching complete.")
@@ -135,6 +144,12 @@ func ensureClaudeReady(forceUpdate bool) error {
 // checkNeedsAdmin determines whether the elevated patcher needs to run.
 func checkNeedsAdmin(forceUpdate bool) bool {
 	if forceUpdate {
+		return true
+	}
+
+	// If the Cowork service is missing, run the elevated patcher (which registers it).
+	// Checked before any network call so it works offline too.
+	if !patcher.CoworkServiceExists() {
 		return true
 	}
 

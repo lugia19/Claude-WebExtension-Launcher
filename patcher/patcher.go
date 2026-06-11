@@ -27,11 +27,16 @@ func debugPause() {
 }
 
 const (
-	windowsReleasesURL = "https://downloads.claude.ai/releases/win32/x64/RELEASES"
-	macosReleasesURL   = "https://downloads.claude.ai/releases/darwin/universal/RELEASES.json"
-	appFolderName      = "app-latest"
-	KeepNupkgFiles     = false
-	PatchVersion       = "6"
+	// windowsMSIXRedirectURL resolves (via HTTP 307) to the latest Windows MSIX,
+	// e.g. https://downloads.claude.ai/releases/win32/x64/{VERSION}/Claude-{hash}.msix.
+	// The MSIX is the complete app and additionally ships the Cowork service binary
+	// (cowork-svc.exe) and its sandbox image (smol-bin.x64.vhdx), which the Squirrel
+	// .nupkg does not contain.
+	windowsMSIXRedirectURL = "https://claude.ai/api/desktop/win32/x64/msix/latest/redirect"
+	macosReleasesURL       = "https://downloads.claude.ai/releases/darwin/universal/RELEASES.json"
+	appFolderName          = "app-latest"
+	KeepNupkgFiles         = false
+	PatchVersion           = "7"
 )
 
 type MacOSManifest struct {

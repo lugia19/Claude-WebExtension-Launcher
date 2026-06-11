@@ -4,11 +4,74 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+// migrateCoworkSessions copies the official Claude client's Cowork sessions into the
+// default "modified" instance, once. Cowork sessions live in the userData dir under
+// local-agent-mode-sessions; the official app uses %APPDATA%\Claude while the patched
+// app's default instance uses %APPDATA%\Claude-modified (see wrapper.js). This runs
+// unelevated and before the official-uninstall prompt, so the user's existing sessions
+// carry over to the patched app. It never overwrites sessions that already exist.
+func migrateCoworkSessions() {
+	appData := os.Getenv("APPDATA")
+	if appData == "" {
+		return
+	}
+	src := filepath.Join(appData, "Claude", "local-agent-mode-sessions")
+	dst := filepath.Join(appData, "Claude-modified", "local-agent-mode-sessions")
+
+	if info, err := os.Stat(src); err != nil || !info.IsDir() {
+		return // nothing to migrate
+	}
+	if _, err := os.Stat(dst); err == nil {
+		return // destination already has sessions — don't clobber
+	}
+
+	fmt.Println("Migrating Cowork sessions from the official Claude app...")
+	if err := copyTree(src, dst); err != nil {
+		fmt.Printf("Warning: could not migrate Cowork sessions: %v\n", err)
+		return
+	}
+	fmt.Println("Cowork sessions migrated.")
+}
+
+// copyTree recursively copies the directory src to dst.
+func copyTree(src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		out, err := os.Create(target)
+		if err != nil {
+			return err
+		}
+		defer out.Close()
+		_, err = io.Copy(out, in)
+		return err
+	})
+}
 
 func checkMSIXAndPrompt(instanceName string) {
 	if !isMSIXInstalled() {

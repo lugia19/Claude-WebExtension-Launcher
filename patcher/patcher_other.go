@@ -28,6 +28,12 @@ func prepareInstallDir() error {
 	return nil
 }
 
+// CoworkServiceExists is Windows-only; on other platforms report "present" so the shared
+// launcher flow never tries to register a service.
+func CoworkServiceExists() bool {
+	return true
+}
+
 func finalizePatches() error {
 	// Ad-hoc sign on macOS after asar modifications
 	fmt.Println("Signing app with ad-hoc signature...")

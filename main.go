@@ -13,7 +13,7 @@ import (
 var launchClaudeInTerminal = false
 
 // Version is the current version of the application
-const Version = "3.1.0"
+const Version = "3.2.0"
 
 func main() {
 	// Parse command-line flags
@@ -71,6 +71,9 @@ func main() {
 
 	// Release any platform-specific privileges before launching Claude
 	releaseAdminContext()
+
+	// Carry over Cowork sessions from the official app before any uninstall prompt (Windows only)
+	migrateCoworkSessions()
 
 	// Check for official Claude MSIX installation (Windows only)
 	checkMSIXAndPrompt(*instanceName)
