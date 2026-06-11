@@ -14,3 +14,4 @@
 .DS_Store?
 /copy_macos.ps1
 /resources/rcodesign.exe
+/resources/patch.log

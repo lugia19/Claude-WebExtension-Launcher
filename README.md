@@ -66,7 +66,10 @@ If anything else happens or goes wrong, execute the launcher with the --debug fl
 
 ### Supported Platforms
 - **macOS** - Intel and Apple Silicon
-- **Windows** - Windows 10/11
+- **Windows** - Windows 10/11 (x64 and ARM64)
+
+> On Windows there's a single (x64) download — no need to pick an architecture. On an ARM64 PC
+> it detects the host and installs the native arm64 Claude automatically (Windows 11 on ARM).
 
 ### Quick Start
 Download the latest installer from [Releases](https://github.com/lugia19/Claude-WebExtension-Launcher/releases) and run it. The installer will handle everything automatically.

@@ -88,11 +88,22 @@ func ensureWindowsAppsFolder() error {
 	return nil
 }
 
-// deployDLL extracts the embedded version.dll next to claude.exe.
+// deployDLL extracts the embedded version.dll matching the host architecture next to
+// claude.exe. The proxy DLL is loaded by claude.exe via DLL sideloading, so it must match
+// the architecture of the (native) claude.exe we installed — x64 or arm64.
 func deployDLL() error {
-	dllData, err := EmbeddedFS.ReadFile("resources/version.dll")
+	arch := HostArch()
+	srcName := fmt.Sprintf("resources/version-%s.dll", arch)
+	dllData, err := EmbeddedFS.ReadFile(srcName)
 	if err != nil {
-		return fmt.Errorf("reading embedded version.dll: %v", err)
+		return fmt.Errorf("reading embedded %s: %v", srcName, err)
+	}
+
+	// Guard against a wrong-arch or placeholder DLL: the bundled bytes must be a PE for the
+	// expected machine. On arm64 builds without a real version-arm64.dll this fails loudly
+	// instead of deploying a DLL that claude.exe can't load.
+	if err := verifyDLLArch(dllData, arch); err != nil {
+		return err
 	}
 
 	dllPath := filepath.Join(AppFolder, "version.dll")
@@ -100,7 +111,39 @@ func deployDLL() error {
 		return fmt.Errorf("writing version.dll: %v", err)
 	}
 
-	fmt.Println("Deployed version.dll")
+	fmt.Printf("Deployed version.dll (%s)\n", arch)
+	return nil
+}
+
+// peMachine returns the PE/COFF Machine field of a Windows binary, or 0 if the bytes are not
+// a recognizable PE image.
+func peMachine(data []byte) uint16 {
+	// DOS header: "MZ", e_lfanew (LE uint32) at offset 0x3C points to the PE header.
+	if len(data) < 0x40 || data[0] != 'M' || data[1] != 'Z' {
+		return 0
+	}
+	peOff := int(data[0x3C]) | int(data[0x3D])<<8 | int(data[0x3E])<<16 | int(data[0x3F])<<24
+	// PE signature "PE\0\0" then COFF header; Machine is the first COFF field.
+	if peOff < 0 || peOff+6 > len(data) {
+		return 0
+	}
+	if data[peOff] != 'P' || data[peOff+1] != 'E' || data[peOff+2] != 0 || data[peOff+3] != 0 {
+		return 0
+	}
+	return uint16(data[peOff+4]) | uint16(data[peOff+5])<<8
+}
+
+// verifyDLLArch confirms the bundled DLL is a PE for the expected architecture.
+func verifyDLLArch(data []byte, arch string) error {
+	want := uint16(0x8664) // IMAGE_FILE_MACHINE_AMD64
+	if arch == "arm64" {
+		want = imageFileMachineARM64
+	}
+	got := peMachine(data)
+	if got != want {
+		return fmt.Errorf("bundled version-%s.dll is not a valid %s DLL (PE machine 0x%04X, want 0x%04X) — "+
+			"build the %s Release of ClaudeDLL and replace resources/version-%s.dll", arch, arch, got, want, arch, arch)
+	}
 	return nil
 }
 
@@ -132,7 +175,12 @@ func replacePlatformAppIcon() {
 }
 
 func GetLatestVersion() (string, string, error) {
-	fmt.Println("Getting latest version for OS: windows")
+	arch := HostArch()
+	fmt.Printf("Getting latest version for OS: windows (%s)\n", arch)
+	if arch == "arm64" {
+		fmt.Println("Detected ARM64 host — installing native arm64 Claude.")
+	}
+	redirectURL := fmt.Sprintf(windowsMSIXRedirectURLFmt, arch)
 
 	// Resolve the MSIX redirect without following it — the 307 response carries the
 	// real download URL in its Location header, and we avoid pulling the ~222 MB body.
@@ -141,7 +189,7 @@ func GetLatestVersion() (string, string, error) {
 			return http.ErrUseLastResponse
 		},
 	}
-	resp, err := client.Get(windowsMSIXRedirectURL)
+	resp, err := client.Get(redirectURL)
 	if err != nil {
 		return "", "", fmt.Errorf("resolving MSIX redirect: %v", err)
 	}

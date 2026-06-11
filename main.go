@@ -13,7 +13,7 @@ import (
 var launchClaudeInTerminal = false
 
 // Version is the current version of the application
-const Version = "3.2.0"
+const Version = "3.2.1"
 
 func main() {
 	// Parse command-line flags

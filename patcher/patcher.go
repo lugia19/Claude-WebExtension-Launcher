@@ -27,16 +27,17 @@ func debugPause() {
 }
 
 const (
-	// windowsMSIXRedirectURL resolves (via HTTP 307) to the latest Windows MSIX,
-	// e.g. https://downloads.claude.ai/releases/win32/x64/{VERSION}/Claude-{hash}.msix.
+	// windowsMSIXRedirectURLFmt resolves (via HTTP 307) to the latest Windows MSIX for a given
+	// arch ("x64" or "arm64"), e.g. https://downloads.claude.ai/releases/win32/x64/{VERSION}/Claude-{hash}.msix.
 	// The MSIX is the complete app and additionally ships the Cowork service binary
-	// (cowork-svc.exe) and its sandbox image (smol-bin.x64.vhdx), which the Squirrel
-	// .nupkg does not contain.
-	windowsMSIXRedirectURL = "https://claude.ai/api/desktop/win32/x64/msix/latest/redirect"
-	macosReleasesURL       = "https://downloads.claude.ai/releases/darwin/universal/RELEASES.json"
-	appFolderName          = "app-latest"
-	KeepNupkgFiles         = false
-	PatchVersion           = "7"
+	// (cowork-svc.exe) and its sandbox image (smol-bin.{arch}.vhdx), which the Squirrel
+	// .nupkg does not contain. The arch is the native host arch (see HostArch), so an
+	// emulated amd64 launcher on ARM64 still provisions native arm64 Claude.
+	windowsMSIXRedirectURLFmt = "https://claude.ai/api/desktop/win32/%s/msix/latest/redirect"
+	macosReleasesURL          = "https://downloads.claude.ai/releases/darwin/universal/RELEASES.json"
+	appFolderName             = "app-latest"
+	KeepNupkgFiles            = false
+	PatchVersion              = "7"
 )
 
 type MacOSManifest struct {
