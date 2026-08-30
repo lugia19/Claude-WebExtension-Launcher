@@ -225,3 +225,8 @@ func claudeInstalled() bool {
 	_, err := os.Stat(claudeExecutablePath())
 	return err == nil
 }
+
+// ensureDesktopEntry and checkSandbox are Linux-only integration steps.
+func ensureDesktopEntry() error { return nil }
+
+func checkSandbox() {}

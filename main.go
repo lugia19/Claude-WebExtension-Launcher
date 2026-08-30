@@ -86,6 +86,14 @@ func main() {
 	// Check for official Claude MSIX installation (Windows only)
 	checkMSIXAndPrompt(*instanceName)
 
+	// Generate a desktop entry pointing at this launcher's real path (Linux).
+	if err := ensureDesktopEntry(); err != nil {
+		fmt.Printf("Warning: could not create desktop entry: %v\n", err)
+	}
+
+	// Surface chrome-sandbox configuration issues before launching (Linux).
+	checkSandbox()
+
 	// Clear caches that interfere with extension loading and updates
 	claudeDataDir := claudeUserDataDir(*instanceName)
 	if claudeDataDir != "" {

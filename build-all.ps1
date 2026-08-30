@@ -173,6 +173,31 @@ if (Test-Path ".\resources\rcodesign.exe") {
     Write-Host "Download from: https://github.com/indygreg/apple-platform-rs/releases" -ForegroundColor Yellow
 }
 
+# Build Linux AMD64
+Write-Host "`nBuilding for Linux AMD64..." -ForegroundColor Cyan
+$env:GOOS = "linux"
+$env:GOARCH = "amd64"
+& go build -o ".\builds\$APP_NAME-linux-amd64"
+
+if (Test-Path ".\builds\$APP_NAME-linux-amd64") {
+    Write-Host "Linux AMD64 build complete" -ForegroundColor Green
+}
+else {
+    Write-Host "Linux AMD64 build failed!" -ForegroundColor Red
+}
+
+# Build Linux ARM64
+Write-Host "`nBuilding for Linux ARM64..." -ForegroundColor Cyan
+$env:GOARCH = "arm64"
+& go build -o ".\builds\$APP_NAME-linux-arm64"
+
+if (Test-Path ".\builds\$APP_NAME-linux-arm64") {
+    Write-Host "Linux ARM64 build complete" -ForegroundColor Green
+}
+else {
+    Write-Host "Linux ARM64 build failed!" -ForegroundColor Red
+}
+
 # Create distribution zips using WSL
 Write-Host "`nCreating distribution zips with WSL..."
 
@@ -256,6 +281,48 @@ if ($arm64Bundle -and (Test-Path $arm64Bundle)) {
     Remove-Item ".\builds\Uninstall.command" -ErrorAction SilentlyContinue
 }
 
+# Linux AMD64 zip
+if (Test-Path ".\builds\$APP_NAME-linux-amd64") {
+    $zipName = "$APP_NAME-$VERSION-linux-amd64.zip"
+    $tempDir = ".\builds\temp-linux-amd64"
+
+    if (Test-Path $tempDir) {
+        Remove-Item $tempDir -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $tempDir | Out-Null
+    Copy-Item ".\builds\$APP_NAME-linux-amd64" "$tempDir\$APP_NAME"
+
+    $tempDirWSL = ConvertTo-WSLPath $tempDir
+    wsl sh -c "chmod +x '$tempDirWSL/$APP_NAME' && cd '$tempDirWSL' && zip '$currentDirWSL/builds/$zipName' *"
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Created: builds\$zipName" -ForegroundColor Green
+    }
+    Remove-Item ".\builds\$APP_NAME-linux-amd64"
+    Remove-Item $tempDir -Recurse -Force
+}
+
+# Linux ARM64 zip
+if (Test-Path ".\builds\$APP_NAME-linux-arm64") {
+    $zipName = "$APP_NAME-$VERSION-linux-arm64.zip"
+    $tempDir = ".\builds\temp-linux-arm64"
+
+    if (Test-Path $tempDir) {
+        Remove-Item $tempDir -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $tempDir | Out-Null
+    Copy-Item ".\builds\$APP_NAME-linux-arm64" "$tempDir\$APP_NAME"
+
+    $tempDirWSL = ConvertTo-WSLPath $tempDir
+    wsl sh -c "chmod +x '$tempDirWSL/$APP_NAME' && cd '$tempDirWSL' && zip '$currentDirWSL/builds/$zipName' *"
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Created: builds\$zipName" -ForegroundColor Green
+    }
+    Remove-Item ".\builds\$APP_NAME-linux-arm64"
+    Remove-Item $tempDir -Recurse -Force
+}
+
 # Summary
 Write-Host "`nBuilds complete!" -ForegroundColor Green
 if (Test-Path ".\builds\$APP_NAME-$VERSION-windows.zip") {
@@ -266,4 +333,10 @@ if (Test-Path ".\builds\$APP_NAME-$VERSION-macos-amd64.zip") {
 }
 if (Test-Path ".\builds\$APP_NAME-$VERSION-macos-arm64.zip") {
     Write-Host "- macOS ARM64: builds\$APP_NAME-$VERSION-macos-arm64.zip" -ForegroundColor White
+}
+if (Test-Path ".\builds\$APP_NAME-$VERSION-linux-amd64.zip") {
+    Write-Host "- Linux AMD64: builds\$APP_NAME-$VERSION-linux-amd64.zip" -ForegroundColor White
+}
+if (Test-Path ".\builds\$APP_NAME-$VERSION-linux-arm64.zip") {
+    Write-Host "- Linux ARM64: builds\$APP_NAME-$VERSION-linux-arm64.zip" -ForegroundColor White
 }

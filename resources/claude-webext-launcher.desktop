@@ -1,0 +1,17 @@
+# Reference template for manually creating a desktop entry.
+#
+# The launcher generates a working entry at ~/.local/share/applications/ on
+# first run, pointing at the real location of the binary, so this file is only
+# needed for manual setups. Replace the Exec path below with the actual path
+# of your Claude_WebExtension_Launcher binary before installing it with:
+#
+#   cp resources/claude-webext-launcher.desktop ~/.local/share/applications/
+#
+[Desktop Entry]
+Type=Application
+Name=Claude WebExtension Launcher
+Comment=Launch a standalone Claude Desktop with web-extension support
+# Replace this with the real absolute path to your launcher binary:
+Exec=/usr/local/bin/Claude_WebExtension_Launcher
+Terminal=false
+Categories=Utility;

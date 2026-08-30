@@ -128,6 +128,30 @@ EOF
     rm -rf "builds/$APP_NAME.app"
 }
 
+# Function to create a Linux distribution zip for a given architecture.
+# The desktop entry is NOT shipped in the archive: the launcher generates a
+# working ~/.local/share/applications entry on first run using the real path.
+create_linux_zip() {
+    local arch=$1
+
+    echo "  Creating Linux (${arch}) distribution zip..."
+
+    temp_dir="builds/temp-linux-${arch}"
+    mkdir -p "$temp_dir"
+
+    cp "$APP_NAME-linux-${arch}" "$temp_dir/$APP_NAME"
+    chmod +x "$temp_dir/$APP_NAME"
+
+    cd "$temp_dir"
+    zip "../$APP_NAME-$VERSION-linux-${arch}.zip" *
+    cd ../..
+
+    rm "$APP_NAME-linux-${arch}"
+    rm -rf "$temp_dir"
+
+    echo "  ✅ Created: builds/$APP_NAME-$VERSION-linux-${arch}.zip"
+}
+
 # Build 1: macOS Apple Silicon (ARM64)
 echo ""
 echo "1. Building macOS Apple Silicon (ARM64)..."
@@ -181,6 +205,28 @@ else
     echo "  ❌ Windows build failed!"
 fi
 
+# Build 4: Linux (AMD64)
+echo ""
+echo "4. Building Linux (AMD64)..."
+GOOS=linux GOARCH=amd64 go build -o "$APP_NAME-linux-amd64"
+
+if [ -f "$APP_NAME-linux-amd64" ]; then
+    create_linux_zip "amd64"
+else
+    echo "  ❌ Linux AMD64 build failed!"
+fi
+
+# Build 5: Linux (ARM64)
+echo ""
+echo "5. Building Linux (ARM64)..."
+GOOS=linux GOARCH=arm64 go build -o "$APP_NAME-linux-arm64"
+
+if [ -f "$APP_NAME-linux-arm64" ]; then
+    create_linux_zip "arm64"
+else
+    echo "  ❌ Linux ARM64 build failed!"
+fi
+
 # Summary
 echo ""
 echo "============================================"
@@ -197,6 +243,14 @@ fi
 
 if [ -f "builds/$APP_NAME-$VERSION-windows.zip" ]; then
     echo "✅ Windows: builds/$APP_NAME-$VERSION-windows.zip"
+fi
+
+if [ -f "builds/$APP_NAME-$VERSION-linux-amd64.zip" ]; then
+    echo "✅ Linux AMD64: builds/$APP_NAME-$VERSION-linux-amd64.zip"
+fi
+
+if [ -f "builds/$APP_NAME-$VERSION-linux-arm64.zip" ]; then
+    echo "✅ Linux ARM64: builds/$APP_NAME-$VERSION-linux-arm64.zip"
 fi
 
 echo ""
