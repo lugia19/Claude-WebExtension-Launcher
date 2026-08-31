@@ -30,13 +30,22 @@ app.requestSingleInstanceLock = function(...args) {
 // Find the web-extensions directory by walking up from app path
 // ================================================================
 let extPath = null;
-let searchDir = app.getAppPath();
-while (searchDir !== path.dirname(searchDir)) {
-    searchDir = path.dirname(searchDir);
-    const candidate = path.join(searchDir, "web-extensions");
-    if (fs.existsSync(candidate)) {
-        extPath = candidate;
-        break;
+
+// The launcher may set CLAUDE_WEBEXT_DIR when patching a system install in place
+// (Linux), where the app path isn't next to the launcher's data directory. Prefer it
+// when present; otherwise fall back to walking up from the app path (macOS).
+const envDir = process.env.CLAUDE_WEBEXT_DIR;
+if (envDir && fs.existsSync(envDir)) {
+    extPath = envDir;
+} else {
+    let searchDir = app.getAppPath();
+    while (searchDir !== path.dirname(searchDir)) {
+        searchDir = path.dirname(searchDir);
+        const candidate = path.join(searchDir, "web-extensions");
+        if (fs.existsSync(candidate)) {
+            extPath = candidate;
+            break;
+        }
     }
 }
 

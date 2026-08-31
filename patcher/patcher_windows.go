@@ -351,3 +351,9 @@ func downloadAndExtract(version, downloadURL string) error {
 
 	return nil
 }
+
+// ensurePatchedLinux exists only so the shared EnsurePatched dispatch in
+// patcher.go compiles on Windows; it is never invoked (runtime.GOOS is not linux).
+func ensurePatchedLinux(forceUpdate bool) error {
+	return fmt.Errorf("linux patch flow is not supported on windows")
+}

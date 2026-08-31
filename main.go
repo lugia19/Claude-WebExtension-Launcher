@@ -108,6 +108,9 @@ func main() {
 		// In developer mode, run Claude in the same terminal to see debug output
 		cmd := exec.Command(claudePath, instanceArg)
 		cmd.Dir = filepath.Dir(claudePath)
+		if env := claudeLaunchEnv(); len(env) > 0 {
+			cmd.Env = append(os.Environ(), env...)
+		}
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.Stdin = os.Stdin
@@ -116,6 +119,9 @@ func main() {
 		// Launch detached
 		cmd := exec.Command(claudePath, instanceArg)
 		cmd.Dir = filepath.Dir(claudePath)
+		if env := claudeLaunchEnv(); len(env) > 0 {
+			cmd.Env = append(os.Environ(), env...)
+		}
 		cmd.Start()
 	}
 }

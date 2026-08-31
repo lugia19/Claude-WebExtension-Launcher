@@ -19,6 +19,10 @@ import (
 )
 
 func initPaths() {
+	if runtime.GOOS == "linux" {
+		initLinuxPaths()
+		return
+	}
 	installBaseDir = utils.ResolvePath(".")
 	setAppPaths(utils.ResolvePath(appFolderName))
 }
@@ -151,6 +155,12 @@ func signApp(appPath string) error {
 }
 
 func replacePlatformAppIcon() {
+	// The .icns bundle icon and electron.icns path are macOS-specific. On Linux the
+	// generic replaceIcons() step already writes the icon set into resources/.
+	if runtime.GOOS != "darwin" {
+		return
+	}
+
 	// Replace the app bundle icon
 	icnsData, err := EmbeddedFS.ReadFile("resources/icons/app.icns")
 	if err == nil {
@@ -403,4 +413,212 @@ func plistBuddySetAsarHash(plistPath, newHash string) error {
 		return fmt.Errorf("PlistBuddy could not set %s: %v (%s)", asarIntegrityKeyPath, err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Linux in-place patching
+//
+// Anthropic ships no Linux download artifact — Claude Desktop on Linux is
+// installed only as a system package (e.g. /usr/lib/claude-desktop). Linux
+// therefore skips the download+swap flow used on macOS and instead patches the
+// system app.asar in place: the root-owned asar is copied to a launcher-owned
+// staging directory, the shared applyPatches pipeline runs there, and the
+// patched asar is written back to the system location via sudo when needed.
+// ---------------------------------------------------------------------------
+
+// linuxInstallDirs are the base directories where the official Claude Desktop
+// package installs on Linux (Arch, Debian and derivatives).
+var linuxInstallDirs = []string{
+	"/usr/lib/claude-desktop",
+	"/opt/claude-desktop",
+}
+
+type linuxInstall struct {
+	baseDir      string
+	resourcesDir string
+	electronBin  string
+	asarPath     string
+	version      string
+}
+
+// detectLinuxInstall finds an installed official Claude Desktop package.
+func detectLinuxInstall() (*linuxInstall, error) {
+	for _, base := range linuxInstallDirs {
+		bin := filepath.Join(base, "claude-desktop")
+		resources := filepath.Join(base, "resources")
+		asarPath := filepath.Join(resources, "app.asar")
+		if _, err := os.Stat(bin); err != nil {
+			continue
+		}
+		if _, err := os.Stat(asarPath); err != nil {
+			continue
+		}
+		version := ""
+		if data, err := os.ReadFile(filepath.Join(base, "version")); err == nil {
+			version = strings.TrimSpace(string(data))
+		}
+		return &linuxInstall{
+			baseDir:      base,
+			resourcesDir: resources,
+			electronBin:  bin,
+			asarPath:     asarPath,
+			version:      version,
+		}, nil
+	}
+	return nil, fmt.Errorf("Claude Desktop is not installed at any known Linux location (%s)", strings.Join(linuxInstallDirs, ", "))
+}
+
+// initLinuxPaths points the app-folder globals at the detected system install so
+// the launch step knows where the patched Claude lives.
+func initLinuxPaths() {
+	install, err := detectLinuxInstall()
+	if err != nil {
+		return
+	}
+	installBaseDir = utils.ResolvePath(".")
+	AppFolder = install.baseDir
+	appResourcesDir = install.resourcesDir
+	appExePath = install.electronBin
+}
+
+// ensurePatchedLinux patches the system-installed Claude package in place.
+func ensurePatchedLinux(forceUpdate bool) error {
+	install, err := detectLinuxInstall()
+	if err != nil {
+		return err
+	}
+
+	dataDir := utils.ResolvePath(".")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return fmt.Errorf("creating data directory: %v", err)
+	}
+
+	if !forceUpdate {
+		patched, err := systemAsarAlreadyPatched(install)
+		if err == nil && patched {
+			fmt.Println("System asar already patched")
+			return nil
+		}
+	}
+
+	stagingRes := filepath.Join(dataDir, "staging-resources")
+	os.RemoveAll(stagingRes)
+	if err := os.MkdirAll(stagingRes, 0755); err != nil {
+		return fmt.Errorf("creating staging directory: %v", err)
+	}
+
+	// Copy the asar and its unpacked native modules into the staging dir, then
+	// point the shared patch pipeline at it.
+	if err := copyFile(install.asarPath, filepath.Join(stagingRes, "app.asar")); err != nil {
+		return fmt.Errorf("staging app.asar: %v", err)
+	}
+	systemUnpacked := filepath.Join(install.resourcesDir, "app.asar.unpacked")
+	if _, err := os.Stat(systemUnpacked); err == nil {
+		if err := copyTree(systemUnpacked, filepath.Join(stagingRes, "app.asar.unpacked")); err != nil {
+			return fmt.Errorf("staging app.asar.unpacked: %v", err)
+		}
+	}
+
+	appResourcesDir = stagingRes
+	AppFolder = install.baseDir
+	appExePath = install.electronBin
+
+	if err := applyPatches(install.version); err != nil {
+		return err
+	}
+
+	fmt.Println("Installing patched asar into system location...")
+	if err := installSystemAsar(filepath.Join(stagingRes, "app.asar"), install.asarPath); err != nil {
+		return fmt.Errorf("installing patched asar: %v", err)
+	}
+
+	hash, _ := asar.HeaderHash(install.asarPath)
+	os.WriteFile(filepath.Join(dataDir, "patch-stamp.txt"), []byte(PatchVersion), 0644)
+	// Record the hash of the patched asar we just wrote back, under a filename this
+	// launcher alone owns, so the patched state can't be conflated with a stamp the
+	// standalone launcher may have left in the shared data dir.
+	os.WriteFile(filepath.Join(dataDir, "patched-asar-hash.txt"), []byte(hash), 0644)
+
+	return nil
+}
+
+// systemAsarAlreadyPatched reports whether the system asar matches the last
+// installed patch (hash-stamp comparison), so re-patching is skipped on unchanged
+// installs and only redone after a package update changes the asar.
+func systemAsarAlreadyPatched(install *linuxInstall) (bool, error) {
+	return systemAsarHashMatches(install, utils.ResolvePath("."))
+}
+
+// systemAsarHashMatches reports whether the current on-disk asar is exactly the
+// patched asar this launcher last wrote back. It compares the live hash against
+// the dedicated patched-asar-hash.txt stamp (not a generic stamp that another
+// launcher may have written to the shared data dir). When they differ the system
+// install was updated (apt/pacman) and needs re-patching.
+func systemAsarHashMatches(install *linuxInstall, dataDir string) (bool, error) {
+	hashPath := filepath.Join(dataDir, "patched-asar-hash.txt")
+	savedHash, err := os.ReadFile(hashPath)
+	if err != nil {
+		return false, nil
+	}
+	liveHash, err := asar.HeaderHash(install.asarPath)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(savedHash)) == liveHash, nil
+}
+
+// installSystemAsar replaces the root-owned system asar with the patched one,
+// using sudo when the direct copy fails for permission reasons.
+func installSystemAsar(patchedAsar, systemAsar string) error {
+	if err := copyFile(patchedAsar, systemAsar); err == nil {
+		fmt.Println("System asar patched")
+		return nil
+	}
+
+	fmt.Println("Need sudo to write to the system directory...")
+	cmd := exec.Command("sudo", "cp", patchedAsar, systemAsar)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("sudo copy failed: %v", err)
+	}
+	fmt.Println("System asar patched")
+	return nil
+}
+
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0644)
+}
+
+func copyTree(srcDir, dstDir string) error {
+	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dstDir, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			return os.Symlink(link, target)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode().Perm())
+	})
 }

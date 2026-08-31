@@ -5,6 +5,7 @@ package main
 import (
 	"claude-webext-patcher/extensions"
 	"claude-webext-patcher/patcher"
+	"claude-webext-patcher/utils"
 	"fmt"
 	"os"
 	"os/exec"
@@ -45,6 +46,10 @@ func claudeUserDataDir(instance string) string {
 		home, _ := os.UserHomeDir()
 		return filepath.Join(home, "Library", "Application Support", "Claude-"+instance)
 	}
+	if runtime.GOOS == "linux" {
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, ".config", "Claude-"+instance)
+	}
 	return ""
 }
 
@@ -52,8 +57,23 @@ func claudeExecutablePath() string {
 	if runtime.GOOS == "darwin" {
 		return filepath.Join(patcher.AppFolder, "Claude.app", "Contents", "MacOS", "Claude")
 	}
-	// Linux and other Unix-like systems
+	if runtime.GOOS == "linux" {
+		// The system package binary lives directly under the install base dir.
+		return filepath.Join(patcher.AppFolder, "claude-desktop")
+	}
+	// Other Unix-like systems
 	return filepath.Join(patcher.AppFolder, "claude")
+}
+
+// claudeLaunchEnv returns extra env vars to set on the launched Claude process.
+// On Linux the app is patched in place at a system path, so the wrapper cannot
+// locate the extensions by walking up from the app path; it reads CLAUDE_WEBEXT_DIR
+// instead. Other platforms inherit the default environment.
+func claudeLaunchEnv() []string {
+	if runtime.GOOS == "linux" {
+		return []string{"CLAUDE_WEBEXT_DIR=" + utils.ResolvePath("web-extensions")}
+	}
+	return nil
 }
 
 // claudeInstalled returns true if the Claude executable exists in the install directory.
@@ -62,7 +82,8 @@ func claudeInstalled() bool {
 	return err == nil
 }
 
-// ensureClaudeReady runs patching and extension updates in-process on macOS.
+// ensureClaudeReady runs patching and extension updates in-process on non-Windows
+// platforms (macOS and Linux).
 func ensureClaudeReady(forceUpdate bool) error {
 	if err := patcher.EnsurePatched(forceUpdate); err != nil {
 		if claudeInstalled() {

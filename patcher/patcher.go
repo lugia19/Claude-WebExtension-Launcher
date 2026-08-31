@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -180,10 +181,23 @@ func DeploySentinelExtension() error {
 func patchProtocolArray(content []byte) ([]byte, bool) {
 	contentStr := string(content)
 
-	prefix := `["devtools:","file:"`
+	// The protocol allow-list is a Vite-bundled array that may be double-quoted
+	// (["devtools:","file:"]) or backtick-quoted (`devtools:`,`file:`), depending on
+	// the platform/build. Try each quote form; the first that matches wins.
+	for _, quote := range []string{`"`, "`"} {
+		patched, ok := patchProtocolArrayWithQuote(contentStr, quote)
+		if ok {
+			return []byte(patched), true
+		}
+	}
+	return content, false
+}
+
+func patchProtocolArrayWithQuote(contentStr, quote string) (string, bool) {
+	prefix := quote + "devtools:" + quote + "," + quote + "file:" + quote
 	idx := strings.Index(contentStr, prefix)
 	if idx == -1 {
-		return content, false
+		return contentStr, false
 	}
 
 	// Find the closing ] after the prefix
@@ -191,7 +205,7 @@ func patchProtocolArray(content []byte) ([]byte, bool) {
 	if closingIdx == -1 {
 		fmt.Println("Warning: Could not find closing ] for protocol array")
 		debugPause()
-		return content, false
+		return contentStr, false
 	}
 	closingIdx += idx
 
@@ -199,13 +213,13 @@ func patchProtocolArray(content []byte) ([]byte, bool) {
 	arrayContent := contentStr[idx : closingIdx+1]
 	if strings.Contains(arrayContent, "chrome-extension:") {
 		fmt.Println("Protocol array already contains chrome-extension:, skipping")
-		return content, false
+		return contentStr, false
 	}
 
-	// Insert ,"chrome-extension:" before the ]
-	contentStr = contentStr[:closingIdx] + `,"chrome-extension:"` + contentStr[closingIdx:]
+	// Insert ,"chrome-extension:" before the ] using the same quote form.
+	contentStr = contentStr[:closingIdx] + "," + quote + "chrome-extension:" + quote + contentStr[closingIdx:]
 	fmt.Println("Added chrome-extension: to protocol array")
-	return []byte(contentStr), true
+	return contentStr, true
 }
 
 // installWrapper copies the wrapper.js into the unpacked asar and redirects
@@ -327,6 +341,12 @@ func swapAppFolder(staging, target string) error {
 }
 
 func EnsurePatched(forceUpdate bool) error {
+	// Linux has no direct-download Claude channel; Claude ships only as a system
+	// package, so Linux uses its own in-place patch flow instead of download+swap.
+	if runtime.GOOS == "linux" {
+		return ensurePatchedLinux(forceUpdate)
+	}
+
 	if err := prepareInstallDir(); err != nil {
 		return fmt.Errorf("setting up install directory: %v", err)
 	}

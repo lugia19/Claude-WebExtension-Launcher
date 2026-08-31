@@ -49,6 +49,12 @@ func claudeExecutablePath() string {
 	return filepath.Join(patcher.AppFolder, "claude.exe")
 }
 
+// claudeLaunchEnv is a no-op on Windows; the app lives in an owned copy, so the
+// wrapper finds the extensions by walking up from the app path.
+func claudeLaunchEnv() []string {
+	return nil
+}
+
 // runPatcherMode runs the elevated patcher code path. Called when the launcher
 // is re-invoked with --patcher via UAC.
 func runPatcherMode(forceUpdate bool, debug bool) int {
