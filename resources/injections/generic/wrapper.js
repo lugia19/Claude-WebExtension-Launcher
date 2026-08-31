@@ -7,8 +7,22 @@ const fs = require("fs");
 // ================================================================
 // Instance isolation — redirect userData before anything reads it
 // ================================================================
-const instanceArg = process.argv.find(a => a.startsWith("--instance="));
-const instanceName = instanceArg ? instanceArg.split("=")[1] : "modified";
+// Parse instance name supporting both `--instance=name` and `--instance name`
+let instanceName = "modified";
+const eqArg = process.argv.find(a => a.startsWith("--instance="));
+const spaceIdx = process.argv.indexOf("--instance");
+
+if (eqArg) {
+    // Internal launcher format: --instance=name
+    instanceName = eqArg.split("=")[1];
+} else if (spaceIdx !== -1 && spaceIdx + 1 < process.argv.length) {
+    // User/shortcut format: --instance name
+    // Guard against accidentally grabbing a trailing flag if the value is missing
+    const nextArg = process.argv[spaceIdx + 1];
+    if (!nextArg.startsWith("--")) {
+        instanceName = nextArg;
+    }
+}
 app.setPath("userData", path.join(
     app.getPath("appData"),
     app.getName() + "-" + instanceName
