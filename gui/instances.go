@@ -122,13 +122,13 @@ func (w *window) setNote(name, v string) {
 
 func (w *window) launch(name string) {
 	w.setNote(name, "Starting…")
-	go func() {
+	w.background(func() {
 		if err := w.inst.Launch(name); err != nil {
 			w.setNote(name, "Couldn't start: "+err.Error())
 			return
 		}
 		w.setNote(name, "Started")
-	}()
+	})
 }
 
 // showAdd switches to the add-an-instance screen. UI thread only.
@@ -201,7 +201,7 @@ func (w *window) showDelete(inst Instance) {
 					problem.Set("Deleting…")
 					w.s.redraw()
 					// A big data folder takes a while to remove: keep the UI thread free.
-					go func() {
+					w.background(func() {
 						err := w.inst.Delete(inst.Name)
 						w.runOnUI(func() {
 							if err != nil {
@@ -211,7 +211,7 @@ func (w *window) showDelete(inst Instance) {
 							}
 							w.showList()
 						})
-					}()
+					})
 				})),
 				button.New(button.TextOpt("Cancel"), button.OnClick(w.showList)),
 			).Gap(8),
@@ -235,10 +235,10 @@ func (w *window) showSettings(inst Instance) {
 	w.setRoot(buildSetup(setup, "Save", func(checked []bool) {
 		w.setNote(inst.Name, "Saving settings…")
 		w.showList()
-		go func() {
+		w.background(func() {
 			setup.Apply(checked)
 			w.setNote(inst.Name, "Settings saved")
-		}()
+		})
 	}, w.showList))
 }
 
@@ -248,7 +248,7 @@ func (w *window) showLauncherSettings() {
 	setup := w.inst.LauncherSettings()
 	w.setRoot(buildSetup(setup, "Save", func(checked []bool) {
 		w.showList()
-		go setup.Apply(checked)
+		w.background(func() { setup.Apply(checked) })
 	}, w.showList))
 }
 

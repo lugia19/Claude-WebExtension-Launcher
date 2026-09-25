@@ -37,6 +37,7 @@ type window struct {
 
 	mu     sync.Mutex
 	queued []func()
+	bg     sync.WaitGroup // background jobs Run waits for (see background)
 
 	// Instance list state (instances.go).
 	inst  *Instances
@@ -52,6 +53,17 @@ func (w *window) runOnUI(fn func()) {
 	w.queued = append(w.queued, fn)
 	w.mu.Unlock()
 	w.gogpuApp.RequestRedraw() // wakes the loop, which then calls drain
+}
+
+// background runs fn on its own goroutine, and Run waits for it before returning:
+// closing the window mustn't cut a launch, a delete or a settings save short (the
+// process exits once Run returns).
+func (w *window) background(fn func()) {
+	w.bg.Add(1)
+	go func() {
+		defer w.bg.Done()
+		fn()
+	}()
 }
 
 // setRoot switches the window to another screen. UI thread only.
@@ -187,6 +199,7 @@ func Run(title string, rows []Row, logPath string, setup *Setup, instances *Inst
 	windowErr := desktop.Run(gogpuApp, uiApp)
 	s.markClosed()
 	<-finished // also covers the user closing the window while work is still running
+	w.bg.Wait()
 
 	if windowErr != nil {
 		fmt.Printf("Window unavailable (%v); ran without it\n", windowErr)

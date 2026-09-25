@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -78,7 +79,10 @@ func main() {
 
 	// The main instance's actual name is only known after migrateMainInstance, which
 	// needs the log running; its log file doesn't depend on it.
-	isMain := *instanceName == "" || *instanceName == mainInstanceName || *instanceName == legacyMainInstanceName
+	// Case-insensitively: on Windows and macOS "main" is the same folder as "Main" (and
+	// instanceNameProblem never lets another instance use a case variant of them).
+	isMain := *instanceName == "" || strings.EqualFold(*instanceName, mainInstanceName) ||
+		strings.EqualFold(*instanceName, legacyMainInstanceName)
 	logInstance := *instanceName
 	if isMain {
 		logInstance = mainInstanceName
