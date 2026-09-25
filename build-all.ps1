@@ -212,9 +212,8 @@ if (Test-Path ".\builds\$APP_NAME.exe") {
     }
     New-Item -ItemType Directory -Path $tempDir | Out-Null
     
-    # Copy executable and batch scripts to temp directory
+    # Copy the executable to the temp directory
     Copy-Item ".\builds\$APP_NAME.exe" "$tempDir\$APP_NAME.exe"
-    Copy-Item ".\resources\Uninstall.bat" "$tempDir\Uninstall.bat"
     
     $tempDirWSL = ConvertTo-WSLPath $tempDir
     
@@ -232,11 +231,8 @@ if ($intelBundle -and (Test-Path $intelBundle)) {
     $bundleName = Split-Path $intelBundle -Leaf
     $zipName = "$APP_NAME-$VERSION-macos-amd64.zip"
     
-    # Copy uninstall script alongside the app bundle
-    Copy-Item ".\resources\Uninstall.command" ".\builds\macos-amd64\Uninstall.command"
-
-    # Set executable bits and create zip
-    wsl sh -c "cd '$currentDirWSL/builds/macos-amd64' && chmod +x '$bundleName/Contents/MacOS/$APP_NAME' && chmod +x 'Uninstall.command' && zip -r '../$zipName' '$bundleName' 'Uninstall.command'"
+    # Set the executable bit and create the zip
+    wsl sh -c "cd '$currentDirWSL/builds/macos-amd64' && chmod +x '$bundleName/Contents/MacOS/$APP_NAME' && zip -r '../$zipName' '$bundleName'"
 
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Created: builds\$zipName" -ForegroundColor Green
@@ -249,11 +245,8 @@ if ($arm64Bundle -and (Test-Path $arm64Bundle)) {
     $bundleName = Split-Path $arm64Bundle -Leaf
     $zipName = "$APP_NAME-$VERSION-macos-arm64.zip"
 
-    # Copy uninstall script alongside the app bundle
-    Copy-Item ".\resources\Uninstall.command" ".\builds\macos-arm64\Uninstall.command"
-
-    # Set executable bits and create zip
-    wsl sh -c "cd '$currentDirWSL/builds/macos-arm64' && chmod +x '$bundleName/Contents/MacOS/$APP_NAME' && chmod +x 'Uninstall.command' && zip -r '../$zipName' '$bundleName' 'Uninstall.command'"
+    # Set the executable bit and create the zip
+    wsl sh -c "cd '$currentDirWSL/builds/macos-arm64' && chmod +x '$bundleName/Contents/MacOS/$APP_NAME' && zip -r '../$zipName' '$bundleName'"
 
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Created: builds\$zipName" -ForegroundColor Green

@@ -33,9 +33,6 @@ func installCopy(running, installed string) error {
 	return replaceFile(running, installed, 0755)
 }
 
-// uninstallScript is the uninstall script the installed launcher keeps in its folder.
-const uninstallScript = "Uninstall.bat"
-
 // handOff starts the installed launcher with args and exits. With --debug it waits
 // instead, so the installed copy can use this console (it attaches to its parent's),
 // and exits with its exit code. Returns only if the installed copy couldn't start.

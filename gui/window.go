@@ -115,22 +115,39 @@ func (w *window) drain() {
 	}
 }
 
-// Run shows the window with the given checklist rows and runs work on another
-// goroutine; call it from the main goroutine. When work succeeds the window counts
-// down and closes (unless the user opens the log); when it fails the window shows the
-// error until closed. If the window can't open at all (no display, no renderer), work
-// still runs, and a failure is reported through a native dialog instead.
-//
-// With a non-nil setup, the window opens on the setup screen instead, and work only
-// starts once Continue has been clicked (and setup.Apply has run). Closing the window
-// on the setup screen ends the launch without doing anything. If the window can't
-// open, setup is skipped (Apply never runs, so it's offered again next time) and work
-// runs as usual.
-//
-// With non-nil instances that are Enabled, a successful work is followed by the
-// instance list instead of the countdown; the window then stays until the user closes
-// it. If the window can't open, instances.Headless is launched instead.
-func Run(title string, rows []Row, logPath string, setup *Setup, instances *Instances, work func(s *Status) error) error {
+// Options configure Run.
+type Options struct {
+	Title   string
+	Rows    []Row  // the checklist
+	LogPath string // for Open logs, and the error dialog
+
+	// Setup, if not nil, is shown first; work only starts once it's confirmed (and
+	// Setup.Apply has run). Closing the window on it ends the run without doing
+	// anything. If the window can't open, it's skipped (Apply never runs, so it's offered
+	// again next time) and work runs anyway, unless SetupRequired.
+	Setup *Setup
+	// SetupRequired: work never runs unless Setup was confirmed (for an uninstall).
+	SetupRequired bool
+	// Cancel, if set, labels a button on the Setup screen that closes the window.
+	Cancel string
+
+	// Instances that are Enabled: a successful work is followed by the instance list
+	// instead of the countdown; the window then stays until the user closes it. If the
+	// window can't open, Instances.Headless is launched instead.
+	Instances *Instances
+
+	// Done, if set, replaces the countdown after a successful work: the window shows
+	// this message until closed.
+	Done string
+}
+
+// Run shows the window with the checklist and runs work on another goroutine; call
+// it from the main goroutine. When work succeeds the window counts down and closes
+// (unless the user opens the log); when it fails the window shows the error until
+// closed. If the window can't open at all (no display, no renderer), work still runs,
+// and a failure is reported through a native dialog instead. See Options for the rest.
+func Run(o Options, work func(s *Status) error) error {
+	title, rows, logPath, setup, instances := o.Title, o.Rows, o.LogPath, o.Setup, o.Instances
 	// gogpu logs through slog; keep it out of the user's way (it goes to the log file,
 	// since stdout/stderr are redirected there), and quiet unless something's wrong.
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
@@ -161,10 +178,14 @@ func Run(title string, rows []Row, logPath string, setup *Setup, instances *Inst
 	s.hideButtons()
 	setupDone := make(chan []bool, 1)
 	if setup != nil {
-		w.setRoot(buildSetup(setup, "Continue", func(checked []bool) {
+		var onCancel func()
+		if o.Cancel != "" {
+			onCancel = func() { gogpuApp.Quit() }
+		}
+		w.setRoot(w.buildSetup(setup, "Continue", func(checked []bool) {
 			setupDone <- checked
 			w.setRoot(checklist)
-		}, nil))
+		}, o.Cancel, onCancel))
 	} else {
 		w.setRoot(checklist)
 	}
@@ -191,6 +212,8 @@ func Run(title string, rows []Row, logPath string, setup *Setup, instances *Inst
 			w.runOnUI(w.showList)
 			<-s.closed // the user closes the window when done
 			return
+		case o.Done != "":
+			s.showDone(o.Done)
 		default:
 			s.countDown(countdown)
 		}
@@ -205,7 +228,11 @@ func Run(title string, rows []Row, logPath string, setup *Setup, instances *Inst
 	if windowErr != nil {
 		fmt.Printf("Window unavailable (%v); ran without it\n", windowErr)
 		if skippedWork {
-			result = work(s)
+			if o.SetupRequired {
+				result = fmt.Errorf("the window couldn't open, so nothing was done (run with --debug to use the terminal)")
+			} else {
+				result = work(s)
+			}
 		}
 		if result == nil && instances != nil && instances.Enabled() {
 			result = instances.Launch(instances.Headless)

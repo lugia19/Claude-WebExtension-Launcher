@@ -230,6 +230,14 @@ func (s *Status) showError(err error) {
 	}
 }
 
+// showDone shows msg until the window is closed (Close, or the window's own button).
+func (s *Status) showDone(msg string) {
+	s.setMessage(msg, "")
+	for <-s.waitForClick([]string{"Close", "Open logs"}) == 1 {
+		utils.OpenInViewer(s.logPath)
+	}
+}
+
 // countDown gives the user a few seconds to open the log before the window closes.
 // Opening the log stops the countdown.
 func (s *Status) countDown(seconds int) {

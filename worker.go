@@ -24,6 +24,7 @@ type workerOptions struct {
 	installURL     string
 	packagePath    string // the package the launcher downloaded for installVersion
 	cowork         bool   // register the Cowork service (Windows)
+	uninstall      bool   // remove the patched Claude instead (see uninstall.go)
 	debug          bool
 }
 
@@ -47,6 +48,10 @@ func runWorker(o workerOptions) int {
 		fmt.Printf("Could not open the status file: %v\n", err) // st is nil: reports are dropped
 	}
 	defer st.Close()
+
+	if o.uninstall {
+		return uninstallWorker(st)
+	}
 
 	if err := workerBefore(); err != nil {
 		fmt.Printf("Worker setup failed: %v\n", err)
