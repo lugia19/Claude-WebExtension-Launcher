@@ -33,6 +33,14 @@ if /i not "%Confirm%"=="Y" (
     exit /b 0
 )
 
+:: A running launcher (e.g. its instance list left open) can't be deleted.
+tasklist /fi "imagename eq Claude_WebExtension_Launcher.exe" 2>nul | find /i "Claude_WebExtension_Launcher.exe" >nul && (
+    echo.
+    echo The launcher is still running. Close its window, then run this again.
+    pause
+    exit /b 1
+)
+
 :: First the patched Claude, which needs admin rights: an elevated copy of this script
 :: removes it, and this one waits for it. The launcher only goes once Claude has, so
 :: refusing the admin prompt doesn't leave Claude without the launcher that manages it.
@@ -61,6 +69,13 @@ for %%D in ("%APPDATA%\Microsoft\Windows\Start Menu\Programs" "%APPDATA%\Microso
 echo Removing the installed launcher...
 del /q "%LauncherDir%\Claude_WebExtension_Launcher.exe" >nul 2>&1
 del /q "%LauncherDir%\launcher-version.txt" >nul 2>&1
+if exist "%LauncherDir%\Claude_WebExtension_Launcher.exe" (
+    echo.
+    echo ERROR: Could not remove %LauncherDir%\Claude_WebExtension_Launcher.exe
+    echo ^(is the launcher still running?^). Close it and run this again.
+    pause
+    exit /b 1
+)
 
 echo.
 echo Uninstall complete.
