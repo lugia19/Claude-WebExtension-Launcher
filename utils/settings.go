@@ -77,9 +77,12 @@ func SaveSettings(s Settings) error {
 func UpdateSettings(change func(s *Settings)) error {
 	settingsMu.Lock()
 	defer settingsMu.Unlock()
-	if lock, ok := AcquirePatchLock(SettingsLockName, 10*time.Second); ok {
-		defer lock.Release()
-	} // else another launcher is stuck holding it: go ahead rather than lose the change
+	lock, ok := AcquirePatchLock(SettingsLockName, 10*time.Second)
+	if !ok {
+		// Going ahead unlocked could silently undo another launcher's change.
+		return fmt.Errorf("the settings are being changed by another launcher; try again")
+	}
+	defer lock.Release()
 	s := LoadSettings()
 	change(&s)
 	return SaveSettings(s)
