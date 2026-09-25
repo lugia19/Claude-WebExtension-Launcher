@@ -40,9 +40,10 @@ type window struct {
 	bg     sync.WaitGroup // background jobs Run waits for (see background)
 
 	// Instance list state (instances.go).
-	inst  *Instances
-	notes map[string]*text // the current list's per-row notes, by instance name
-	note  map[string]string
+	inst      *Instances
+	notes     map[string]*text // the current list's per-row notes, by instance name
+	note      map[string]string
+	launching map[string]bool // launches still in progress (not deletable yet)
 }
 
 // runOnUI runs fn on the UI thread, where changing the root or focus is safe (gogpu/ui

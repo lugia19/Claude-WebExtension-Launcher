@@ -122,7 +122,18 @@ func (w *window) setNote(name, v string) {
 
 func (w *window) launch(name string) {
 	w.setNote(name, "Starting…")
+	w.mu.Lock()
+	if w.launching == nil {
+		w.launching = map[string]bool{}
+	}
+	w.launching[name] = true
+	w.mu.Unlock()
 	w.background(func() {
+		defer func() {
+			w.mu.Lock()
+			delete(w.launching, name)
+			w.mu.Unlock()
+		}()
 		if err := w.inst.Launch(name); err != nil {
 			w.setNote(name, "Couldn't start: "+err.Error())
 			return
@@ -179,7 +190,10 @@ func (w *window) showDelete(inst Instance) {
 	children := []widget.Widget{
 		primitives.Text("Delete " + inst.Display + "?").FontSize(18).Bold().Color(textColor),
 	}
-	if w.inst.Running(inst.Name) {
+	w.mu.Lock()
+	starting := w.launching[inst.Name] // not holding its lock yet, so Running can't tell
+	w.mu.Unlock()
+	if starting || w.inst.Running(inst.Name) {
 		children = append(children,
 			primitives.Text("It's open right now. Close it first, then try again.").FontSize(13).Color(dimColor),
 			primitives.HBox(button.New(button.TextOpt("Back"), button.OnClick(w.showList))),
@@ -187,17 +201,19 @@ func (w *window) showDelete(inst Instance) {
 	} else {
 		problem := w.s.newText("", 13, errorColor)
 		problem.widget.MaxLines(3).Ellipsis()
-		deleting := false
+		// Both buttons lock once the delete starts: going back to the list meanwhile would
+		// allow launching the instance while its folder is being removed.
+		deleting := state.NewSignal(false)
 		children = append(children,
 			primitives.Text("This removes its data folder (its login, settings and local sessions)").FontSize(13).Color(dimColor),
 			primitives.Text("and its menu and startup shortcuts. It can't be undone.").FontSize(13).Color(dimColor),
 			problem.widget,
 			primitives.HBox(
-				button.New(button.TextOpt("Delete"), button.BackgroundOpt(errorColor), button.OnClick(func() {
-					if deleting {
+				button.New(button.TextOpt("Delete"), button.BackgroundOpt(errorColor), button.DisabledSignal(deleting), button.OnClick(func() {
+					if deleting.Get() {
 						return
 					}
-					deleting = true
+					deleting.Set(true)
 					problem.Set("Deleting…")
 					w.s.redraw()
 					// A big data folder takes a while to remove: keep the UI thread free.
@@ -205,7 +221,7 @@ func (w *window) showDelete(inst Instance) {
 						err := w.inst.Delete(inst.Name)
 						w.runOnUI(func() {
 							if err != nil {
-								deleting = false
+								deleting.Set(false)
 								problem.Set(err.Error())
 								return
 							}
@@ -213,7 +229,11 @@ func (w *window) showDelete(inst Instance) {
 						})
 					})
 				})),
-				button.New(button.TextOpt("Cancel"), button.OnClick(w.showList)),
+				button.New(button.TextOpt("Cancel"), button.DisabledSignal(deleting), button.OnClick(func() {
+					if !deleting.Get() {
+						w.showList()
+					}
+				})),
 			).Gap(8),
 		)
 	}

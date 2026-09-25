@@ -37,6 +37,11 @@ func migrateFolder(oldDir, newDir string, running func() bool) string {
 		return legacyMainInstanceName
 	}
 	if err := os.Rename(oldDir, newDir); err != nil {
+		if !dirExists(oldDir) && dirExists(newDir) {
+			// Another launcher (started at the same time) got there first.
+			moveCompanion(oldDir, newDir)
+			return mainInstanceName
+		}
 		fmt.Printf("Warning: could not rename %s to %s (%v); trying again next time\n", oldDir, newDir, err)
 		return legacyMainInstanceName
 	}
