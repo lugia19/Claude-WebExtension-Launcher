@@ -43,7 +43,7 @@ type window struct {
 	inst      *Instances
 	notes     map[string]*text // the current list's per-row notes, by instance name
 	note      map[string]string
-	launching map[string]bool // launches still in progress (not deletable yet)
+	launching map[string]int // launches still in progress, per instance (not deletable yet)
 }
 
 // runOnUI runs fn on the UI thread, where changing the root or focus is safe (gogpu/ui

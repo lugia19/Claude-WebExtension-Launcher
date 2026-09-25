@@ -2,9 +2,11 @@ package utils
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 // Settings are the launcher's own preferences, in settings.json next to the log.
@@ -39,22 +41,45 @@ func LoadSettings() Settings {
 	return s
 }
 
-// SaveSettings writes settings.json.
+// SaveSettings writes settings.json. It's written to a temporary file and renamed into
+// place, so a reader never sees half of it.
 func SaveSettings(s Settings) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(settingsPath()), 0755); err != nil {
+	path := settingsPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(settingsPath(), data, 0644)
+	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	// On Windows the rename fails while another process has the file open (reading
+	// it); that's brief, so retry a few times.
+	for attempt := 0; ; attempt++ {
+		err = os.Rename(tmp, path)
+		if err == nil || attempt == 4 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		os.Remove(tmp)
+	}
+	return err
 }
 
-// UpdateSettings loads the settings, lets change modify them, and saves the result.
+// UpdateSettings loads the settings, lets change modify them, and saves the result,
+// with other goroutines and other launcher processes kept out in between (so two
+// launchers adding instances at once don't lose one of them).
 func UpdateSettings(change func(s *Settings)) error {
 	settingsMu.Lock()
 	defer settingsMu.Unlock()
+	if lock, ok := AcquirePatchLock(SettingsLockName, 10*time.Second); ok {
+		defer lock.Release()
+	} // else another launcher is stuck holding it: go ahead rather than lose the change
 	s := LoadSettings()
 	change(&s)
 	return SaveSettings(s)

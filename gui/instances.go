@@ -124,14 +124,16 @@ func (w *window) launch(name string) {
 	w.setNote(name, "Starting…")
 	w.mu.Lock()
 	if w.launching == nil {
-		w.launching = map[string]bool{}
+		w.launching = map[string]int{}
 	}
-	w.launching[name] = true
+	w.launching[name]++ // counted: Launch can be clicked again before the first finishes
 	w.mu.Unlock()
 	w.background(func() {
 		defer func() {
 			w.mu.Lock()
-			delete(w.launching, name)
+			if w.launching[name]--; w.launching[name] <= 0 {
+				delete(w.launching, name)
+			}
 			w.mu.Unlock()
 		}()
 		if err := w.inst.Launch(name); err != nil {
@@ -191,7 +193,7 @@ func (w *window) showDelete(inst Instance) {
 		primitives.Text("Delete " + inst.Display + "?").FontSize(18).Bold().Color(textColor),
 	}
 	w.mu.Lock()
-	starting := w.launching[inst.Name] // not holding its lock yet, so Running can't tell
+	starting := w.launching[inst.Name] > 0 // not holding its lock yet, so Running can't tell
 	w.mu.Unlock()
 	if starting || w.inst.Running(inst.Name) {
 		children = append(children,
