@@ -181,6 +181,25 @@ else
     echo "  ❌ Windows build failed!"
 fi
 
+# Build 4 & 5: Linux (AMD64, ARM64)
+for arch in amd64 arm64; do
+    echo ""
+    echo "Building Linux ($arch)..."
+    GOOS=linux GOARCH=$arch go build -o "$APP_NAME-linux-$arch"
+
+    if [ -f "$APP_NAME-linux-$arch" ]; then
+        temp_dir="builds/temp-linux-$arch"
+        mkdir -p "$temp_dir"
+        mv "$APP_NAME-linux-$arch" "$temp_dir/$APP_NAME"
+        chmod +x "$temp_dir/$APP_NAME"
+        (cd "$temp_dir" && zip "../$APP_NAME-$VERSION-linux-$arch.zip" "$APP_NAME")
+        rm -rf "$temp_dir"
+        echo "  ✅ Created: builds/$APP_NAME-$VERSION-linux-$arch.zip"
+    else
+        echo "  ❌ Linux $arch build failed!"
+    fi
+done
+
 # Summary
 echo ""
 echo "============================================"
@@ -197,6 +216,14 @@ fi
 
 if [ -f "builds/$APP_NAME-$VERSION-windows.zip" ]; then
     echo "✅ Windows: builds/$APP_NAME-$VERSION-windows.zip"
+fi
+
+if [ -f "builds/$APP_NAME-$VERSION-linux-amd64.zip" ]; then
+    echo "✅ Linux AMD64: builds/$APP_NAME-$VERSION-linux-amd64.zip"
+fi
+
+if [ -f "builds/$APP_NAME-$VERSION-linux-arm64.zip" ]; then
+    echo "✅ Linux ARM64: builds/$APP_NAME-$VERSION-linux-arm64.zip"
 fi
 
 echo ""

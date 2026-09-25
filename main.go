@@ -116,6 +116,7 @@ func main() {
 		// Launch detached
 		cmd := exec.Command(claudePath, instanceArg)
 		cmd.Dir = filepath.Dir(claudePath)
+		detachFromTerminal(cmd)
 		cmd.Start()
 	}
 }

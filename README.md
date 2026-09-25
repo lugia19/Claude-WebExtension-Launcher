@@ -58,6 +58,9 @@ Not much I can do. I can't afford the subscription, and even if I could, this wo
 ### First Launch Network Service Crash (macOS only)
 On first launch, you might see a crash dialog about the network service. This is (likely) because the modified app needs Keychain permission to be granted, given that it uses an ad-hoc signature. Just ignore it.
 
+### Linux: password prompt on first launch (Ubuntu 24.04+)
+Ubuntu 24.04 and newer block the sandbox Claude relies on unless the app has an AppArmor profile. The official package installs one for its own location, so the launcher adds one for its install. That needs root once, so you'll be asked for your password on the first launch. Other distros don't need this and won't ask.
+
 ### Debug flag
 
 If anything else happens or goes wrong, execute the launcher with the --debug flag to be able to see the full logs.
@@ -67,12 +70,15 @@ If anything else happens or goes wrong, execute the launcher with the --debug fl
 ### Supported Platforms
 - **macOS** - Intel and Apple Silicon
 - **Windows** - Windows 10/11 (x64 and ARM64)
+- **Linux** - x64 and ARM64 (uses Anthropic's official .deb, but works on any distro)
 
 > On Windows there's a single (x64) download — no need to pick an architecture. On an ARM64 PC
 > it detects the host and installs the native arm64 Claude automatically (Windows 11 on ARM).
 
 ### Quick Start
 Download the latest installer from [Releases](https://github.com/lugia19/Claude-WebExtension-Launcher/releases) and run it. The installer will handle everything automatically.
+
+On Linux, pick the `linux-amd64` or `linux-arm64` zip, extract it and run `Claude_WebExtension_Launcher`. The binary can live anywhere; the modified Claude and its extensions are kept in `~/.local/share/claude-webext-launcher`.
 
 ## Features
 

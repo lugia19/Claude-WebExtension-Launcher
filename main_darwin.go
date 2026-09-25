@@ -40,3 +40,6 @@ func claudeUserDataDir(instance string) string {
 func claudeExecutablePath() string {
 	return filepath.Join(patcher.AppFolder, "Claude.app", "Contents", "MacOS", "Claude")
 }
+
+// detachFromTerminal is a no-op here; see main_linux.go.
+func detachFromTerminal(cmd *exec.Cmd) {}
