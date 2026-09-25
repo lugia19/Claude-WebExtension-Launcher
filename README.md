@@ -100,6 +100,8 @@ On first run the launcher installs itself to a fixed place and runs from there f
 
 After that you can delete what you downloaded. Running a downloaded copy again simply hands over to the installed one, or replaces it first if the download is a newer version.
 
+To uninstall, run `Uninstall.bat` in `%LOCALAPPDATA%\ClaudeWebExtLauncher` (Windows) or `Uninstall.command` in `~/Library/Application Support/Claude WebExtension Launcher` (macOS); the launcher keeps them there. Your conversation data is kept.
+
 On Linux, pick the `linux-amd64` or `linux-arm64` zip, extract it and run `Claude_WebExtension_Launcher`. The modified Claude and its extensions are kept in `~/.local/share/claude-webext-launcher` too.
 
 ### Applications menu and startup

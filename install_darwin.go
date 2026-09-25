@@ -47,6 +47,10 @@ func installCopy(running, installed string) error {
 	return utils.InstallAppBundle(running, installed)
 }
 
+// uninstallScript is the uninstall script the installed launcher keeps in its data
+// folder (the one shipped next to the .app is gone once the download is deleted).
+const uninstallScript = "Uninstall.command"
+
 // handOff replaces this process with the installed launcher. Returns only if that
 // failed.
 func handOff(target string, args []string, debug bool) error {

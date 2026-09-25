@@ -7,4 +7,5 @@ import "embed"
 //go:embed resources/icons/*
 //go:embed resources/version-x64.dll
 //go:embed resources/version-arm64.dll
+//go:embed resources/Uninstall.bat resources/Uninstall.command
 var EmbeddedFS embed.FS

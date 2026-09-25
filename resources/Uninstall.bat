@@ -33,9 +33,23 @@ if /i not "%Confirm%"=="Y" (
     exit /b 0
 )
 
+:: First the patched Claude, which needs admin rights: an elevated copy of this script
+:: removes it, and this one waits for it. The launcher only goes once Claude has, so
+:: refusing the admin prompt doesn't leave Claude without the launcher that manages it.
+if exist "%InstallDir%" (
+    echo Requesting administrator privileges...
+    powershell -NoProfile -Command "try { $p = Start-Process -FilePath '%~f0' -ArgumentList 'ELEVATED' -Verb RunAs -Wait -PassThru; exit $p.ExitCode } catch { exit 1 }"
+    if errorlevel 1 (
+        echo.
+        echo The patched Claude was not removed, so the launcher was kept too.
+        pause
+        exit /b 1
+    )
+)
+
 :: Remove the Start Menu / Startup shortcuts: the launcher's ("Claude Desktop
-:: (Extended)") and the instances' ("Claude (<name>)"). Done before elevating, so
-:: %APPDATA% is still this user's.
+:: (Extended)") and the instances' ("Claude (<name>)"). Done here, unelevated, so
+:: %APPDATA% is this user's.
 echo Removing Start Menu and Startup shortcuts...
 for %%D in ("%APPDATA%\Microsoft\Windows\Start Menu\Programs" "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup") do (
     del /q "%%~D\Claude Desktop (Extended).lnk" >nul 2>&1
@@ -48,17 +62,9 @@ echo Removing the installed launcher...
 del /q "%LauncherDir%\Claude_WebExtension_Launcher.exe" >nul 2>&1
 del /q "%LauncherDir%\launcher-version.txt" >nul 2>&1
 
-:: The rest needs admin rights, and only applies if Claude was installed.
-if not exist "%InstallDir%" (
-    echo.
-    echo Uninstall complete.
-    pause
-    exit /b 0
-)
-
-:: Self-elevate
-echo Requesting administrator privileges...
-powershell -Command "Start-Process -FilePath '%~f0' -ArgumentList 'ELEVATED' -Verb RunAs"
+echo.
+echo Uninstall complete.
+pause
 exit /b 0
 
 :DoUninstall
@@ -80,13 +86,13 @@ echo.
 echo Removing %InstallDir%...
 rmdir /s /q "%InstallDir%"
 
-if not exist "%InstallDir%" (
-    echo.
-    echo Uninstall complete.
-) else (
+:: The exit code tells the unelevated copy (waiting for this one) whether to go on
+:: and remove the launcher.
+if exist "%InstallDir%" (
     echo.
     echo ERROR: Failed to remove install directory.
+    pause
+    exit /b 1
 )
-
-pause
+echo Patched Claude removed.
 exit /b 0

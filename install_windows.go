@@ -29,18 +29,12 @@ func runningLauncher() (string, error) {
 // launcherBinary is the file holding the launcher's code: the exe itself here.
 func launcherBinary(path string) string { return path }
 
-// installCopy installs the running exe, and the uninstall script shipped next to it
-// (if any), into the install folder.
 func installCopy(running, installed string) error {
-	if err := replaceFile(running, installed, 0755); err != nil {
-		return err
-	}
-	bat := filepath.Join(filepath.Dir(running), "Uninstall.bat")
-	if _, err := os.Stat(bat); err == nil {
-		copyWithMode(bat, filepath.Join(filepath.Dir(installed), "Uninstall.bat"), 0644)
-	}
-	return nil
+	return replaceFile(running, installed, 0755)
 }
+
+// uninstallScript is the uninstall script the installed launcher keeps in its folder.
+const uninstallScript = "Uninstall.bat"
 
 // handOff starts the installed launcher with args and exits. With --debug it waits
 // instead, so the installed copy can use this console (it attaches to its parent's),

@@ -35,6 +35,10 @@ func installCopy(running, installed string) error {
 	return replaceFile(running, installed, 0755)
 }
 
+// uninstallScript: Linux has none (nothing to uninstall outside the data folder but
+// the menu entries).
+const uninstallScript = ""
+
 // handOff replaces this process with the installed launcher. Returns only if that
 // failed.
 func handOff(target string, args []string, debug bool) error {
