@@ -74,7 +74,7 @@ func Prefetch(version, url string) (string, error) {
 	if expectedSHA == "" {
 		return "", fmt.Errorf("no published SHA-256 for %s; refusing to install", url)
 	}
-	path := utils.ResolvePath(fmt.Sprintf("Claude-%s.deb", version))
+	path := utils.ResolvePath(fmt.Sprintf("Claude-%s-%d.deb", version, os.Getpid()))
 	if err := downloadFile(url, path); err != nil {
 		return "", err
 	}

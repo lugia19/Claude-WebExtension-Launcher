@@ -305,6 +305,13 @@ func Install(version, url string) error {
 	return nil
 }
 
+// IsInstalled reports whether version is installed and patched with the current
+// PatchVersion, e.g. because another launcher installed it in the meantime.
+func IsInstalled(version string) bool {
+	return readVersionFile("claude-version.txt") == version &&
+		readVersionFile("patch-version.txt") == PatchVersion
+}
+
 func readVersionFile(name string) string {
 	data, err := os.ReadFile(filepath.Join(installBaseDir, name))
 	if err != nil {

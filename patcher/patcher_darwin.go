@@ -201,7 +201,7 @@ func GetLatestVersion() (string, string, error) {
 
 // Prefetch downloads the Claude zip and returns its path.
 func Prefetch(version, url string) (string, error) {
-	path := utils.ResolvePath(fmt.Sprintf("Claude-%s.zip", version))
+	path := utils.ResolvePath(fmt.Sprintf("Claude-%s-%d.zip", version, os.Getpid()))
 	if err := downloadFile(url, path); err != nil {
 		return "", err
 	}

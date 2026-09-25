@@ -28,7 +28,7 @@ func Prefetch(version, url string) (string, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, fmt.Sprintf("Claude-%s.msix", version))
+	path := filepath.Join(dir, fmt.Sprintf("Claude-%s-%d.msix", version, os.Getpid()))
 	if err := downloadFile(url, path); err != nil {
 		return "", err
 	}
