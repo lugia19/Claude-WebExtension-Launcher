@@ -207,16 +207,19 @@ func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg strin
 	}
 	defer lock.Release()
 
-	// Another launcher may have installed the same version while we waited for the lock
-	// (each downloads to its own file, so they don't trip over each other before this).
+	// Another launcher may have done some or all of the work while we waited for the
+	// lock (each downloads to its own file, so they don't trip over each other before
+	// this). Check again, so we don't run a redundant worker (and UAC prompt).
 	if update.Needed && !o.forceUpdate && patcher.IsInstalled(update.Latest) {
 		fmt.Printf("Claude %s was installed by another launcher in the meantime\n", update.Latest)
 		update.Needed = false
-		if !needExtensions && !needCowork {
-			ui.SetRow(rowPatch, status.Skipped, "Patching", "done by another launcher")
-			ui.SetRow(rowExtensions, status.Skipped, "Extensions", "up to date")
-			return nil
-		}
+	}
+	needCowork = coworkNeeded()
+	needExtensions = extensions.NeedsUpdate()
+	if !update.Needed && !needExtensions && !needCowork {
+		ui.SetRow(rowPatch, status.Skipped, "Patching", "up to date")
+		ui.SetRow(rowExtensions, status.Skipped, "Extensions", "up to date")
+		return nil
 	}
 
 	statusPath := filepath.Join(os.TempDir(), fmt.Sprintf("claude-webext-status-%d.jsonl", os.Getpid()))

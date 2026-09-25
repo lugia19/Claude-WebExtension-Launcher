@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"unsafe"
 )
 
 // Ubuntu 24.04+ sets kernel.apparmor_restrict_unprivileged_userns=1, which stops
@@ -86,11 +88,10 @@ func installSandbox() error {
 	return err
 }
 
+// writeAppArmorProfile installs the profile as root: through pkexec (the desktop's
+// password dialog), or through sudo when pkexec is missing or couldn't ask (e.g. no
+// polkit agent) and the launcher is running in a terminal (--debug).
 func writeAppArmorProfile(path, content string) error {
-	if _, err := exec.LookPath("pkexec"); err != nil {
-		return errors.New("pkexec is not installed")
-	}
-
 	tmp, err := os.CreateTemp("", "claude-webext-apparmor-*")
 	if err != nil {
 		return err
@@ -109,16 +110,42 @@ func writeAppArmorProfile(path, content string) error {
 	// rejects the profile, remove the file again: an unloaded profile left on disk
 	// would match on the next launch and never be retried.
 	script := `install -m 0644 "$1" "$2" && { apparmor_parser -r -W -T "$2" || { rm -f "$2"; exit 1; }; }`
-	cmd := exec.Command("pkexec", "/bin/sh", "-c", script, "sh", tmp.Name(), path)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		// pkexec exits 126 when the password dialog is dismissed.
+	shArgs := []string{"/bin/sh", "-c", script, "sh", tmp.Name(), path}
+
+	err = errors.New("pkexec is not installed")
+	if _, lookErr := exec.LookPath("pkexec"); lookErr == nil {
+		if err = runAsRoot("pkexec", shArgs); err == nil {
+			return nil
+		}
+		// pkexec exits 126 when the password dialog is dismissed: respect that.
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 126 {
 			return errors.New("password prompt was cancelled")
 		}
-		return fmt.Errorf("pkexec: %v", err)
+	}
+	if stdinIsTerminal() {
+		fmt.Printf("pkexec couldn't do it (%v); trying sudo instead.\n", err)
+		return runAsRoot("sudo", shArgs)
+	}
+	return err
+}
+
+func runAsRoot(tool string, args []string) error {
+	cmd := exec.Command(tool, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s: %w", tool, err)
 	}
 	return nil
+}
+
+// stdinIsTerminal reports whether stdin is a TTY (sudo can prompt there). A desktop
+// launch usually gets /dev/null, which is also a character device, so this asks the
+// tty layer directly instead of checking the file mode.
+func stdinIsTerminal() bool {
+	var termios syscall.Termios
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, os.Stdin.Fd(), syscall.TCGETS, uintptr(unsafe.Pointer(&termios)))
+	return errno == 0
 }
