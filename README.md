@@ -100,7 +100,10 @@ On first run the launcher installs itself to a fixed place and runs from there f
 
 After that you can delete what you downloaded. Running a downloaded copy again simply hands over to the installed one, or replaces it first if the download is a newer version.
 
-To uninstall, run `Uninstall.bat` in `%LOCALAPPDATA%\ClaudeWebExtLauncher` (Windows) or `Uninstall.command` in `~/Library/Application Support/Claude WebExtension Launcher` (macOS); the launcher keeps them there. Your conversation data is kept.
+### Uninstalling
+Open the launcher's settings (run it with `--show-setup`, or **Launcher settings** in the instance list) and click **Uninstall…**. On Windows it's also listed under Settings → Apps → Installed apps. Or run the launcher with `--uninstall`.
+
+It removes the launcher, the patched Claude, the shortcuts and everything else the launcher set up (on Windows: the Cowork service, which needs one administrator prompt; on Linux: the AppArmor profile, which needs your password). Your instances' data (logins, settings and local sessions) is kept unless you tick the box to delete it. Cowork and Code sessions shared with the official Claude app are given back to it first.
 
 On Linux, pick the `linux-amd64` or `linux-arm64` zip, extract it and run `Claude_WebExtension_Launcher`. The modified Claude and its extensions are kept in `~/.local/share/claude-webext-launcher` too.
 
@@ -138,4 +141,4 @@ The installer only creates a local modified Claude Desktop installation. No data
 If you encounter issues:
 - Ensure you have the latest version of the installer
 - Check that your system meets the platform requirements
-- The extended installation can be completely removed by deleting the installation folder
+- The extended installation can be removed completely with **Uninstall…** (see [Uninstalling](#uninstalling))

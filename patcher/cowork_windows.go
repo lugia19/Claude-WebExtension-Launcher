@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 // Cowork's sandbox is provided by CoworkVMService, a LocalSystem service running
@@ -92,8 +94,7 @@ func RegisterCoworkService() error {
 // cowork-svc.exe. Idempotent: stable rule names are deleted (ignoring "no rules match")
 // before being re-added.
 func configureCoworkFirewall(binPath string) error {
-	utils.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+coworkFirewallIn).Run()
-	utils.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+coworkFirewallOut).Run()
+	deleteCoworkFirewallRules()
 
 	rules := []struct {
 		name string
@@ -111,6 +112,41 @@ func configureCoworkFirewall(binPath string) error {
 		}
 	}
 	return nil
+}
+
+// RemoveCoworkService undoes RegisterCoworkService: it stops and deletes
+// CoworkVMService only if it's ours (its binary is in our install; an official one is
+// left alone), and removes our firewall rules either way. Must be called elevated,
+// before the install folder is deleted (cowork-svc.exe is locked while it runs).
+func RemoveCoworkService() {
+	out, qcErr := runSC("qc", coworkServiceName)
+	if strings.Contains(strings.ToLower(out), strings.ToLower(filepath.Clean(utils.WindowsInstallDir))) {
+		fmt.Println("Removing CoworkVMService...")
+		runSC("stop", coworkServiceName)
+		for i := 0; i < 50; i++ { // up to ~10 s for it to stop
+			if state, _ := runSC("query", coworkServiceName); !strings.Contains(state, "RUNNING") && !strings.Contains(state, "STOP_PENDING") {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		if out, err := runSC("delete", coworkServiceName); err != nil {
+			fmt.Printf("Warning: deleting CoworkVMService failed: %v\n%s\n", err, out)
+		}
+	} else if qcErr == nil {
+		fmt.Println("CoworkVMService isn't ours (an official install's); leaving it.")
+	}
+	deleteCoworkFirewallRules()
+}
+
+// CoworkFirewallRulesExist reports whether our Cowork firewall rules are there.
+func CoworkFirewallRulesExist() bool {
+	return utils.Command("netsh", "advfirewall", "firewall", "show", "rule", "name="+coworkFirewallIn).Run() == nil
+}
+
+// deleteCoworkFirewallRules removes our Cowork firewall rules ("no rules match" is fine).
+func deleteCoworkFirewallRules() {
+	utils.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+coworkFirewallIn).Run()
+	utils.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+coworkFirewallOut).Run()
 }
 
 // runSC runs an sc.exe command and returns its combined output.

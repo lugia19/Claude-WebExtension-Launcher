@@ -60,6 +60,7 @@ func main() {
 
 	showSetup := flag.Bool("show-setup", false, "Show the setup screen again (applications menu, start at login, multiple instances) before launching")
 	installedFrom := flag.String(installedFromFlag, "", "The launcher copy that handed over to this installed one (internal)")
+	uninstall := flag.Bool("uninstall", false, "Uninstall the launcher, the patched Claude and their shortcuts (asks first)")
 	flag.Parse()
 	instanceGiven := false
 	flag.Visit(func(f *flag.Flag) { instanceGiven = instanceGiven || f.Name == "instance" })
@@ -76,8 +77,12 @@ func main() {
 			installURL:     *installURL,
 			packagePath:    *packagePath,
 			cowork:         *cowork,
+			uninstall:      *uninstall,
 			debug:          *debug,
 		}))
+	}
+	if *uninstall {
+		os.Exit(runUninstall(*debug))
 	}
 
 	// The main instance's actual name is only known after migrateMainInstance, which
@@ -144,7 +149,13 @@ func main() {
 	}
 	listLikely := instances != nil && utils.LoadSettings().ManageInstances
 	rows := checklistRows(sandboxNeeded(), coworkNeeded(), !listLikely)
-	err := gui.Run("Claude WebExtension Launcher", rows, opts.logPath, firstRunSetup(*showSetup), instances, func(s *gui.Status) error {
+	err := gui.Run(gui.Options{
+		Title:     "Claude WebExtension Launcher",
+		Rows:      rows,
+		LogPath:   opts.logPath,
+		Setup:     firstRunSetup(*showSetup),
+		Instances: instances,
+	}, func(s *gui.Status) error {
 		ui = s
 		patcher.DownloadProgress = s.DownloadProgress
 		opts.list = instances != nil && utils.LoadSettings().ManageInstances
@@ -314,11 +325,7 @@ func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg strin
 		ui.SetRow(rowCowork, status.Skipped, "Cowork service", "set up") // registered meanwhile
 	}
 
-	statusPath := filepath.Join(os.TempDir(), fmt.Sprintf("claude-webext-status-%d.jsonl", os.Getpid()))
-	os.Remove(statusPath)
-	defer os.Remove(statusPath)
-
-	args := []string{"--worker", "--status-file=" + statusPath, "--log-file=" + o.logPath}
+	args := []string{"--log-file=" + o.logPath}
 	if update.Needed {
 		args = append(args, "--install-version="+update.Latest, "--install-url="+update.URL, "--package="+pkg)
 	}
@@ -328,41 +335,7 @@ func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg strin
 	if o.debug {
 		args = append(args, "--debug")
 	}
-
-	type result struct {
-		code int
-		err  error
-	}
-	done := make(chan result, 1)
-	go func() {
-		code, err := startWorker(args)
-		done <- result{code, err}
-	}()
-
-	// Follow the worker's status file until it exits.
-	reader := status.NewReader(statusPath)
-	failed := map[string]string{}
-	apply := func() {
-		for _, e := range reader.Poll() {
-			if e.State == status.Failed {
-				failed[e.Step] = e.Detail
-			}
-			ui.SetRow(e.Step, e.State, "", e.Detail)
-		}
-	}
-	tick := time.NewTicker(150 * time.Millisecond)
-	defer tick.Stop()
-	var res result
-wait:
-	for {
-		select {
-		case res = <-done:
-			apply()
-			break wait
-		case <-tick.C:
-			apply()
-		}
-	}
+	res := followWorker(args)
 
 	switch {
 	case res.err != nil: // e.g. UAC declined
@@ -376,16 +349,65 @@ wait:
 		ui.SetRow(rowExtensions, status.Warning, "", "not updated")
 		ui.SetRow(rowCowork, status.Warning, "", "not set up")
 	case res.code != 0:
-		detail := failed[status.StepPatch]
-		if detail == "" {
-			detail = "see the log"
-		}
+		detail := res.detail(status.StepPatch)
 		if !claudeInstalled() {
 			return fmt.Errorf("installing Claude failed: %s", detail)
 		}
 		ui.SetRow(rowPatch, status.Warning, "", "failed, using the existing install")
 	}
 	return nil
+}
+
+// workerResult is how a worker run ended.
+type workerResult struct {
+	code   int
+	err    error             // it couldn't be started (e.g. UAC declined)
+	failed map[string]string // steps it reported as failed, with their details
+}
+
+// detail is why step failed, as the worker reported it.
+func (r workerResult) detail(step string) string {
+	if d := r.failed[step]; d != "" {
+		return d
+	}
+	return "see the log"
+}
+
+// followWorker runs the worker (--worker plus args) and mirrors the steps it reports
+// to the checklist until it exits.
+func followWorker(args []string) workerResult {
+	statusPath := filepath.Join(os.TempDir(), fmt.Sprintf("claude-webext-status-%d.jsonl", os.Getpid()))
+	os.Remove(statusPath)
+	defer os.Remove(statusPath)
+
+	done := make(chan workerResult, 1)
+	go func() {
+		code, err := startWorker(append([]string{"--worker", "--status-file=" + statusPath}, args...))
+		done <- workerResult{code: code, err: err}
+	}()
+
+	reader := status.NewReader(statusPath)
+	failed := map[string]string{}
+	apply := func() {
+		for _, e := range reader.Poll() {
+			if e.State == status.Failed {
+				failed[e.Step] = e.Detail
+			}
+			ui.SetRow(e.Step, e.State, "", e.Detail)
+		}
+	}
+	tick := time.NewTicker(150 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case res := <-done:
+			apply()
+			res.failed = failed
+			return res
+		case <-tick.C:
+			apply()
+		}
+	}
 }
 
 func clearCaches(instance string) {
@@ -454,10 +476,15 @@ func launcherSettings(title string, subtitle []string) *gui.Setup {
 		Label:   "Manage multiple instances (separate logins and data)",
 		Checked: settings.ManageInstances,
 	})
+	var extra []gui.SetupButton
+	if settings.SetupDone { // not on the very first run: there's nothing to uninstall yet
+		extra = append(extra, gui.SetupButton{Label: "Uninstall…", OnClick: startUninstall, CloseWindow: true})
+	}
 	return &gui.Setup{
 		Title:    title,
 		Subtitle: subtitle,
 		Options:  options,
+		Extra:    extra,
 		Apply: func(checked []bool) {
 			if shortcuts {
 				applyShortcuts(launcherEntry, checked[0], checked[1])

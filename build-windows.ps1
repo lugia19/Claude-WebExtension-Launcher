@@ -46,9 +46,8 @@ if (Test-Path ".\builds\$APP_NAME.exe") {
 	}
 	New-Item -ItemType Directory -Path $tempDir | Out-Null
     
-	# Copy executable and batch scripts to temp directory
+	# Copy the executable to the temp directory
 	Copy-Item ".\builds\$APP_NAME.exe" "$tempDir\$APP_NAME.exe"
-	Copy-Item ".\resources\Uninstall.bat" "$tempDir\Uninstall.bat"
     
 	# Create the zip file from temp directory
 	Compress-Archive -Path "$tempDir\*" -DestinationPath $zipPath -CompressionLevel Optimal

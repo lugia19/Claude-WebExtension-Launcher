@@ -52,7 +52,7 @@ func installSelf(handedOver bool) (target, from string) {
 	if sameLocation(running, installed) {
 		os.WriteFile(installedVersionFile(), []byte(Version), 0644)
 		cleanupInstall(installed)
-		writeUninstallScript()
+		registerInstall(installed)
 		return "", ""
 	}
 
@@ -170,33 +170,13 @@ func copyWithMode(src, dst string, mode os.FileMode) error {
 }
 
 // cleanupInstall removes what an earlier install couldn't (an old copy that was
-// still running then).
+// still running then), and the uninstall scripts older versions kept next to the
+// launcher (uninstalling is built in now: --uninstall).
 func cleanupInstall(installed string) {
 	os.Remove(installed + ".old")
 	os.Remove(installed + ".new")
-}
-
-// writeUninstallScript keeps this OS's uninstall script (embedded) in the launcher's
-// data folder, where it stays after the download it came with is deleted. Line endings
-// are normalized: cmd mishandles labels in LF-only batch files, bash chokes on CRLF.
-func writeUninstallScript() {
-	if uninstallScript == "" {
-		return
-	}
-	data, err := EmbeddedFS.ReadFile("resources/" + uninstallScript)
-	if err != nil {
-		return
-	}
-	text := strings.ReplaceAll(string(data), "\r\n", "\n")
-	if strings.HasSuffix(uninstallScript, ".bat") {
-		text = strings.ReplaceAll(text, "\n", "\r\n")
-	}
-	path := filepath.Join(utils.DataDir(), uninstallScript)
-	if existing, err := os.ReadFile(path); err == nil && string(existing) == text {
-		return
-	}
-	if err := os.WriteFile(path, []byte(text), 0755); err != nil {
-		fmt.Printf("Warning: could not write %s: %v\n", path, err)
+	for _, script := range []string{"Uninstall.bat", "Uninstall.command"} {
+		os.Remove(filepath.Join(utils.DataDir(), script))
 	}
 }
 

@@ -254,7 +254,7 @@ func (w *window) showSettings(inst Instance) {
 	if setup == nil {
 		return
 	}
-	w.setRoot(buildSetup(setup, "Save", func(checked []bool) {
+	w.setRoot(w.buildSetup(setup, "Save", func(checked []bool) {
 		w.setNote(inst.Name, "Saving settings…")
 		w.showList()
 		w.background(func() {
@@ -268,7 +268,7 @@ func (w *window) showSettings(inst Instance) {
 // and applies them in the background.
 func (w *window) showLauncherSettings() {
 	setup := w.inst.LauncherSettings()
-	w.setRoot(buildSetup(setup, "Save", func(checked []bool) {
+	w.setRoot(w.buildSetup(setup, "Save", func(checked []bool) {
 		w.showList()
 		w.background(func() { setup.Apply(checked) })
 	}, w.showList))
