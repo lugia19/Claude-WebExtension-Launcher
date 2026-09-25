@@ -63,6 +63,28 @@ func TestReplaceFile(t *testing.T) {
 	}
 }
 
+func TestSameLocationThroughSymlink(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	if err := os.MkdirAll(real, 0755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(real, "launcher")
+	if err := os.WriteFile(file, []byte("x"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("can't create symlinks here: %v", err)
+	}
+	if !sameLocation(file, filepath.Join(link, "launcher")) {
+		t.Error("the same file through a symlinked folder wasn't recognized")
+	}
+	if sameLocation(file, filepath.Join(dir, "other")) {
+		t.Error("different paths matched")
+	}
+}
+
 func TestHandOffArgs(t *testing.T) {
 	saved := os.Args
 	defer func() { os.Args = saved }()

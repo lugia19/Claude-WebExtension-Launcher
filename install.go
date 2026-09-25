@@ -34,14 +34,22 @@ func installedVersionFile() string {
 // to and this copy's path, or "" if this process should just carry on: it is the
 // installed copy, it isn't running as a proper release build (e.g. a bare binary
 // on macOS), or installing failed (then it runs from where it is, this time).
-func installSelf() (target, from string) {
+//
+// handedOver says this process was itself handed over to (--installed-from). It then
+// never hands over again, even if it somehow doesn't recognize itself as the installed
+// copy, so a mistake here can't turn into an endless chain of launches.
+func installSelf(handedOver bool) (target, from string) {
 	running, err := runningLauncher()
 	if err != nil {
 		fmt.Printf("Not installing the launcher: %v\n", err)
 		return "", ""
 	}
 	installed := installedLauncher()
-	if samePath(running, installed) {
+	if !sameLocation(running, installed) && handedOver {
+		fmt.Printf("Warning: handed over to %s, but running from %s; carrying on here\n", installed, running)
+		return "", ""
+	}
+	if sameLocation(running, installed) {
 		os.WriteFile(installedVersionFile(), []byte(Version), 0644)
 		cleanupInstall(installed)
 		writeUninstallScript()
@@ -65,6 +73,18 @@ func installSelf() (target, from string) {
 	}
 	fmt.Printf("Handing over to the installed launcher: %s\n", installed)
 	return installed, running
+}
+
+// sameLocation reports whether two paths are the same file or folder. By identity when
+// both exist: the paths can differ through symlinks (a symlinked XDG_DATA_HOME or
+// ~/Applications, say). Otherwise by comparing the paths.
+func sameLocation(a, b string) bool {
+	ia, errA := os.Stat(a)
+	ib, errB := os.Stat(b)
+	if errA == nil && errB == nil {
+		return os.SameFile(ia, ib)
+	}
+	return samePath(a, b)
 }
 
 // shouldReplace decides whether the running launcher should replace the installed

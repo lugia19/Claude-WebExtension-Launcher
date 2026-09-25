@@ -111,7 +111,7 @@ func main() {
 
 	// Run from the installed copy (install.go), installing or upgrading it first if this
 	// one is newer.
-	if target, from := installSelf(); target != "" {
+	if target, from := installSelf(opts.installedFrom != ""); target != "" {
 		stop() // flush the log for the installed copy to continue
 		err := handOff(target, handOffArgs(from), opts.debug)
 		stop, _ = utils.StartLog(opts.logPath, false, console)

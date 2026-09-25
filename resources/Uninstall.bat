@@ -33,8 +33,11 @@ if /i not "%Confirm%"=="Y" (
     exit /b 0
 )
 
-:: A running launcher (e.g. its instance list left open) can't be deleted.
-tasklist /fi "imagename eq Claude_WebExtension_Launcher.exe" 2>nul | find /i "Claude_WebExtension_Launcher.exe" >nul && (
+:: A running launcher (e.g. its instance list left open) can't be deleted. The result is
+:: checked on its own line: whatever follows | runs in a separate cmd, where an exit
+:: wouldn't stop this script.
+tasklist /fi "imagename eq Claude_WebExtension_Launcher.exe" 2>nul | find /i "Claude_WebExtension_Launcher.exe" >nul
+if not errorlevel 1 (
     echo.
     echo The launcher is still running. Close its window, then run this again.
     pause
