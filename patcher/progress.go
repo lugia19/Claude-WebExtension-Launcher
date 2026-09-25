@@ -9,6 +9,14 @@ import (
 // (total is -1 if the server didn't send a length). Used by the status window.
 var DownloadProgress func(done, total int64)
 
+// PrefetchedPackage / PrefetchedVersion are set in the elevated Windows patcher from
+// the --package / --package-version flags: the Claude package the unelevated launcher
+// already downloaded (see prefetch_windows.go). Unused on other platforms.
+var (
+	PrefetchedPackage string
+	PrefetchedVersion string
+)
+
 // progressBody wraps a download response so DownloadProgress sees each chunk.
 func progressBody(resp *http.Response) io.Reader {
 	if DownloadProgress == nil {

@@ -242,25 +242,12 @@ func parseVersionFromMSIXURL(rawURL string) (string, error) {
 func downloadAndExtract(version, downloadURL string) error {
 	newVersionZipName := fmt.Sprintf("Claude-%s.msix", version)
 
-	// Define the download path based on whether we keep files or use temp
-	var newVersionDownloadPath string
-	if KeepDownloadedArchive {
-		newVersionDownloadPath = utils.ResolvePath(newVersionZipName)
-	} else {
-		newVersionDownloadPath = utils.ResolvePath(newVersionZipName + ".tmp")
-	}
+	// The package lives inside the admin-only install folder while it's verified and
+	// extracted, so nothing unelevated can swap it in between.
+	newVersionDownloadPath := filepath.Join(installBaseDir, newVersionZipName+".tmp")
+	defer os.Remove(newVersionDownloadPath)
 
-	// Check if file already exists when KeepDownloadedArchive is enabled
-	fileExists := false
-	fullPath := utils.ResolvePath(newVersionZipName)
-	if _, err := os.Stat(fullPath); err == nil {
-		fileExists = true
-	}
-
-	if KeepDownloadedArchive && fileExists {
-		fmt.Printf("Using existing file: %s\n", newVersionZipName)
-	} else {
-		// Download if file doesn't exist or if we're not keeping files
+	if !useVerifiedPackage(version, newVersionDownloadPath) {
 		fmt.Printf("Downloading from: %s\n", downloadURL)
 
 		resp, err := http.Get(downloadURL)
@@ -269,7 +256,6 @@ func downloadAndExtract(version, downloadURL string) error {
 		}
 		defer resp.Body.Close()
 
-		// Use the already defined download path
 		outFile, err := os.Create(newVersionDownloadPath)
 		if err != nil {
 			return fmt.Errorf("creating file: %v", err)
@@ -280,6 +266,10 @@ func downloadAndExtract(version, downloadURL string) error {
 			return fmt.Errorf("saving file: %v", err)
 		}
 		fmt.Printf("Downloaded: %s\n", newVersionDownloadPath)
+
+		if err := verifyMSIXSignature(newVersionDownloadPath); err != nil {
+			return fmt.Errorf("downloaded package failed verification: %v", err)
+		}
 	}
 
 	// Extract
@@ -314,6 +304,10 @@ func downloadAndExtract(version, downloadURL string) error {
 		}
 
 		path := filepath.Join(AppFolder, relativePath)
+		if rel, err := filepath.Rel(AppFolder, path); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			zipReader.Close()
+			return fmt.Errorf("refusing package entry outside the app folder: %s", f.Name)
+		}
 
 		// Handle PowerShell Compress-Archive's broken directory entries
 		normalizedName := strings.ReplaceAll(f.Name, "\\", "/")
@@ -338,15 +332,8 @@ func downloadAndExtract(version, downloadURL string) error {
 		}
 	}
 
-	// Close the zip reader before attempting to delete temp file
+	// Close the zip reader so the deferred removal of the package can succeed
 	zipReader.Close()
-
-	// Delete the archive file only if KeepDownloadedArchive is false
-	if !KeepDownloadedArchive {
-		os.Remove(newVersionDownloadPath)
-	} else {
-		fmt.Printf("Keeping archive file: %s\n", newVersionZipName)
-	}
 
 	return nil
 }

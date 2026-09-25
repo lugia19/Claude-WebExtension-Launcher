@@ -20,6 +20,33 @@ var guiMode = false
 // step reports the launcher's current phase to the status window (no-op in terminal mode).
 var step = func(string) {}
 
+// ask puts a multiple-choice question to the user and returns the chosen index, or -1
+// if they didn't pick one. The status window replaces it with its own question view.
+var ask = askInTerminal
+
+func askInTerminal(question, detail string, options []string) int {
+	fmt.Println()
+	fmt.Println("============================================================")
+	fmt.Println(question)
+	fmt.Println()
+	fmt.Println(detail)
+	fmt.Println()
+	for i, o := range options {
+		fmt.Printf("[%d] %s\n", i+1, o)
+	}
+	fmt.Println("============================================================")
+	fmt.Print("Choose: ")
+
+	var input string
+	fmt.Scanln(&input)
+	for i := range options {
+		if input == fmt.Sprint(i+1) {
+			return i
+		}
+	}
+	return -1
+}
+
 // Version is the current version of the application
 const Version = "3.3.3"
 
@@ -34,9 +61,18 @@ func main() {
 	instanceName := flag.String("instance", defaultInstanceName, "Instance name for separate data directory and lock")
 	patcherMode := flag.Bool("patcher", false, "Run in elevated patcher mode (internal)")
 	debug := flag.Bool("debug", false, "Keep console windows open and launch Claude attached to terminal")
+	packagePath := flag.String("package", "", "Claude package downloaded by the unelevated launcher (internal)")
+	packageVersion := flag.String("package-version", "", "Version of --package (internal)")
 	flag.Parse()
 
 	launchClaudeInTerminal = *debug
+	noGUI := *debug || os.Getenv("CLAUDE_WEBEXT_NO_GUI") != ""
+
+	// Windows builds are GUI-subsystem apps: give them a console only when output is
+	// meant to be read there (the elevated patcher always shows its own).
+	if noGUI || *patcherMode {
+		ensureConsole()
+	}
 
 	fmt.Printf("Claude_WebExtension_Launcher version: %s\n", Version)
 	// Set version for selfupdate module
@@ -48,12 +84,14 @@ func main() {
 
 	// Patcher mode: do admin work and exit (Windows only)
 	if *patcherMode {
+		patcher.PrefetchedPackage = *packagePath
+		patcher.PrefetchedVersion = *packageVersion
 		os.Exit(runPatcherMode(*forceUpdate, *debug))
 	}
 
 	// Show the status window unless the terminal is wanted: --debug keeps everything
 	// in the terminal, and CLAUDE_WEBEXT_NO_GUI=1 is an escape hatch while this is new.
-	if *debug || os.Getenv("CLAUDE_WEBEXT_NO_GUI") != "" {
+	if noGUI {
 		if err := runLauncher(*forceUpdate, *instanceName); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
@@ -64,6 +102,7 @@ func main() {
 	guiMode = true
 	err, _ := gui.Run("Claude WebExtension Launcher", func(s *gui.Status) error {
 		step = s.Step
+		ask = s.Ask
 		lastPct := -1
 		patcher.DownloadProgress = func(done, total int64) {
 			if total <= 0 {

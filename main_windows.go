@@ -152,8 +152,21 @@ func ensureClaudeReady(forceUpdate bool) error {
 		args += " --debug"
 	}
 
+	// Download Claude here, unelevated, so the status window can show progress. The
+	// elevated patcher verifies the package's signature before using it, and downloads
+	// it itself if this fails or the package doesn't check out.
+	pkg, pkgVersion, err := patcher.PrefetchWindowsPackage(forceUpdate)
+	if err != nil {
+		fmt.Printf("Warning: could not download Claude in advance (%v); the patcher will download it.\n", err)
+	} else if pkg != "" {
+		defer os.Remove(pkg)
+		args += fmt.Sprintf(` --package="%s" --package-version=%s`, pkg, pkgVersion)
+	}
+
+	step("Waiting for administrator permission...")
 	fmt.Println("Administrator privileges required for patching...")
 	exitCode, err := utils.RunElevatedAndWait(exe, args)
+	step("Checking for Claude updates...")
 	if err != nil {
 		// UAC denied or ShellExecuteEx failed
 		if claudeInstalled() {
@@ -229,3 +242,8 @@ func claudeInstalled() bool {
 
 // detachFromTerminal is a no-op here; see main_linux.go.
 func detachFromTerminal(cmd *exec.Cmd) {}
+
+// ensureConsole attaches or opens a console for output (the build is GUI-subsystem).
+func ensureConsole() {
+	utils.EnsureConsole()
+}

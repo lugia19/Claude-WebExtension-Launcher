@@ -34,6 +34,9 @@ type Status struct {
 	detail   state.Signal[string]
 	progress state.Signal[float64]
 	noClose  state.Signal[bool]
+
+	root   *switcher
+	closed chan struct{} // closed once the window loop has ended
 }
 
 // Step sets the headline ("Downloading Claude 2.7032.0...").
@@ -79,6 +82,7 @@ func Run(title string, work func(s *Status) error) (workErr error, ok bool) {
 		detail:   state.NewSignal(""),
 		progress: state.NewSignal(0.0),
 		noClose:  state.NewSignal(true),
+		closed:   make(chan struct{}),
 	}
 
 	uiApp := app.New(
@@ -87,13 +91,14 @@ func Run(title string, work func(s *Status) error) (workErr error, ok bool) {
 		app.WithEventSource(gogpuApp.EventSource()),
 		app.WithTheme(m3.AsTheme()),
 	)
-	uiApp.SetRoot(buildUI(s, gogpuApp))
+	s.root = newSwitcher(buildUI(s, gogpuApp))
+	uiApp.SetRoot(s.root)
 
 	restore := captureOutput(s)
 
 	var result error
 	finished := make(chan struct{})
-	runReturned := make(chan struct{})
+	runReturned := s.closed
 	go func() {
 		defer close(finished)
 		result = work(s)
@@ -201,4 +206,52 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return string([]rune(s)[:n-1]) + "…"
+}
+
+// Ask replaces the progress view with a question and one button per option, and
+// blocks until one is clicked. Returns the chosen index, or -1 if the window was
+// closed instead.
+func (s *Status) Ask(question, detail string, options []string) int {
+	choice := make(chan int, 1)
+	buttons := make([]widget.Widget, len(options))
+	for i, label := range options {
+		i := i
+		buttons[i] = button.New(
+			button.TextOpt(label),
+			button.OnClick(func() {
+				select {
+				case choice <- i:
+				default:
+				}
+			}),
+		)
+	}
+
+	view := primitives.VBox(
+		primitives.Text(question).
+			FontSize(16).
+			Bold().
+			Color(widget.RGBA8(33, 33, 33, 255)),
+		primitives.Text(detail).
+			FontSize(12).
+			Color(widget.RGBA8(80, 80, 80, 255)),
+		primitives.HBox(buttons...).Gap(8),
+	).
+		Padding(24).
+		Gap(12).
+		Background(widget.RGBA8(250, 249, 245, 255))
+
+	s.root.show(view)
+	s.gogpuApp.RequestRedraw()
+	defer func() {
+		s.root.show(nil)
+		s.gogpuApp.RequestRedraw()
+	}()
+
+	select {
+	case i := <-choice:
+		return i
+	case <-s.closed:
+		return -1
+	}
 }

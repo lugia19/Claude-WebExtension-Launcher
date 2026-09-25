@@ -14,6 +14,9 @@ import (
 // releaseAdminContext is a no-op on non-Windows platforms.
 func releaseAdminContext() {}
 
+// ensureConsole is a no-op on non-Windows platforms, which have no GUI subsystem split.
+func ensureConsole() {}
+
 // claudeInstalled returns true if the Claude executable exists in the install directory.
 func claudeInstalled() bool {
 	_, err := os.Stat(claudeExecutablePath())

@@ -76,28 +76,15 @@ func isMSIXInstalled() bool {
 }
 
 func promptMSIXChoice() string {
-	fmt.Println()
-	fmt.Println("============================================================")
-	fmt.Println("Official Claude Desktop (MSIX) detected.")
-	fmt.Println()
-	fmt.Println("The official MSIX installation overrides the claude:// protocol")
-	fmt.Println("handler, which prevents magic link login from working with the")
-	fmt.Println("patched app.")
-	fmt.Println()
-	fmt.Println("[1] Uninstall the official app (recommended)")
-	fmt.Println("[2] Keep it installed (login via magic link won't work)")
-	fmt.Println("[3] Ask me later")
-	fmt.Println("============================================================")
-	fmt.Print("Choose [1/2/3]: ")
-
-	var input string
-	fmt.Scanln(&input)
-	input = strings.TrimSpace(input)
-
-	switch input {
-	case "1":
+	choice := ask(
+		"Official Claude Desktop (MSIX) detected.",
+		"It takes over claude:// links, so magic-link login won't reach the patched app.",
+		[]string{"Uninstall it (recommended)", "Keep it (login codes only)", "Ask me later"},
+	)
+	switch choice {
+	case 0:
 		return "uninstall"
-	case "2":
+	case 1:
 		return "keep"
 	default:
 		return "ask-later"
