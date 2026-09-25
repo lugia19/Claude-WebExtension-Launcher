@@ -103,6 +103,9 @@ func DeploySentinelExtension() error {
 
 // patchProtocolArray adds "chrome-extension:" to the allowed protocols array.
 // Matches the prefix ["devtools:","file:" and inserts before the closing ].
+// The Windows/macOS bundles quote the entries with double quotes; the Linux bundle
+// uses template-literal backticks ([`devtools:`,`file:`,...]), so both are tried and
+// the inserted entry reuses whichever quote matched.
 //
 // Claude's bundle is heavily code-split, so this runs against many chunk files
 // and only one contains the array. "Prefix not found" is therefore the normal
@@ -111,32 +114,36 @@ func DeploySentinelExtension() error {
 func patchProtocolArray(content []byte) ([]byte, bool) {
 	contentStr := string(content)
 
-	prefix := `["devtools:","file:"`
-	idx := strings.Index(contentStr, prefix)
-	if idx == -1 {
-		return content, false
+	for _, q := range []string{`"`, "`"} {
+		prefix := "[" + q + "devtools:" + q + "," + q + "file:" + q
+		idx := strings.Index(contentStr, prefix)
+		if idx == -1 {
+			continue
+		}
+
+		// Find the closing ] after the prefix
+		closingIdx := strings.Index(contentStr[idx:], "]")
+		if closingIdx == -1 {
+			fmt.Println("Warning: Could not find closing ] for protocol array")
+			debugPause()
+			return content, false
+		}
+		closingIdx += idx
+
+		// Check if chrome-extension: is already present
+		arrayContent := contentStr[idx : closingIdx+1]
+		if strings.Contains(arrayContent, "chrome-extension:") {
+			fmt.Println("Protocol array already contains chrome-extension:, skipping")
+			return content, false
+		}
+
+		// Insert ,"chrome-extension:" before the ]
+		contentStr = contentStr[:closingIdx] + "," + q + "chrome-extension:" + q + contentStr[closingIdx:]
+		fmt.Println("Added chrome-extension: to protocol array")
+		return []byte(contentStr), true
 	}
 
-	// Find the closing ] after the prefix
-	closingIdx := strings.Index(contentStr[idx:], "]")
-	if closingIdx == -1 {
-		fmt.Println("Warning: Could not find closing ] for protocol array")
-		debugPause()
-		return content, false
-	}
-	closingIdx += idx
-
-	// Check if chrome-extension: is already present
-	arrayContent := contentStr[idx : closingIdx+1]
-	if strings.Contains(arrayContent, "chrome-extension:") {
-		fmt.Println("Protocol array already contains chrome-extension:, skipping")
-		return content, false
-	}
-
-	// Insert ,"chrome-extension:" before the ]
-	contentStr = contentStr[:closingIdx] + `,"chrome-extension:"` + contentStr[closingIdx:]
-	fmt.Println("Added chrome-extension: to protocol array")
-	return []byte(contentStr), true
+	return content, false
 }
 
 // installWrapper copies the wrapper.js into the unpacked asar and redirects
