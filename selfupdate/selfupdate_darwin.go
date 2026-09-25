@@ -130,3 +130,6 @@ func installUpdate(tempDir, tempZip string) error {
 func lockUpdate() (func(), bool) {
 	return func() {}, true
 }
+
+// finishUpdateIfNeeded is a no-op on macOS: the new bundle is handed to the user.
+func finishUpdateIfNeeded(exePath string) {}

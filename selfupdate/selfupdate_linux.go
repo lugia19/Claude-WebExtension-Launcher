@@ -103,12 +103,50 @@ func checkLinuxExecutable(path string) error {
 	return nil
 }
 
+// startedFrom identifies the launcher binary this process was started from, so a
+// launcher that waited for the update lock can tell another one already replaced it.
+var startedFrom os.FileInfo
+
+func init() {
+	if exe, err := os.Executable(); err == nil {
+		startedFrom, _ = os.Stat(exe)
+	}
+}
+
+const updateLockName = "selfupdate"
+
+// finishUpdateIfNeeded removes the rollback copy installUpdate keeps until the new
+// binary has started. Only when the update lock is free: while it's held, another
+// launcher may be mid-update and still need its .old to roll back.
+func finishUpdateIfNeeded(exePath string) {
+	lock, ok := utils.AcquirePatchLock(updateLockName, 0)
+	if !ok {
+		return
+	}
+	defer lock.Release()
+	os.Remove(exePath + ".old")
+}
+
 // lockUpdate takes a per-user cross-process lock for the update. The flock's fd is
-// close-on-exec, so the successful re-exec in installUpdate releases it too.
+// close-on-exec, so the successful re-exec in installUpdate releases it too. If a
+// launcher that held the lock before us already replaced the binary, restart into the
+// new version instead of downloading the same update again.
 func lockUpdate() (func(), bool) {
-	lock, ok := utils.AcquirePatchLock("selfupdate", 5*time.Minute)
+	lock, ok := utils.AcquirePatchLock(updateLockName, 5*time.Minute)
 	if !ok {
 		return nil, false
+	}
+
+	exe, err := os.Executable()
+	if err == nil && startedFrom != nil {
+		if current, err := os.Stat(exe); err == nil && !os.SameFile(startedFrom, current) {
+			fmt.Println("Another launcher already installed the update, restarting...")
+			lock.Release()
+			args := append([]string{exe}, os.Args[1:]...)
+			err = syscall.Exec(exe, args, os.Environ())
+			fmt.Printf("Warning: could not restart into the updated launcher: %v\n", err)
+			return nil, false
+		}
 	}
 	return lock.Release, true
 }
