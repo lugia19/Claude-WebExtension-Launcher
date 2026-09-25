@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// SettingsLockName guards settings.json's read-modify-write across launchers.
+const SettingsLockName = "settings"
+
 // PatchLock is an acquired cross-process lock: an flock on a file in the launcher's
 // data directory. The kernel drops it when the holder exits, so a launcher that dies
 // mid-patch never deadlocks the ones waiting behind it.

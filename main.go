@@ -12,27 +12,39 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 // Version is the current version of the application
 const Version = "3.3.3"
 
-// defaultInstanceName is the instance used when --instance is not given. Only this
-// instance shares Cowork/Code sessions with the official install; named instances stay
-// isolated (see SetupSessionSharing / RepairSessionSharing).
-const defaultInstanceName = "modified"
+// The main instance is the one used when --instance is not given. Only it shares
+// Cowork/Code sessions with the official install; other instances stay isolated (see
+// SetupSessionSharing / RepairSessionSharing). It used to be called "modified"; its
+// data folder is renamed on first run (migrateMainInstance), and --instance modified
+// still means it.
+const (
+	mainInstanceName       = "Main"
+	legacyMainInstanceName = "modified"
+)
+
+// mainInstance is the main instance's name for this run: mainInstanceName, unless
+// its data folder couldn't be migrated yet (see migrateMainInstance).
+var mainInstance = mainInstanceName
 
 type launcherOptions struct {
-	forceUpdate bool
-	instance    string
-	debug       bool // no window: everything in the terminal, Claude attached to it
-	logPath     string
+	forceUpdate   bool
+	instance      string
+	instanceGiven bool // --instance was passed (so no instance list)
+	debug         bool // no window: everything in the terminal, Claude attached to it
+	logPath       string
+	list          bool // end on the instance list instead of launching o.instance
 }
 
 func main() {
 	forceUpdate := flag.Bool("force-update", false, "Re-download and re-patch Claude even if already up to date")
-	instanceName := flag.String("instance", defaultInstanceName, "Instance name for separate data directory and lock")
+	instanceName := flag.String("instance", "", "Instance to launch, each with its own data (default: "+mainInstanceName+")")
 	debug := flag.Bool("debug", false, "No window: show all output in the terminal and run Claude attached to it")
 
 	// Internal: the launcher re-runs itself with these to start the worker.
@@ -44,8 +56,10 @@ func main() {
 	packagePath := flag.String("package", "", "Downloaded package for --install-version (internal)")
 	cowork := flag.Bool("cowork", false, "Register the Cowork service (internal)")
 
-	showSetup := flag.Bool("show-setup", false, "Show the setup screen again (applications menu, start at login) before launching")
+	showSetup := flag.Bool("show-setup", false, "Show the setup screen again (applications menu, start at login, multiple instances) before launching")
 	flag.Parse()
+	instanceGiven := false
+	flag.Visit(func(f *flag.Flag) { instanceGiven = instanceGiven || f.Name == "instance" })
 
 	selfupdate.CurrentVersion = Version
 	patcher.EmbeddedFS = EmbeddedFS
@@ -63,17 +77,35 @@ func main() {
 		}))
 	}
 
+	// The main instance's actual name is only known after migrateMainInstance, which
+	// needs the log running; its log file doesn't depend on it.
+	// Case-insensitively: on Windows and macOS "main" is the same folder as "Main" (and
+	// instanceNameProblem never lets another instance use a case variant of them).
+	isMain := *instanceName == "" || strings.EqualFold(*instanceName, mainInstanceName) ||
+		strings.EqualFold(*instanceName, legacyMainInstanceName)
+	logInstance := *instanceName
+	if isMain {
+		logInstance = mainInstanceName
+	}
 	opts := launcherOptions{
-		forceUpdate: *forceUpdate,
-		instance:    *instanceName,
-		debug:       *debug,
-		logPath:     utils.LogPath(*instanceName, defaultInstanceName),
+		forceUpdate:   *forceUpdate,
+		instance:      *instanceName,
+		instanceGiven: instanceGiven,
+		debug:         *debug,
+		logPath:       utils.LogPath(logInstance, mainInstanceName),
+	}
+	resolveMain := func() {
+		migrateMainInstance()
+		if isMain {
+			opts.instance = mainInstance
+		}
 	}
 
 	if opts.debug {
 		ensureConsole()
 		stop, _ := utils.StartLog(opts.logPath, true, os.Stdout)
 		selfupdate.FinishUpdateIfNeeded()
+		resolveMain()
 		err := runLauncher(opts)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
@@ -89,11 +121,22 @@ func main() {
 	// Before the window: on Windows this restarts a freshly updated .new.exe as the
 	// real .exe, and setup must run there so shortcuts don't point at the temporary file.
 	selfupdate.FinishUpdateIfNeeded()
-	rows := checklistRows(sandboxNeeded(), coworkNeeded())
-	err := gui.Run("Claude WebExtension Launcher", rows, opts.logPath, firstRunSetup(opts.instance, *showSetup), func(s *gui.Status) error {
+	resolveMain()
+
+	// Without --instance, the run can end on the instance list; whether it does is
+	// decided after the first-run setup, which can turn the list on.
+	var instances *gui.Instances
+	if !opts.instanceGiven {
+		instances = instanceList()
+		instances.Enabled = func() bool { return opts.list }
+	}
+	listLikely := instances != nil && utils.LoadSettings().ManageInstances
+	rows := checklistRows(sandboxNeeded(), coworkNeeded(), !listLikely)
+	err := gui.Run("Claude WebExtension Launcher", rows, opts.logPath, firstRunSetup(*showSetup), instances, func(s *gui.Status) error {
 		ui = s
 		patcher.DownloadProgress = s.DownloadProgress
 		selfupdate.Notify = func(title, detail string) { s.Ask(title, detail, []string{"OK"}) }
+		opts.list = instances != nil && utils.LoadSettings().ManageInstances
 		return runLauncher(opts)
 	})
 	stop()
@@ -108,6 +151,9 @@ func main() {
 func runLauncher(o launcherOptions) error {
 	fmt.Printf("Claude WebExtension Launcher %s, %s\n", Version, time.Now().Format(time.RFC1123))
 	platformSetup()
+	if o.instanceGiven {
+		rememberInstance(o.instance)
+	}
 
 	// Launcher self-update (restarts the launcher if it installs one).
 	ui.SetRow(rowLauncher, status.Running, "Checking for launcher updates", "")
@@ -167,21 +213,35 @@ func runLauncher(o launcherOptions) error {
 	// Reconcile Cowork/Code session sharing before any uninstall prompt (Windows only):
 	// repair a named instance that was wrongly pooled by an older build, then (only for the
 	// default instance) share with the official install via junctions into a neutral store.
+	// In list mode o.instance is the default one; launchInstance repeats this for
+	// whichever instance is started.
 	RepairSessionSharing(o.instance)
 	SetupSessionSharing(o.instance)
 
 	// Check for official Claude MSIX installation (Windows only)
 	checkMSIXAndPrompt(o.instance)
 
+	if o.list {
+		ui.SetRow(rowLaunch, status.Skipped, "Launching Claude", "from the instance list") // if shown
+		return nil
+	}
 	clearCaches(o.instance)
-
 	ui.SetRow(rowLaunch, status.Running, "Launching Claude", "")
-	if err := launchClaude(o); err != nil {
+	if err := launchClaude(o.instance, o.debug); err != nil {
 		ui.SetRow(rowLaunch, status.Failed, "Couldn't launch Claude", "")
 		return err
 	}
 	ui.SetRow(rowLaunch, status.Done, "Claude launched", "")
 	return nil
+}
+
+// launchInstance starts an instance from the instance list: the per-instance tail of
+// runLauncher (everything before it is shared by all instances and already done).
+func launchInstance(instance string) error {
+	RepairSessionSharing(instance) // idempotent; see runLauncher
+	SetupSessionSharing(instance)
+	clearCaches(instance)
+	return launchClaude(instance, false)
 }
 
 // runWorkerIfNeeded starts the worker when anything needs writing to the install (a
@@ -324,13 +384,13 @@ func clearCaches(instance string) {
 	}
 }
 
-func launchClaude(o launcherOptions) error {
+func launchClaude(instance string, debug bool) error {
 	claudePath := claudeExecutablePath()
-	cmd := exec.Command(claudePath, "--instance="+o.instance)
+	cmd := exec.Command(claudePath, "--instance="+instance)
 	cmd.Dir = filepath.Dir(claudePath)
-	fmt.Println("Launching Claude.")
+	fmt.Printf("Launching Claude (instance %q).\n", instance)
 
-	if o.debug {
+	if debug {
 		// Run Claude in this terminal to see its output.
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -348,54 +408,79 @@ func claudeInstalled() bool {
 }
 
 // firstRunSetup returns the setup screen for the first launch (or when asked for with
-// --show-setup), or nil once it has been shown, and always on macOS, where there's
-// nothing on it to choose. The checkboxes
-// start from what's already on disk, so shortcuts made with the old Toggle-*.bat
-// scripts are reflected; unchecking one removes it.
-func firstRunSetup(instance string, force bool) *gui.Setup {
-	setupDone := utils.LoadSettings().SetupDone
-	if !menuEntrySupported() || (setupDone && !force) {
+// --show-setup), or nil once it has been shown.
+func firstRunSetup(force bool) *gui.Setup {
+	if utils.LoadSettings().SetupDone && !force {
 		return nil
 	}
-	return &gui.Setup{
-		Title: "Welcome to the WebExtension Launcher",
-		Subtitle: []string{
-			"A couple of choices before the first launch.",
-			"You can change them later by running the launcher with --show-setup.",
-		},
-		Options: []gui.SetupOption{
+	return launcherSettings("Welcome to the WebExtension Launcher", []string{
+		"A couple of choices before the first launch.",
+		"You can change them later by running the launcher with --show-setup.",
+	})
+}
+
+// launcherSettings is the setup screen: the launcher's own menu and startup entries,
+// and whether it shows the instance list. The shortcut checkboxes start from what's
+// already on disk, so shortcuts made with the old Toggle-*.bat scripts are reflected;
+// unchecking one removes it. They're left out where there are no such shortcuts to
+// make (macOS). Instances' own entries are set from the list.
+func launcherSettings(title string, subtitle []string) *gui.Setup {
+	settings := utils.LoadSettings()
+	shortcuts := menuEntrySupported()
+	var options []gui.SetupOption
+	if shortcuts {
+		options = append(options,
 			// Suggested on the first run; reopened, it shows what's there, so Continue
 			// doesn't recreate an entry the user removed.
-			{Label: "Add to the applications menu", Checked: !setupDone || hasMenuEntry(instance)},
-			{Label: "Start when I log in", Checked: hasStartup(instance)},
-		},
+			gui.SetupOption{Label: "Add to the applications menu", Checked: !settings.SetupDone || hasMenuEntry(launcherEntry)},
+			gui.SetupOption{Label: "Start when I log in", Checked: hasStartup(launcherEntry)},
+		)
+	}
+	options = append(options, gui.SetupOption{
+		Label:   "Manage multiple instances (separate logins and data)",
+		Checked: settings.ManageInstances,
+	})
+	return &gui.Setup{
+		Title:    title,
+		Subtitle: subtitle,
+		Options:  options,
 		Apply: func(checked []bool) {
-			applyEntry := func(what string, want, have bool, add, remove func() error) {
-				var err error
-				switch {
-				case want: // rewrite even if it exists: it may point at an old launcher path
-					err = add()
-				case !want && have:
-					err = remove()
-				default:
-					return
-				}
-				if err != nil {
-					fmt.Printf("Warning: could not update the %s: %v\n", what, err)
-				}
+			if shortcuts {
+				applyShortcuts(launcherEntry, checked[0], checked[1])
 			}
-			applyEntry("applications menu entry", checked[0], hasMenuEntry(instance),
-				func() error { return addMenuEntry(instance) },
-				func() error { return removeMenuEntry(instance) })
-			applyEntry("startup entry", checked[1], hasStartup(instance),
-				func() error { return setStartup(instance, true) },
-				func() error { return setStartup(instance, false) })
-
-			settings := utils.LoadSettings()
-			settings.SetupDone = true
-			if err := utils.SaveSettings(settings); err != nil {
+			manage := checked[len(checked)-1]
+			err := utils.UpdateSettings(func(s *utils.Settings) {
+				s.SetupDone = true
+				s.ManageInstances = manage
+			})
+			if err != nil {
 				fmt.Printf("Warning: could not save settings: %v\n", err)
 			}
 		},
 	}
+}
+
+// applyShortcuts makes an entry's menu and startup shortcuts (see shortcuts.go) match
+// the given choices.
+func applyShortcuts(entry string, menu, startup bool) {
+	apply := func(what string, want, have bool, add, remove func() error) {
+		var err error
+		switch {
+		case want: // rewrite even if it exists: it may point at an old launcher path
+			err = add()
+		case have:
+			err = remove()
+		default:
+			return
+		}
+		if err != nil {
+			fmt.Printf("Warning: could not update the %s: %v\n", what, err)
+		}
+	}
+	apply("applications menu entry", menu, hasMenuEntry(entry),
+		func() error { return addMenuEntry(entry) },
+		func() error { return removeMenuEntry(entry) })
+	apply("startup entry", startup, hasStartup(entry),
+		func() error { return setStartup(entry, true) },
+		func() error { return setStartup(entry, false) })
 }

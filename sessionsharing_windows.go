@@ -43,7 +43,7 @@ func SetupSessionSharing(instanceName string) {
 	// Only the default instance shares sessions with the official install. Named instances
 	// stay isolated (RepairSessionSharing keeps them that way), so the single global store is
 	// only ever linked by {official, Claude-<default>}.
-	if instanceName != defaultInstanceName {
+	if instanceName != mainInstance {
 		return
 	}
 
@@ -91,7 +91,7 @@ func SetupSessionSharing(instanceName string) {
 // official install's folders too (otherwise those junctions are legitimate). The default
 // instance itself is left alone, since it is meant to be junctioned.
 func RepairSessionSharing(instanceName string) {
-	if instanceName == defaultInstanceName {
+	if instanceName == mainInstance {
 		return
 	}
 
@@ -158,7 +158,7 @@ func restoreRealFolder(link string) bool {
 // defaultInstanceIsSharing reports whether the default instance is currently set up to share
 // with the official install (its Cowork session folder is a junction).
 func defaultInstanceIsSharing(appData string) bool {
-	link := filepath.Join(appData, "Claude-"+defaultInstanceName, sharedSessionFolders[0])
+	link := filepath.Join(appData, "Claude-"+mainInstance, sharedSessionFolders[0])
 	_, err := os.Readlink(link)
 	return err == nil
 }

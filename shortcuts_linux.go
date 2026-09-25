@@ -30,12 +30,12 @@ func autostartDir() string { return filepath.Join(xdgDir("XDG_CONFIG_HOME", ".co
 // including the escape character _ itself, so distinct instances never share a file.
 var escapedFileChars = regexp.MustCompile(`[^A-Za-z0-9.-]`)
 
-// entryFile is the .desktop file name for an instance's menu/startup entry.
-func entryFile(instance string) string {
-	if instance == defaultInstanceName {
+// entryFile is the .desktop file name for an entry (see shortcuts.go).
+func entryFile(entry string) string {
+	if entry == launcherEntry {
 		return "claude-webext-launcher.desktop"
 	}
-	escaped := escapedFileChars.ReplaceAllStringFunc(instance, func(c string) string {
+	escaped := escapedFileChars.ReplaceAllStringFunc(entry, func(c string) string {
 		var b strings.Builder
 		for i := 0; i < len(c); i++ {
 			fmt.Fprintf(&b, "_%02x", c[i]) // every byte as _xx, so decoding is unambiguous
@@ -98,9 +98,10 @@ func writeLauncherEntry(path, instance string) error {
 }
 
 // writeLinkHandler writes the hidden claude:// handler entry, pointing at the patched
-// Claude with the default instance: a link opened while Claude runs is handed to the
-// running instance by Claude's single-instance lock. Called on every Linux launch;
-// it only writes when something changed.
+// Claude with the main instance: a link opened while Claude runs is handed to the
+// running instance by Claude's single-instance lock. Called on every Linux launch
+// (after migrateMainInstance, so it follows the main instance's current name); it
+// only writes when something changed.
 func writeLinkHandler() {
 	icon, err := iconPath()
 	if err != nil {
@@ -110,7 +111,7 @@ func writeLinkHandler() {
 		desktopField{"Type", "Application"},
 		desktopField{"Name", shortcutName},
 		desktopField{"NoDisplay", "true"},
-		desktopField{"Exec", desktopExec("%U", claudeExecutablePath(), "--instance="+defaultInstanceName)},
+		desktopField{"Exec", desktopExec("%U", claudeExecutablePath(), "--instance="+mainInstance)},
 		desktopField{"Icon", icon},
 		desktopField{"Terminal", "false"},
 		desktopField{"MimeType", "x-scheme-handler/claude;"},
@@ -167,16 +168,4 @@ func refreshDesktopDatabase() {
 	if _, err := exec.LookPath("update-desktop-database"); err == nil {
 		exec.Command("update-desktop-database", applicationsDir()).Run()
 	}
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
-func removeIfExists(path string) error {
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
 }

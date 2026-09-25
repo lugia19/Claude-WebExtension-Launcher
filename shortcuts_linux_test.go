@@ -3,7 +3,7 @@ package main
 import "testing"
 
 func TestEntryFileUnique(t *testing.T) {
-	names := []string{defaultInstanceName, "work", "work one", "work_one", "work_20one", "wörk", "a/b", "a_2fb"}
+	names := []string{launcherEntry, mainInstanceName, "work", "work one", "work_one", "work_20one", "wörk", "a/b", "a_2fb"}
 	seen := map[string]string{}
 	for _, name := range names {
 		file := entryFile(name)

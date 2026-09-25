@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/gogpu/gg"
@@ -17,6 +18,7 @@ import (
 	"github.com/gogpu/ui/app"
 	"github.com/gogpu/ui/desktop"
 	"github.com/gogpu/ui/theme/material3"
+	"github.com/gogpu/ui/widget"
 
 	"claude-webext-patcher/utils"
 )
@@ -26,6 +28,92 @@ const (
 	windowHeight = 380
 	countdown    = 5 // seconds the window stays up after Claude is launched
 )
+
+// window holds what the screens need to switch between each other.
+type window struct {
+	gogpuApp *gogpu.App
+	uiApp    *app.App
+	s        *Status
+
+	mu     sync.Mutex
+	queued []func()
+	bg     sync.WaitGroup // background jobs Run waits for (see background)
+
+	// Instance list state (instances.go).
+	inst      *Instances
+	notes     map[string]*text // the current list's per-row notes, by instance name
+	note      map[string]string
+	launching map[string]int // launches still in progress, per instance (not deletable yet)
+}
+
+// runOnUI runs fn on the UI thread, where changing the root or focus is safe (gogpu/ui
+// has no way to post work there itself). fn runs at the start of the next frame;
+// calls queued before the window loop starts wait for it.
+func (w *window) runOnUI(fn func()) {
+	w.mu.Lock()
+	w.queued = append(w.queued, fn)
+	w.mu.Unlock()
+	w.gogpuApp.RequestRedraw() // wakes the loop, which then calls drain
+}
+
+// background runs fn on its own goroutine, and Run waits for it before returning:
+// closing the window mustn't cut a launch, a delete or a settings save short (the
+// process exits once Run returns).
+func (w *window) background(fn func()) {
+	w.bg.Add(1)
+	go func() {
+		defer w.bg.Done()
+		fn()
+	}()
+}
+
+// setRoot switches the window to another screen. UI thread only.
+//
+// On Linux (GLES), gogpu/ui sometimes shows a stale picture after a switch (an
+// earlier screen) until something on the new one repaints. So once the new screen has
+// been drawn, everything on it is marked for redrawing, like a hover would. Doing it
+// in the same frame is too early: it has to come after that frame's draw.
+func (w *window) setRoot(root widget.Widget) {
+	w.uiApp.SetRoot(root)
+	w.runOnUI(func() { // start of the next frame: still before this one's draw
+		w.runOnUI(func() { // the frame after: the switch has been drawn
+			if w.uiApp.Window().Root() == root {
+				markTreeForRedraw(root)
+			}
+		})
+	})
+}
+
+// markTreeForRedraw marks every widget in the tree as needing a repaint, and drops
+// the cached pictures of those that keep one (repaint boundaries).
+func markTreeForRedraw(wd widget.Widget) {
+	type redrawable interface{ SetNeedsRedraw(bool) }
+	type sceneCached interface{ InvalidateScene() }
+	if r, ok := wd.(redrawable); ok {
+		r.SetNeedsRedraw(true)
+	}
+	if c, ok := wd.(sceneCached); ok {
+		c.InvalidateScene()
+	}
+	for _, child := range wd.Children() {
+		markTreeForRedraw(child)
+	}
+}
+
+// drain runs the queued calls; it's gogpu's OnUpdate, which runs on the UI thread
+// once per frame, before drawing.
+func (w *window) drain() {
+	w.mu.Lock()
+	fns := w.queued
+	w.queued = nil
+	w.mu.Unlock()
+	for _, fn := range fns {
+		fn()
+	}
+	if len(fns) > 0 {
+		w.gogpuApp.RequestRedraw()
+	}
+}
 
 // Run shows the window with the given checklist rows and runs work on another
 // goroutine; call it from the main goroutine. When work succeeds the window counts
@@ -38,7 +126,11 @@ const (
 // on the setup screen ends the launch without doing anything. If the window can't
 // open, setup is skipped (Apply never runs, so it's offered again next time) and work
 // runs as usual.
-func Run(title string, rows []Row, logPath string, setup *Setup, work func(s *Status) error) error {
+//
+// With non-nil instances that are Enabled, a successful work is followed by the
+// instance list instead of the countdown; the window then stays until the user closes
+// it. If the window can't open, instances.Headless is launched instead.
+func Run(title string, rows []Row, logPath string, setup *Setup, instances *Instances, work func(s *Status) error) error {
 	// gogpu logs through slog; keep it out of the user's way (it goes to the log file,
 	// since stdout/stderr are redirected there), and quiet unless something's wrong.
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
@@ -62,13 +154,19 @@ func Run(title string, rows []Row, logPath string, setup *Setup, work func(s *St
 		app.WithEventSource(gogpuApp.EventSource()),
 		app.WithTheme(material3.NewDark(accent).AsTheme()),
 	)
+	w := &window{gogpuApp: gogpuApp, uiApp: uiApp, s: s, inst: instances}
+	gogpuApp.OnUpdate(func(float64) { w.drain() })
+
 	checklist := s.build()
 	s.hideButtons()
 	setupDone := make(chan []bool, 1)
 	if setup != nil {
-		uiApp.SetRoot(buildSetup(setup, uiApp, checklist, setupDone))
+		w.setRoot(buildSetup(setup, "Continue", func(checked []bool) {
+			setupDone <- checked
+			w.setRoot(checklist)
+		}, nil))
 	} else {
-		uiApp.SetRoot(checklist)
+		w.setRoot(checklist)
 	}
 
 	var result error
@@ -86,9 +184,14 @@ func Run(title string, rows []Row, logPath string, setup *Setup, work func(s *St
 			}
 		}
 		result = work(s)
-		if result != nil {
+		switch {
+		case result != nil:
 			s.showError(result)
-		} else {
+		case instances != nil && instances.Enabled():
+			w.runOnUI(w.showList)
+			<-s.closed // the user closes the window when done
+			return
+		default:
 			s.countDown(countdown)
 		}
 		quit(gogpuApp, s.closed)
@@ -97,12 +200,16 @@ func Run(title string, rows []Row, logPath string, setup *Setup, work func(s *St
 	windowErr := desktop.Run(gogpuApp, uiApp)
 	s.markClosed()
 	<-finished // also covers the user closing the window while work is still running
+	w.bg.Wait()
 
 	if windowErr != nil {
+		fmt.Printf("Window unavailable (%v); ran without it\n", windowErr)
 		if skippedWork {
 			result = work(s)
 		}
-		fmt.Printf("Window unavailable (%v); ran without it\n", windowErr)
+		if result == nil && instances != nil && instances.Enabled() {
+			result = instances.Launch(instances.Headless)
+		}
 		if result != nil {
 			utils.ShowErrorDialog(title, fmt.Sprintf("%v\n\nDetails are in the log:\n%s", result, logPath))
 		}

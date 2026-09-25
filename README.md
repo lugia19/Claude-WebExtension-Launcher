@@ -9,15 +9,25 @@ A custom installer for Claude Desktop that includes built-in extensions (and the
 - This project is neither affiliated with nor endorsed by Anthropic
 - You are responsible for ensuring your use complies with all applicable terms and agreements
 
-## Multi-instance (new)
+## Multi-instance
 
-You can now run multiple desktop client instances by just launching the client with --instance [name], eg --instance work.
-Useful if you want to have multiple windows open, or if you have multiple accounts.
+You can run several copies of the client side by side, each with its own login, settings and sessions. Useful if you want multiple windows open, or if you have multiple accounts.
+
+Turn on **Manage multiple instances** on the setup screen (shown on first launch, or with `--show-setup`). After its usual checks, the launcher then shows a list of your instances instead of launching straight away:
+- **Launch** starts an instance. The list stays open, so you can start several.
+- **Add instance** creates a new one.
+- **The cog** gives each instance its own applications-menu and startup entries (Windows and Linux), which launch it directly.
+- **The bin** removes an instance's data folder and shortcuts.
+- **Launcher settings** reopens the setup screen.
+
+The instance you've been using all along is **Main**. Its data folder was called `Claude-modified` before; the launcher renames it to `Claude-Main` the first time it runs while that instance is closed. Instances you already had are added to the list automatically.
+
+The launcher's own menu entry (plain "Claude Desktop (Extended)") opens the list. You can also skip the list and start an instance directly with `--instance <name>` (e.g. `--instance work`), which is what an instance's own entries ("Claude (work)") do.
 
 ## Known limitations
 
 ### Multi-instance login requires using a code
-When using `--instance` to run additional instances, those instances are not registered to handle Claude's magic links. When logging in to a non-default instance, use the **"Use a login code instead"** option to log in with a one-time code.
+Instances other than Main are not registered to handle Claude's magic links. When logging in to another instance, use the **"Use a login code instead"** option to log in with a one-time code.
 
 ### Windows requires admin perms
 This is to make Cowork function. The app will block cowork if the application is not inside of C:\Program Files\WindowsApps, which requires admin permissions to be written to and read from.
@@ -83,7 +93,7 @@ Download the latest installer from [Releases](https://github.com/lugia19/Claude-
 On Linux, pick the `linux-amd64` or `linux-arm64` zip, extract it and run `Claude_WebExtension_Launcher`. The binary can live anywhere; the modified Claude and its extensions are kept in `~/.local/share/claude-webext-launcher`.
 
 ### Applications menu and startup
-On first launch (Windows and Linux) the launcher asks whether to add itself to the applications menu (the Start Menu on Windows) and whether to start when you log in. To change your mind later, run it with `--show-setup` to get the same screen again. Add `--instance <name>` to manage a separate entry for that instance.
+On first launch (Windows and Linux) the launcher asks whether to add itself to the applications menu (the Start Menu on Windows) and whether to start when you log in. To change your mind later, run it with `--show-setup` to get the same screen again. Instances can have their own entries too, from the cog in the instance list (see [Multi-instance](#multi-instance)).
 
 On macOS, put the app in Applications and use System Settings → General → Login Items instead.
 

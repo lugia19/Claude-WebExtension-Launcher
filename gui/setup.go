@@ -1,21 +1,21 @@
 package gui
 
 import (
-	"github.com/gogpu/ui/app"
 	"github.com/gogpu/ui/core/button"
 	"github.com/gogpu/ui/core/checkbox"
 	"github.com/gogpu/ui/primitives"
 	"github.com/gogpu/ui/widget"
 )
 
-// Setup is the first-run screen: a few checkboxes and Continue. Run shows it before
-// the checklist when given one.
+// Setup is a screen of checkboxes: the first-run setup (Run shows it before the
+// checklist) and an instance's settings (from the instance list).
 type Setup struct {
 	Title    string
 	Subtitle []string // one text line each
 	Options  []SetupOption
-	// Apply receives the final checkbox states (in Options order) once Continue is
-	// clicked. It runs on the work goroutine, before the launcher's work starts.
+	// Apply receives the final checkbox states (in Options order) once the screen is
+	// confirmed. It runs on a background goroutine: for the first-run setup, before the
+	// launcher's work starts.
 	Apply func(checked []bool)
 }
 
@@ -25,11 +25,10 @@ type SetupOption struct {
 	Checked bool // initial state
 }
 
-// buildSetup returns the setup screen. Continue hands the choices to done and swaps
-// the window over to the checklist. The swap happens in the click handler, which
-// runs on the UI thread: gogpu/ui has no way to post work to that thread, and
-// replacing the root from any other goroutine isn't safe.
-func buildSetup(setup *Setup, uiApp *app.App, checklist widget.Widget, done chan<- []bool) widget.Widget {
+// buildSetup returns a setup screen: the checkboxes, a confirm button that hands the
+// final states to onConfirm, and (with a non-nil onCancel) a Back button. Both run in
+// the click handler, on the UI thread, so they may switch screens directly.
+func buildSetup(setup *Setup, confirm string, onConfirm func(checked []bool), onCancel func()) widget.Widget {
 	checked := make([]bool, len(setup.Options))
 	subtitle := make([]widget.Widget, len(setup.Subtitle))
 	for i, line := range setup.Subtitle {
@@ -51,24 +50,33 @@ func buildSetup(setup *Setup, uiApp *app.App, checklist widget.Widget, done chan
 	}
 
 	sent := false
-	children = append(children, primitives.HBox(button.New(
-		button.TextOpt("Continue"),
-		button.BackgroundOpt(widget.Hex(0xFFFFFF)), // the theme's label color is already dark
-		button.OnClick(func() {
-			if sent {
-				return
-			}
-			sent = true
-			done <- append([]bool(nil), checked...)
-			uiApp.SetRoot(checklist)
-		}),
-	)))
+	buttons := []widget.Widget{primaryButton(confirm, func() {
+		if sent {
+			return
+		}
+		sent = true
+		onConfirm(append([]bool(nil), checked...))
+	})}
+	if onCancel != nil {
+		buttons = append(buttons, button.New(button.TextOpt("Back"), button.OnClick(onCancel)))
+	}
+	children = append(children, primitives.HBox(buttons...).Gap(8))
 
 	return primitives.VBox(children...).
 		Gap(14).
 		CrossAlign(primitives.CrossAxisStretch).
 		Padding(24).
 		Background(background)
+}
+
+// primaryButton is the screen's main action: white, since the default painter's
+// label color is already dark (the other buttons keep its grey).
+func primaryButton(label string, onClick func()) widget.Widget {
+	return button.New(
+		button.TextOpt(label),
+		button.BackgroundOpt(widget.Hex(0xFFFFFF)),
+		button.OnClick(onClick),
+	)
 }
 
 // themedCheckbox draws checkboxes in the window's colors. The checkbox widget only

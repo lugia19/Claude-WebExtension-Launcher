@@ -3,10 +3,14 @@
 package utils
 
 import (
+	"runtime"
 	"syscall"
 	"time"
 	"unsafe"
 )
+
+// SettingsLockName guards settings.json's read-modify-write across launchers.
+const SettingsLockName = `Local\ClaudeWebExtLauncher-Settings`
 
 // Reuse the kernel32 handle and WaitForSingleObject/CloseHandle procs declared in
 // admin_windows.go (same package); add the mutex-specific entry points here.
@@ -48,18 +52,25 @@ func AcquirePatchLock(name string, timeout time.Duration) (*PatchLock, bool) {
 		ms = uintptr(timeout.Milliseconds())
 	}
 
+	// A mutex is owned by the OS thread that acquired it, and only that thread can
+	// release it; pin this goroutine to its thread until Release (which must be called
+	// from the same goroutine), or Go could move it and ReleaseMutex would fail,
+	// leaving the mutex held.
+	runtime.LockOSThread()
 	ret, _, _ := procWaitForSingleObject.Call(handle, ms)
 	switch uint32(ret) {
 	case waitObject0, waitAbandoned:
 		return &PatchLock{handle: handle}, true
 	default:
 		// Timed out or failed: we own the handle but not the lock, so close it.
+		runtime.UnlockOSThread()
 		procCloseHandle.Call(handle)
 		return nil, false
 	}
 }
 
-// Release releases the mutex and closes its handle.
+// Release releases the mutex and closes its handle. Call it from the goroutine that
+// acquired the lock (see AcquirePatchLock).
 func (l *PatchLock) Release() {
 	if l == nil || l.handle == 0 {
 		return
@@ -67,4 +78,5 @@ func (l *PatchLock) Release() {
 	procReleaseMutex.Call(l.handle)
 	procCloseHandle.Call(l.handle)
 	l.handle = 0
+	runtime.UnlockOSThread()
 }
