@@ -4,12 +4,15 @@ setlocal
 :: Uninstall.bat - Removes the patched Claude WebExtension Launcher installation
 
 set "InstallDir=%ProgramFiles%\WindowsApps\ClaudeWebExtLauncher"
+set "LauncherDir=%LOCALAPPDATA%\ClaudeWebExtLauncher"
 
 :: If called with ELEVATED arg, skip straight to deletion
 if "%~1"=="ELEVATED" goto DoUninstall
 
-if not exist "%InstallDir%" (
-    echo Nothing to uninstall - install directory does not exist.
+:: The launcher installs itself before it installs Claude, so either can exist alone
+:: (e.g. the Claude install was cancelled).
+if not exist "%InstallDir%" if not exist "%LauncherDir%\Claude_WebExtension_Launcher.exe" (
+    echo Nothing to uninstall - neither the launcher nor the patched Claude is installed.
     pause
     exit /b 0
 )
@@ -17,7 +20,7 @@ if not exist "%InstallDir%" (
 echo.
 echo === Claude WebExtension Launcher - Uninstall ===
 echo.
-echo This will remove the patched Claude Desktop installation at:
+echo This will remove the launcher, its shortcuts, and the patched Claude Desktop at:
 echo   %InstallDir%
 echo.
 echo Your conversation data will NOT be deleted.
@@ -42,8 +45,16 @@ for %%D in ("%APPDATA%\Microsoft\Windows\Start Menu\Programs" "%APPDATA%\Microso
 :: Remove the installed launcher (it installs itself here on first run). Its logs and
 :: settings stay, like the conversation data.
 echo Removing the installed launcher...
-del /q "%LOCALAPPDATA%\ClaudeWebExtLauncher\Claude_WebExtension_Launcher.exe" >nul 2>&1
-del /q "%LOCALAPPDATA%\ClaudeWebExtLauncher\launcher-version.txt" >nul 2>&1
+del /q "%LauncherDir%\Claude_WebExtension_Launcher.exe" >nul 2>&1
+del /q "%LauncherDir%\launcher-version.txt" >nul 2>&1
+
+:: The rest needs admin rights, and only applies if Claude was installed.
+if not exist "%InstallDir%" (
+    echo.
+    echo Uninstall complete.
+    pause
+    exit /b 0
+)
 
 :: Self-elevate
 echo Requesting administrator privileges...
