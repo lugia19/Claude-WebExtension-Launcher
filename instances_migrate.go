@@ -23,6 +23,9 @@ func migrateMainInstance() {
 // folder is still in place.
 func migrateFolder(oldDir, newDir string, running func() bool) string {
 	if !dirExists(oldDir) {
+		// Already migrated (or never existed), but the companion folder's rename may
+		// have failed last time.
+		moveCompanion(oldDir, newDir)
 		return mainInstanceName
 	}
 	if dirExists(newDir) {
@@ -38,13 +41,23 @@ func migrateFolder(oldDir, newDir string, running func() bool) string {
 		return legacyMainInstanceName
 	}
 	fmt.Printf("Renamed the main instance's data folder: %s -> %s\n", oldDir, newDir)
-	// Claude keeps some config next to its data folder, in "<folder>-3p"; it moves too.
-	if dirExists(oldDir+companionSuffix) && !dirExists(newDir+companionSuffix) {
-		if err := os.Rename(oldDir+companionSuffix, newDir+companionSuffix); err != nil {
-			fmt.Printf("Warning: could not rename %s: %v\n", oldDir+companionSuffix, err)
-		}
-	}
+	moveCompanion(oldDir, newDir)
 	return mainInstanceName
+}
+
+// moveCompanion moves the companion folder Claude keeps next to a data folder
+// ("<folder>-3p") along with it, once the data folder itself has moved. A failure is
+// retried on the next run (migrateFolder calls this again while the old one exists).
+func moveCompanion(oldDir, newDir string) {
+	from, to := oldDir+companionSuffix, newDir+companionSuffix
+	if !dirExists(from) || dirExists(to) {
+		return
+	}
+	if err := os.Rename(from, to); err != nil {
+		fmt.Printf("Warning: could not rename %s to %s (%v); trying again next time\n", from, to, err)
+		return
+	}
+	fmt.Printf("Renamed %s -> %s\n", from, to)
 }
 
 // companionSuffix names the folder Claude keeps next to an instance's data folder

@@ -33,6 +33,15 @@ func TestMigrateFolder(t *testing.T) {
 			t.Fatal("the -3p companion folder wasn't moved")
 		}
 	})
+	t.Run("companion left behind last time", func(t *testing.T) {
+		oldDir, newDir := setup(t, "Claude-Main", "Claude-modified-3p")
+		if got := migrateFolder(oldDir, newDir, notRunning); got != mainInstanceName {
+			t.Fatalf("got %q", got)
+		}
+		if dirExists(oldDir+companionSuffix) || !dirExists(newDir+companionSuffix) {
+			t.Fatal("the -3p companion folder wasn't moved on the retry")
+		}
+	})
 	t.Run("nothing to migrate", func(t *testing.T) {
 		oldDir, newDir := setup(t)
 		if got := migrateFolder(oldDir, newDir, notRunning); got != mainInstanceName || dirExists(newDir) {

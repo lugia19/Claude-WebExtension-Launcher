@@ -132,7 +132,9 @@ func deleteInstance(name string) error {
 	if err := os.RemoveAll(claudeUserDataDir(name)); err != nil {
 		return fmt.Errorf("couldn't delete its data folder: %w", err)
 	}
-	os.RemoveAll(claudeUserDataDir(name) + companionSuffix)
+	if err := os.RemoveAll(claudeUserDataDir(name) + companionSuffix); err != nil {
+		return fmt.Errorf("couldn't delete its %s folder: %w", companionSuffix, err)
+	}
 	logPath := utils.LogPath(name, mainInstanceName)
 	os.Remove(logPath)
 	os.Remove(strings.TrimSuffix(logPath, ".log") + ".previous.log")
