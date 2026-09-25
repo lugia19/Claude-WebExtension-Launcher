@@ -199,47 +199,21 @@ func GetLatestVersion() (string, string, error) {
 	return "", "", fmt.Errorf("no releases available in macOS manifest")
 }
 
+// Prefetch downloads the Claude zip and returns its path.
+func Prefetch(version, url string) (string, error) {
+	path := utils.ResolvePath(fmt.Sprintf("Claude-%s-%d.zip", version, os.Getpid()))
+	if err := downloadFile(url, path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// downloadAndExtract extracts the zip the launcher downloaded. The worker runs as the
+// same user, so it can use the file as-is.
 func downloadAndExtract(version, downloadURL string) error {
-	newVersionZipName := fmt.Sprintf("Claude-%s.zip", version)
-
-	// Define the download path based on whether we keep files or use temp
-	var newVersionDownloadPath string
-	if KeepDownloadedArchive {
-		newVersionDownloadPath = utils.ResolvePath(newVersionZipName)
-	} else {
-		newVersionDownloadPath = utils.ResolvePath(newVersionZipName + ".tmp")
-	}
-
-	// Check if file already exists when KeepDownloadedArchive is enabled
-	fileExists := false
-	fullPath := utils.ResolvePath(newVersionZipName)
-	if _, err := os.Stat(fullPath); err == nil {
-		fileExists = true
-	}
-
-	if KeepDownloadedArchive && fileExists {
-		fmt.Printf("Using existing file: %s\n", newVersionZipName)
-	} else {
-		// Download if file doesn't exist or if we're not keeping files
-		fmt.Printf("Downloading from: %s\n", downloadURL)
-
-		resp, err := http.Get(downloadURL)
-		if err != nil {
-			return fmt.Errorf("downloading: %v", err)
-		}
-		defer resp.Body.Close()
-
-		// Use the already defined download path
-		outFile, err := os.Create(newVersionDownloadPath)
-		if err != nil {
-			return fmt.Errorf("creating file: %v", err)
-		}
-		_, err = io.Copy(outFile, resp.Body)
-		outFile.Close()
-		if err != nil {
-			return fmt.Errorf("saving file: %v", err)
-		}
-		fmt.Printf("Downloaded: %s\n", newVersionDownloadPath)
+	newVersionDownloadPath := PrefetchedPackage
+	if newVersionDownloadPath == "" || PrefetchedVersion != version {
+		return fmt.Errorf("no downloaded package for Claude %s", version)
 	}
 
 	// Extract
@@ -350,13 +324,6 @@ func downloadAndExtract(version, downloadURL string) error {
 		fmt.Printf("Warning: Could not remove ShipIt: %v\n", err)
 	} else {
 		fmt.Println("Removed ShipIt to prevent self-updates")
-	}
-
-	// Delete the archive file only if KeepDownloadedArchive is false
-	if !KeepDownloadedArchive {
-		os.Remove(newVersionDownloadPath)
-	} else {
-		fmt.Printf("Keeping archive file: %s\n", newVersionZipName)
 	}
 
 	return nil

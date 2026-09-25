@@ -67,28 +67,30 @@ func GetLatestVersion() (string, string, error) {
 	return pkg.Version, url, nil
 }
 
-func downloadAndExtract(version, downloadURL string) error {
-	expectedSHA := debSHA256ByURL[downloadURL]
+// Prefetch downloads the Claude .deb and verifies it against the SHA-256 the Packages
+// index published (GetLatestVersion must have run in this process). Returns its path.
+func Prefetch(version, url string) (string, error) {
+	expectedSHA := debSHA256ByURL[url]
 	if expectedSHA == "" {
-		return fmt.Errorf("no published SHA-256 for %s; refusing to install", downloadURL)
+		return "", fmt.Errorf("no published SHA-256 for %s; refusing to install", url)
 	}
-
-	debName := fmt.Sprintf("Claude-%s.deb", version)
-	debPath := utils.ResolvePath(debName)
-	if !KeepDownloadedArchive {
-		debPath += ".tmp"
+	path := utils.ResolvePath(fmt.Sprintf("Claude-%s-%d.deb", version, os.Getpid()))
+	if err := downloadFile(url, path); err != nil {
+		return "", err
 	}
-
-	if _, err := os.Stat(debPath); KeepDownloadedArchive && err == nil {
-		fmt.Printf("Using existing file: %s\n", debName)
-	} else if err := downloadFile(downloadURL, debPath); err != nil {
-		os.Remove(debPath)
-		return err
+	if err := verifySHA256(path, expectedSHA); err != nil {
+		os.Remove(path)
+		return "", err
 	}
+	return path, nil
+}
 
-	if err := verifySHA256(debPath, expectedSHA); err != nil {
-		os.Remove(debPath)
-		return err
+// downloadAndExtract extracts the .deb the launcher downloaded and verified. The
+// worker runs as the same user, so it can use the file as-is.
+func downloadAndExtract(version, downloadURL string) error {
+	debPath := PrefetchedPackage
+	if debPath == "" || PrefetchedVersion != version {
+		return fmt.Errorf("no downloaded package for Claude %s", version)
 	}
 
 	fmt.Println("Extracting...")
@@ -102,38 +104,6 @@ func downloadAndExtract(version, downloadURL string) error {
 	if _, err := os.Stat(filepath.Join(appResourcesDir, "app.asar")); err != nil {
 		return fmt.Errorf("extracted .deb has no resources/app.asar (layout changed?)")
 	}
-
-	if !KeepDownloadedArchive {
-		os.Remove(debPath)
-	} else {
-		fmt.Printf("Keeping archive file: %s\n", debName)
-	}
-	return nil
-}
-
-func downloadFile(url, dst string) error {
-	fmt.Printf("Downloading from: %s\n", url)
-	resp, err := http.Get(url)
-	if err != nil {
-		return fmt.Errorf("downloading: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("downloading: HTTP %d", resp.StatusCode)
-	}
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return fmt.Errorf("creating file: %v", err)
-	}
-	_, err = io.Copy(out, resp.Body)
-	if cerr := out.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return fmt.Errorf("saving file: %v", err)
-	}
-	fmt.Printf("Downloaded: %s\n", dst)
 	return nil
 }
 

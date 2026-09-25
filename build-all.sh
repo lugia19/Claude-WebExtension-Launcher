@@ -153,7 +153,7 @@ fi
 # Build 3: Windows (AMD64)
 echo ""
 echo "3. Building Windows (AMD64)..."
-GOOS=windows GOARCH=amd64 go build -o "$APP_NAME.exe"
+GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui" -o "$APP_NAME.exe"
 
 if [ -f "$APP_NAME.exe" ]; then
     echo "  Creating Windows distribution zip..."

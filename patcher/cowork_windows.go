@@ -3,9 +3,9 @@
 package patcher
 
 import (
+	"claude-webext-patcher/utils"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 )
 
@@ -31,7 +31,7 @@ func coworkSvcExePath() string {
 // service does not require administrator privileges, so this is safe to call from the
 // unelevated launcher (e.g. checkNeedsAdmin).
 func CoworkServiceExists() bool {
-	return exec.Command("sc.exe", "query", coworkServiceName).Run() == nil
+	return utils.Command("sc.exe", "query", coworkServiceName).Run() == nil
 }
 
 // RegisterCoworkService registers CoworkVMService if it is not already present.
@@ -92,8 +92,8 @@ func RegisterCoworkService() error {
 // cowork-svc.exe. Idempotent: stable rule names are deleted (ignoring "no rules match")
 // before being re-added.
 func configureCoworkFirewall(binPath string) error {
-	exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+coworkFirewallIn).Run()
-	exec.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+coworkFirewallOut).Run()
+	utils.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+coworkFirewallIn).Run()
+	utils.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+coworkFirewallOut).Run()
 
 	rules := []struct {
 		name string
@@ -103,7 +103,7 @@ func configureCoworkFirewall(binPath string) error {
 		{coworkFirewallOut, "out"},
 	}
 	for _, r := range rules {
-		cmd := exec.Command("netsh", "advfirewall", "firewall", "add", "rule",
+		cmd := utils.Command("netsh", "advfirewall", "firewall", "add", "rule",
 			"name="+r.name, "dir="+r.dir, "action=allow",
 			"program="+binPath, "protocol=TCP", "profile=any", "enable=yes")
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -115,6 +115,6 @@ func configureCoworkFirewall(binPath string) error {
 
 // runSC runs an sc.exe command and returns its combined output.
 func runSC(args ...string) (string, error) {
-	out, err := exec.Command("sc.exe", args...).CombinedOutput()
+	out, err := utils.Command("sc.exe", args...).CombinedOutput()
 	return string(out), err
 }

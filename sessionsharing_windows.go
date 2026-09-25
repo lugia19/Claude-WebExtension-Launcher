@@ -8,7 +8,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -239,7 +238,7 @@ func makeJunction(link, target string) error {
 	if err := os.MkdirAll(filepath.Dir(link), 0755); err != nil {
 		return err
 	}
-	out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
+	out, err := utils.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("mklink /J %q %q failed: %v\n%s", link, target, err, out)
 	}

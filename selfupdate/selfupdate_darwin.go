@@ -99,27 +99,10 @@ func installUpdate(tempDir, tempZip string) error {
 	// Show in Finder
 	exec.Command("open", "-R", downloadPath).Run()
 
-	fmt.Println("\n" + strings.Repeat("=", 60))
-	fmt.Println(" UPDATE DOWNLOADED")
-	fmt.Println(strings.Repeat("=", 60))
-	fmt.Println("\nTo complete the update:")
-	fmt.Println("1. Quit this app (Cmd+Q or just press Enter below)")
-
-	if downloadedAppName != baseAppName+".app" {
-		fmt.Printf("2. Drag '%s' from Downloads to Applications\n", strings.TrimSuffix(downloadedAppName, ".app"))
-		fmt.Println("   (It will be renamed when replacing the old app)")
-	} else {
-		fmt.Println("2. Drag 'Claude_WebExtension_Launcher' from Downloads to Applications")
-		fmt.Println("   (Replace the old one when prompted)")
-	}
-
-	fmt.Println("3. Launch the updated app")
-	fmt.Println("\n Downloads folder is now open in Finder")
-	fmt.Println(strings.Repeat("=", 60))
-
-	// Wait for user to press Enter
-	fmt.Print("\nPress Enter to exit and complete the update...")
-	fmt.Scanln()
+	how := fmt.Sprintf("Drag '%s' from Downloads (now open in Finder) to Applications, "+
+		"replacing the old one, then launch it again.", strings.TrimSuffix(downloadedAppName, ".app"))
+	fmt.Println("Launcher update downloaded. " + how)
+	Notify("Launcher update downloaded", how)
 
 	os.Exit(0)
 	return nil

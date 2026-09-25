@@ -24,7 +24,7 @@ if (!(Test-Path ".\builds")) {
 Write-Host "`nBuilding for Windows..." -ForegroundColor Cyan
 $env:GOOS = "windows"
 $env:GOARCH = "amd64"
-& go build -o ".\builds\$APP_NAME.exe"
+& go build -ldflags "-H=windowsgui" -o ".\builds\$APP_NAME.exe"
 
 if (Test-Path ".\builds\$APP_NAME.exe") {
     # Add icon if rcedit exists

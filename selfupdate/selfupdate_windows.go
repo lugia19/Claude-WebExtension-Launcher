@@ -3,6 +3,7 @@
 package selfupdate
 
 import (
+	"claude-webext-patcher/utils"
 	"fmt"
 	"os"
 	"os/exec"
@@ -42,7 +43,7 @@ func finishUpdateIfNeeded(exePath string) {
 		// to the default instance.
 		// Need to quote the path for cmd /c start to handle spaces
 		startArgs := append([]string{"/c", "start", "Claude Desktop (Extended)", originalExe}, os.Args[1:]...)
-		cmd := exec.Command("cmd", startArgs...)
+		cmd := utils.Command("cmd", startArgs...)
 		cmd.Start()
 
 		os.Exit(0)
