@@ -41,8 +41,9 @@ function Create-MacOSBundle {
         [string]$MinimumOS
     )
     
-    $archSuffix = if ($Architecture -eq "arm64") { "-arm64" } else { "" }
-    $appBundle = ".\builds\$APP_NAME$archSuffix.app"
+    # Each architecture in its own folder: the bundle must be named plainly
+    # ($APP_NAME.app), since the launcher installs and self-updates by that name.
+    $appBundle = ".\builds\macos-$Architecture\$APP_NAME.app"
     
     Write-Host "Creating app bundle for $Architecture..."
 
@@ -232,16 +233,15 @@ if ($intelBundle -and (Test-Path $intelBundle)) {
     $zipName = "$APP_NAME-$VERSION-macos-amd64.zip"
     
     # Copy uninstall script alongside the app bundle
-    Copy-Item ".\resources\Uninstall.command" ".\builds\Uninstall.command"
+    Copy-Item ".\resources\Uninstall.command" ".\builds\macos-amd64\Uninstall.command"
 
     # Set executable bits and create zip
-    wsl sh -c "cd '$currentDirWSL/builds' && chmod +x '$bundleName/Contents/MacOS/$APP_NAME' && chmod +x 'Uninstall.command' && zip -r '$zipName' '$bundleName' 'Uninstall.command'"
+    wsl sh -c "cd '$currentDirWSL/builds/macos-amd64' && chmod +x '$bundleName/Contents/MacOS/$APP_NAME' && chmod +x 'Uninstall.command' && zip -r '../$zipName' '$bundleName' 'Uninstall.command'"
 
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Created: builds\$zipName" -ForegroundColor Green
     }
-    Remove-Item -Recurse -Force $intelBundle
-    Remove-Item ".\builds\Uninstall.command" -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force ".\builds\macos-amd64"
 }
 
 # macOS ARM64 zip
@@ -250,16 +250,15 @@ if ($arm64Bundle -and (Test-Path $arm64Bundle)) {
     $zipName = "$APP_NAME-$VERSION-macos-arm64.zip"
 
     # Copy uninstall script alongside the app bundle
-    Copy-Item ".\resources\Uninstall.command" ".\builds\Uninstall.command"
+    Copy-Item ".\resources\Uninstall.command" ".\builds\macos-arm64\Uninstall.command"
 
     # Set executable bits and create zip
-    wsl sh -c "cd '$currentDirWSL/builds' && chmod +x '$bundleName/Contents/MacOS/$APP_NAME' && chmod +x 'Uninstall.command' && zip -r '$zipName' '$bundleName' 'Uninstall.command'"
+    wsl sh -c "cd '$currentDirWSL/builds/macos-arm64' && chmod +x '$bundleName/Contents/MacOS/$APP_NAME' && chmod +x 'Uninstall.command' && zip -r '../$zipName' '$bundleName' 'Uninstall.command'"
 
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Created: builds\$zipName" -ForegroundColor Green
     }
-    Remove-Item -Recurse -Force $arm64Bundle
-    Remove-Item ".\builds\Uninstall.command" -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force ".\builds\macos-arm64"
 }
 
 # Linux zips (the binary is renamed to the plain app name the self-updater looks for)

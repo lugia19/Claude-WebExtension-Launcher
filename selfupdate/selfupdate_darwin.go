@@ -3,10 +3,13 @@ package selfupdate
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
+	"time"
+
+	"claude-webext-patcher/utils"
 )
 
 func selectAsset(assets []releaseAsset) (string, string, error) {
@@ -36,83 +39,47 @@ func selectAsset(assets []releaseAsset) (string, string, error) {
 }
 
 func installUpdate(tempDir, tempZip string) error {
-	// macOS - download to Downloads folder, avoiding collisions only if needed
-	homeDir, _ := os.UserHomeDir()
-	exePath, _ := os.Executable()
-	currentAppPath := filepath.Dir(filepath.Dir(filepath.Dir(exePath)))
-	appName := "Claude_WebExtension_Launcher.app"
-	newAppPath := filepath.Join(tempDir, appName)
-
-	// Start with the original name
-	baseAppName := "Claude_WebExtension_Launcher"
-	downloadPath := filepath.Join(homeDir, "Downloads", baseAppName+".app")
-
-	// Check if we need to avoid a collision
-	if _, err := os.Stat(downloadPath); err == nil {
-		// Something exists at this path - is it us?
-		if downloadPath == currentAppPath {
-			// We're running from Downloads! Need a different name
-			fmt.Println("Running from Downloads folder - using alternative name...")
-
-			// Try numbered versions until we find an available one
-			for i := 1; i <= 10; i++ {
-				if i == 1 {
-					downloadPath = filepath.Join(homeDir, "Downloads", baseAppName+"_new.app")
-				} else {
-					downloadPath = filepath.Join(homeDir, "Downloads", fmt.Sprintf("%s_new_%d.app", baseAppName, i))
-				}
-
-				if _, err := os.Stat(downloadPath); os.IsNotExist(err) {
-					break // Found an available name
-				}
-			}
-		} else {
-			// There's an old download there, but it's not us - just replace it
-			os.RemoveAll(downloadPath)
-		}
-	}
-	// else: nothing at that path, we can use the original name
-
-	// Extract just the app name for display
-	downloadedAppName := filepath.Base(downloadPath)
-
-	// Move/copy the new app to Downloads
-	if err := exec.Command("cp", "-R", newAppPath, downloadPath).Run(); err != nil {
-		// Fallback to basic copy
-		os.Rename(newAppPath, downloadPath)
+	newApp := filepath.Join(tempDir, "Claude_WebExtension_Launcher.app")
+	if _, err := os.Stat(newApp); err != nil {
+		return fmt.Errorf("the update has no Claude_WebExtension_Launcher.app: %w", err)
 	}
 
-	// Make the executable actually executable
-	execPath := filepath.Join(downloadPath, "Contents", "MacOS", "Claude_WebExtension_Launcher")
-	if err := os.Chmod(execPath, 0755); err != nil {
-		fmt.Printf("Warning: Failed to set executable permissions: %v\n", err)
-		exec.Command("chmod", "+x", execPath).Run()
+	// The running app is the installed one (the launcher installs itself to
+	// ~/Applications and runs from there): replace it in place and restart.
+	exePath, err := os.Executable()
+	if err != nil {
+		return err
 	}
-
-	// Remove quarantine attribute
-	exec.Command("xattr", "-cr", downloadPath).Run()
-
-	// Clean up temp files
+	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+		exePath = resolved
+	}
+	app := filepath.Dir(filepath.Dir(filepath.Dir(exePath))) // <app>/Contents/MacOS/<exe>
+	if !strings.HasSuffix(app, ".app") {
+		return fmt.Errorf("not running from an app bundle (%s)", exePath)
+	}
+	if err := utils.InstallAppBundle(newApp, app); err != nil {
+		return err
+	}
 	os.Remove(tempZip)
 	os.RemoveAll(tempDir)
 
-	// Show in Finder
-	exec.Command("open", "-R", downloadPath).Run()
-
-	how := fmt.Sprintf("Drag '%s' from Downloads (now open in Finder) to Applications, "+
-		"replacing the old one, then launch it again.", strings.TrimSuffix(downloadedAppName, ".app"))
-	fmt.Println("Launcher update downloaded. " + how)
-	Notify("Launcher update downloaded", how)
-
-	os.Exit(0)
-	return nil
+	bin := filepath.Join(app, "Contents", "MacOS", "Claude_WebExtension_Launcher")
+	os.Chmod(bin, 0755)
+	fmt.Println("Launcher updated, restarting...")
+	err = syscall.Exec(bin, append([]string{bin}, os.Args[1:]...), os.Environ())
+	return fmt.Errorf("restarting into the updated launcher: %w", err)
 }
 
-// lockUpdate is a no-op on macOS: the update is only downloaded to ~/Downloads for
-// the user to install, and never replaces the running launcher.
+// lockUpdate takes a per-user lock for the update, so two launchers don't replace the
+// app at the same time.
 func lockUpdate() (func(), bool) {
-	return func() {}, true
+	lock, ok := utils.AcquirePatchLock("selfupdate", 5*time.Minute)
+	if !ok {
+		return nil, false
+	}
+	return lock.Release, true
 }
 
-// finishUpdateIfNeeded is a no-op on macOS: the new bundle is handed to the user.
+// finishUpdateIfNeeded has nothing to do on macOS: the update replaces the app bundle
+// completely (utils.InstallAppBundle cleans up after itself).
 func finishUpdateIfNeeded(exePath string) {}

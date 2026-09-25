@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 )
 
-// platformSetup has nothing to do on macOS.
-func platformSetup() {}
+// platformSetup has nothing to do on macOS (installedFrom: see main_windows.go).
+func platformSetup(installedFrom string) {}
 
 func claudeUserDataDir(instance string) string {
 	home, _ := os.UserHomeDir()

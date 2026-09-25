@@ -9,6 +9,7 @@ import (
 	"claude-webext-patcher/utils"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,7 +40,8 @@ type launcherOptions struct {
 	instanceGiven bool // --instance was passed (so no instance list)
 	debug         bool // no window: everything in the terminal, Claude attached to it
 	logPath       string
-	list          bool // end on the instance list instead of launching o.instance
+	list          bool   // end on the instance list instead of launching o.instance
+	installedFrom string // the copy that handed over to this installed one (see install.go)
 }
 
 func main() {
@@ -57,6 +59,7 @@ func main() {
 	cowork := flag.Bool("cowork", false, "Register the Cowork service (internal)")
 
 	showSetup := flag.Bool("show-setup", false, "Show the setup screen again (applications menu, start at login, multiple instances) before launching")
+	installedFrom := flag.String(installedFromFlag, "", "The launcher copy that handed over to this installed one (internal)")
 	flag.Parse()
 	instanceGiven := false
 	flag.Visit(func(f *flag.Flag) { instanceGiven = instanceGiven || f.Name == "instance" })
@@ -93,19 +96,34 @@ func main() {
 		instanceGiven: instanceGiven,
 		debug:         *debug,
 		logPath:       utils.LogPath(logInstance, mainInstanceName),
+		installedFrom: *installedFrom,
 	}
-	resolveMain := func() {
-		migrateMainInstance()
-		if isMain {
-			opts.instance = mainInstance
-		}
+	var console io.Writer
+	if opts.debug {
+		ensureConsole()
+		console = os.Stdout
+	}
+	// After a hand-over (below), the installed copy adds to the log the other started.
+	stop, _ := utils.StartLog(opts.logPath, opts.installedFrom == "", console)
+	// Before the window: on Windows this restarts a freshly updated .new.exe as the
+	// real .exe, and setup must run there so shortcuts don't point at the temporary file.
+	selfupdate.FinishUpdateIfNeeded()
+
+	// Run from the installed copy (install.go), installing or upgrading it first if this
+	// one is newer.
+	if target, from := installSelf(); target != "" {
+		stop() // flush the log for the installed copy to continue
+		err := handOff(target, handOffArgs(from), opts.debug)
+		stop, _ = utils.StartLog(opts.logPath, false, console)
+		fmt.Printf("Warning: could not start the installed launcher (%v); running from here this time\n", err)
+	}
+
+	migrateMainInstance()
+	if isMain {
+		opts.instance = mainInstance
 	}
 
 	if opts.debug {
-		ensureConsole()
-		stop, _ := utils.StartLog(opts.logPath, true, os.Stdout)
-		selfupdate.FinishUpdateIfNeeded()
-		resolveMain()
 		err := runLauncher(opts)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
@@ -116,12 +134,6 @@ func main() {
 		}
 		return
 	}
-
-	stop, _ := utils.StartLog(opts.logPath, true, nil)
-	// Before the window: on Windows this restarts a freshly updated .new.exe as the
-	// real .exe, and setup must run there so shortcuts don't point at the temporary file.
-	selfupdate.FinishUpdateIfNeeded()
-	resolveMain()
 
 	// Without --instance, the run can end on the instance list; whether it does is
 	// decided after the first-run setup, which can turn the list on.
@@ -135,7 +147,6 @@ func main() {
 	err := gui.Run("Claude WebExtension Launcher", rows, opts.logPath, firstRunSetup(*showSetup), instances, func(s *gui.Status) error {
 		ui = s
 		patcher.DownloadProgress = s.DownloadProgress
-		selfupdate.Notify = func(title, detail string) { s.Ask(title, detail, []string{"OK"}) }
 		opts.list = instances != nil && utils.LoadSettings().ManageInstances
 		return runLauncher(opts)
 	})
@@ -150,7 +161,10 @@ func main() {
 // Every step is mirrored to the checklist through ui.
 func runLauncher(o launcherOptions) error {
 	fmt.Printf("Claude WebExtension Launcher %s, %s\n", Version, time.Now().Format(time.RFC1123))
-	platformSetup()
+	platformSetup(o.installedFrom)
+	if o.installedFrom != "" {
+		refreshShortcuts() // they may point at the copy that handed over
+	}
 	if o.instanceGiven {
 		rememberInstance(o.instance)
 	}

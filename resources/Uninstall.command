@@ -30,6 +30,9 @@ if [ "$CONFIRM" != "Y" ] && [ "$CONFIRM" != "y" ]; then
 fi
 
 echo ""
+echo "Removing the installed launcher..."
+rm -rf "$HOME/Applications/Claude_WebExtension_Launcher.app"
+
 echo "Removing $INSTALL_DIR..."
 rm -rf "$INSTALL_DIR"
 

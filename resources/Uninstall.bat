@@ -39,6 +39,12 @@ for %%D in ("%APPDATA%\Microsoft\Windows\Start Menu\Programs" "%APPDATA%\Microso
     del /q "%%~D\Claude (*).lnk" >nul 2>&1
 )
 
+:: Remove the installed launcher (it installs itself here on first run). Its logs and
+:: settings stay, like the conversation data.
+echo Removing the installed launcher...
+del /q "%LOCALAPPDATA%\ClaudeWebExtLauncher\Claude_WebExtension_Launcher.exe" >nul 2>&1
+del /q "%LOCALAPPDATA%\ClaudeWebExtLauncher\launcher-version.txt" >nul 2>&1
+
 :: Self-elevate
 echo Requesting administrator privileges...
 powershell -Command "Start-Process -FilePath '%~f0' -ArgumentList 'ELEVATED' -Verb RunAs"

@@ -168,6 +168,12 @@ func CheckAndUpdate() error {
 	return installUpdate(tempDir, tempZip)
 }
 
+// CompareVersions compares two version strings ("1.2.3", optionally "v"-prefixed):
+// negative if v1 is older, 0 if equal, positive if newer.
+func CompareVersions(v1, v2 string) int {
+	return compareVersions(v1, v2)
+}
+
 func compareVersions(v1, v2 string) int {
 	// Remove 'v' prefix if present
 	v1 = strings.TrimPrefix(v1, "v")
@@ -201,11 +207,4 @@ func compareVersions(v1, v2 string) int {
 	}
 
 	return 0
-}
-
-// Notify tells the user something they need to act on and waits until they've seen
-// it. main points it at the window (or the terminal with --debug).
-var Notify = func(title, detail string) {
-	fmt.Println(title)
-	fmt.Println(detail)
 }

@@ -20,3 +20,9 @@ func init() {
 func GetExecutableDir() string {
 	return execDir
 }
+
+// DataDir is the launcher's per-user folder: its logs, settings.json, and (on
+// Windows and Linux) the installed launcher itself.
+func DataDir() string {
+	return logDir()
+}

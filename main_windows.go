@@ -22,15 +22,22 @@ const (
 	patchLockTimeout = 5 * time.Minute
 )
 
-// platformSetup cleans up files older launcher versions left next to the executable.
-func platformSetup() {
-	execDir := utils.GetExecutableDir()
-	for _, oldDir := range []string{"app-latest", "web-extensions"} {
-		oldPath := filepath.Join(execDir, oldDir)
-		if _, err := os.Stat(oldPath); err == nil {
-			fmt.Printf("Removing old %s from launcher directory...\n", oldDir)
-			if err := os.RemoveAll(oldPath); err != nil {
-				fmt.Printf("Warning: could not remove %s: %v\n", oldPath, err)
+// platformSetup cleans up files older launcher versions left next to the executable:
+// this one, and the downloaded copy that handed over to it (installedFrom), which is
+// where those versions ran from.
+func platformSetup(installedFrom string) {
+	dirs := []string{utils.GetExecutableDir()}
+	if installedFrom != "" {
+		dirs = append(dirs, filepath.Dir(installedFrom))
+	}
+	for _, dir := range dirs {
+		for _, oldDir := range []string{"app-latest", "web-extensions"} {
+			oldPath := filepath.Join(dir, oldDir)
+			if _, err := os.Stat(oldPath); err == nil {
+				fmt.Printf("Removing old %s from %s...\n", oldDir, dir)
+				if err := os.RemoveAll(oldPath); err != nil {
+					fmt.Printf("Warning: could not remove %s: %v\n", oldPath, err)
+				}
 			}
 		}
 	}

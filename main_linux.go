@@ -10,7 +10,7 @@ import (
 
 // platformSetup keeps the hidden claude:// link handler entry current (see
 // shortcuts_linux.go), so magic links reach the patched app.
-func platformSetup() {
+func platformSetup(installedFrom string) {
 	writeLinkHandler()
 }
 
