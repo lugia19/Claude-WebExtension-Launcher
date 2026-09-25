@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"os"
 	"strings"
 
 	"github.com/gogpu/ui/core/button"
@@ -58,7 +59,10 @@ func (w *window) showList() {
 	}
 
 	title := primitives.Text("Instances").FontSize(18).Bold().Color(textColor)
-	list := scrollview.New(primitives.VBox(rows...).Gap(14).CrossAlign(primitives.CrossAxisStretch))
+	var list widget.Widget = scrollview.New(primitives.VBox(rows...).Gap(14).CrossAlign(primitives.CrossAxisStretch))
+	if os.Getenv("CWL_LIST_NOSCROLL") != "" { // TEMP: Linux repaint bisect
+		list = primitives.VBox(rows...).Gap(14).CrossAlign(primitives.CrossAxisStretch)
+	}
 	settings := button.New(
 		button.TextOpt("Launcher settings"),
 		button.PainterOpt(iconPainter{icon: uiicon.Settings, fg: textColor, bg: &trackColor}),
@@ -153,10 +157,10 @@ func (p iconPainter) PaintButton(canvas widget.Canvas, st button.PaintState) {
 	const size, pad, gap = 16, 12, 6
 	y := b.Min.Y + (b.Height()-size)/2
 	if st.Text == "" {
-		uiicon.Draw(canvas, p.icon, geometry.NewRect(b.Min.X+(b.Width()-size)/2, y, size, size), p.fg)
+		drawIcon(canvas, p.icon, geometry.NewRect(b.Min.X+(b.Width()-size)/2, y, size, size), p.fg)
 		return
 	}
-	uiicon.Draw(canvas, p.icon, geometry.NewRect(b.Min.X+pad, y, size, size), p.fg)
+	drawIcon(canvas, p.icon, geometry.NewRect(b.Min.X+pad, y, size, size), p.fg)
 	textX := b.Min.X + pad + size + gap
 	canvas.DrawText(st.Text, geometry.NewRect(textX, b.Min.Y, b.Max.X-pad-textX, b.Height()), 13, p.fg, true, widget.TextAlignLeft)
 }
@@ -326,4 +330,14 @@ func (p themedTextField) PaintTextField(canvas widget.Canvas, st *textfield.Pain
 		ErrorText:   errorColor,
 	}
 	p.DefaultPainter.PaintTextField(canvas, st)
+}
+
+// drawIcon draws an icon; CWL_LIST_NOICONS swaps it for a plain square. TEMP: Linux
+// repaint bisect.
+func drawIcon(canvas widget.Canvas, data uiicon.IconData, r geometry.Rect, c widget.Color) {
+	if os.Getenv("CWL_LIST_NOICONS") != "" {
+		canvas.DrawRoundRect(r, c, 3)
+		return
+	}
+	uiicon.Draw(canvas, data, r, c)
 }
