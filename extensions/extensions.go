@@ -85,12 +85,14 @@ func UpdateAll() error {
 	// Create extensions dir if needed
 	os.MkdirAll(utils.ResolveInstallPath("web-extensions"), 0755)
 
+	var failed []string
 	for _, ext := range extensions {
 		currentVersion := getInstalledVersion(ext)
 
 		release, err := fetchLatestRelease(ext)
 		if err != nil {
 			fmt.Printf("  %s: error checking: %v\n", ext.Folder, err)
+			failed = append(failed, ext.Folder)
 			continue
 		}
 
@@ -112,6 +114,7 @@ func UpdateAll() error {
 
 		if downloadURL == "" {
 			fmt.Printf("  %s: no electron zip found\n", ext.Folder)
+			failed = append(failed, ext.Folder)
 			continue
 		}
 
@@ -120,9 +123,13 @@ func UpdateAll() error {
 		// Download and extract
 		if err := downloadAndExtractExtension(downloadURL, ext.Folder); err != nil {
 			fmt.Printf("  %s: error updating: %v\n", ext.Folder, err)
+			failed = append(failed, ext.Folder)
 		}
 	}
 
+	if len(failed) > 0 {
+		return fmt.Errorf("couldn't update %s (see the log)", strings.Join(failed, ", "))
+	}
 	return nil
 }
 
