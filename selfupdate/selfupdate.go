@@ -67,6 +67,14 @@ func CheckAndUpdate() error {
 
 	fmt.Printf("Update available: %s -> %s\n", currentVer, latestVersion)
 
+	// Serialize the rest: launchers started together would otherwise share the
+	// update-temp files and the platform's staging paths for the new binary.
+	unlock, locked := lockUpdate()
+	if !locked {
+		return fmt.Errorf("another launcher is installing an update; skipping")
+	}
+	defer unlock()
+
 	// Platform-specific asset selection
 	assets := make([]releaseAsset, len(release.Assets))
 	for i, a := range release.Assets {

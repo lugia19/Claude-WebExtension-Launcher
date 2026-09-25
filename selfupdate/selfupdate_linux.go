@@ -1,6 +1,7 @@
 package selfupdate
 
 import (
+	"claude-webext-patcher/utils"
 	"debug/elf"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 )
 
 const executableName = "Claude_WebExtension_Launcher"
@@ -99,4 +101,14 @@ func checkLinuxExecutable(path string) error {
 		return fmt.Errorf("built for %v, this machine is %s", f.Machine, runtime.GOARCH)
 	}
 	return nil
+}
+
+// lockUpdate takes a per-user cross-process lock for the update. The flock's fd is
+// close-on-exec, so the successful re-exec in installUpdate releases it too.
+func lockUpdate() (func(), bool) {
+	lock, ok := utils.AcquirePatchLock("selfupdate", 5*time.Minute)
+	if !ok {
+		return nil, false
+	}
+	return lock.Release, true
 }

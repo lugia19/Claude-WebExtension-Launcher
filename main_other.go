@@ -32,16 +32,23 @@ const (
 // ensureClaudeReady runs patching and extension updates in-process on macOS and Linux.
 func ensureClaudeReady(forceUpdate bool) error {
 	lock, locked := utils.AcquirePatchLock(patchLockName, patchLockTimeout)
-	if locked {
-		// No separate re-check needed: EnsurePatched compares against the version
-		// files, so a launcher that waited here finds the work already done.
-		defer lock.Release()
-	} else if claudeInstalled() {
-		// The staging swap never leaves a half-written install, so launching
-		// whatever is there is safe.
-		fmt.Println("Warning: timed out waiting for another launcher to finish updating; launching existing installation.")
-		return nil
+	if !locked {
+		if claudeInstalled() {
+			// The staging swap never leaves a half-written install, so launching
+			// whatever is there is safe.
+			fmt.Println("Warning: timed out waiting for another launcher to finish updating; launching existing installation.")
+			return nil
+		}
+		// Nothing to launch yet (e.g. a slow first download in another launcher).
+		// Never patch without the lock: keep waiting for it instead.
+		fmt.Println("Waiting for another launcher to finish installing Claude...")
+		if lock, locked = utils.AcquirePatchLock(patchLockName, 24*time.Hour); !locked {
+			return fmt.Errorf("could not acquire the install lock")
+		}
 	}
+	// No separate re-check needed: EnsurePatched compares against the version files,
+	// so a launcher that waited here finds the work already done.
+	defer lock.Release()
 
 	if err := patcher.EnsurePatched(forceUpdate); err != nil {
 		if claudeInstalled() {

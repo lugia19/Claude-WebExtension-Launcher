@@ -124,3 +124,9 @@ func installUpdate(tempDir, tempZip string) error {
 	os.Exit(0)
 	return nil
 }
+
+// lockUpdate is a no-op on macOS: the update is only downloaded to ~/Downloads for
+// the user to install, and never replaces the running launcher.
+func lockUpdate() (func(), bool) {
+	return func() {}, true
+}

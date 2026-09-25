@@ -139,3 +139,8 @@ func installUpdate(tempDir, tempZip string) error {
 	os.Exit(0)
 	return nil
 }
+
+// lockUpdate is a no-op on Windows, which swaps via a .new.exe on restart.
+func lockUpdate() (func(), bool) {
+	return func() {}, true
+}
