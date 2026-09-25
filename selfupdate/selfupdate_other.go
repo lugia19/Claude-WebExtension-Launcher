@@ -2,6 +2,11 @@
 
 package selfupdate
 
-// finishUpdateIfNeeded is a no-op on non-Windows platforms: macOS hands the new bundle
-// to the user, and Linux replaces the binary in place and re-execs.
-func finishUpdateIfNeeded(exePath string) {}
+import "os"
+
+// finishUpdateIfNeeded removes the previous launcher that Linux's installUpdate keeps
+// as a rollback until the new binary has started. macOS hands the new bundle to the
+// user instead, so there is nothing to clean up there.
+func finishUpdateIfNeeded(exePath string) {
+	os.Remove(exePath + ".old")
+}

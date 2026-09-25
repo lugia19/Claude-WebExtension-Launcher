@@ -1,6 +1,7 @@
 package selfupdate
 
 import (
+	"debug/elf"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,18 +46,29 @@ func installUpdate(tempDir, tempZip string) error {
 		return fmt.Errorf("update package has no %s: %v", executableName, err)
 	}
 
-	// Stage next to the target so the rename stays on one filesystem. Zip extraction
+	// Stage next to the target so the renames stay on one filesystem. Zip extraction
 	// drops the exec bit, so set it explicitly.
 	staged := exePath + ".new"
 	if err := os.WriteFile(staged, data, 0755); err != nil {
 		return fmt.Errorf("writing new executable: %v", err)
 	}
+	defer os.Remove(staged)
 	if err := os.Chmod(staged, 0755); err != nil {
-		os.Remove(staged)
 		return fmt.Errorf("making new executable runnable: %v", err)
 	}
+	if err := checkLinuxExecutable(staged); err != nil {
+		return fmt.Errorf("downloaded update is not a valid launcher: %v", err)
+	}
+
+	// Keep the current binary until the new one has actually started, so a failed
+	// exec can be rolled back instead of leaving no working launcher.
+	backup := exePath + ".old"
+	os.Remove(backup)
+	if err := os.Rename(exePath, backup); err != nil {
+		return fmt.Errorf("moving current executable aside: %v", err)
+	}
 	if err := os.Rename(staged, exePath); err != nil {
-		os.Remove(staged)
+		os.Rename(backup, exePath)
 		return fmt.Errorf("replacing executable: %v", err)
 	}
 
@@ -65,8 +77,26 @@ func installUpdate(tempDir, tempZip string) error {
 
 	fmt.Println("Update installed, restarting...")
 	args := append([]string{exePath}, os.Args[1:]...)
-	if err := syscall.Exec(exePath, args, os.Environ()); err != nil {
-		return fmt.Errorf("restarting updated launcher: %v", err)
+	err = syscall.Exec(exePath, args, os.Environ())
+
+	// Exec only returns on failure: put the old launcher back and carry on with it.
+	os.Remove(exePath)
+	os.Rename(backup, exePath)
+	return fmt.Errorf("restarting updated launcher (kept the current version): %v", err)
+}
+
+// checkLinuxExecutable rejects anything that isn't an ELF executable for this
+// architecture, e.g. a wrong-arch or truncated binary.
+func checkLinuxExecutable(path string) error {
+	f, err := elf.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	want := map[string]elf.Machine{"amd64": elf.EM_X86_64, "arm64": elf.EM_AARCH64}[runtime.GOARCH]
+	if want != elf.EM_NONE && f.Machine != want {
+		return fmt.Errorf("built for %v, this machine is %s", f.Machine, runtime.GOARCH)
 	}
 	return nil
 }

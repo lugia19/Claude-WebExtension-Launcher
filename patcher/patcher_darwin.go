@@ -305,11 +305,10 @@ func downloadAndExtract(version, downloadURL string) error {
 		}
 
 		// Regular file extraction
-		src, _ := f.Open()
-		dst, _ := os.Create(path)
-		io.Copy(dst, src)
-		dst.Close()
-		src.Close()
+		if err := utils.ExtractZipFile(f, path); err != nil {
+			zipReader.Close()
+			return fmt.Errorf("extracting %s: %v", f.Name, err)
+		}
 	}
 
 	// Close the zip reader before attempting to delete temp file

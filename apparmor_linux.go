@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"claude-webext-patcher/utils"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -76,26 +77,38 @@ profile %s "%s" flags=(unconfined) {
 	}
 	os.Chmod(tmp.Name(), 0644)
 
-	// Positional args keep the paths out of the shell string entirely.
-	script := `install -m 0644 "$1" "$2" && apparmor_parser -r -W -T "$2"`
+	// Positional args keep the paths out of the shell string entirely. If the parser
+	// rejects the profile, remove the file again: an unloaded profile left on disk
+	// would match on the next launch and never be retried.
+	script := `install -m 0644 "$1" "$2" && { apparmor_parser -r -W -T "$2" || { rm -f "$2"; exit 1; }; }`
 	shArgs := []string{"/bin/sh", "-c", script, "sh", tmp.Name(), profilePath}
 
 	var lastErr error
+	userDismissed := false
 	if _, err := exec.LookPath("pkexec"); err == nil {
 		if lastErr = runElevated("pkexec", shArgs); lastErr == nil {
 			fmt.Println("AppArmor profile installed.")
 			return
 		}
+		// pkexec exits 126 when the user dismisses the password dialog; anything else
+		// (e.g. 127, no polkit agent running) is worth retrying through sudo.
+		var exitErr *exec.ExitError
+		userDismissed = errors.As(lastErr, &exitErr) && exitErr.ExitCode() == 126
 	}
-	if stdinIsTerminal() {
-		if lastErr = runElevated("sudo", shArgs); lastErr == nil {
-			fmt.Println("AppArmor profile installed.")
-			return
+	if !userDismissed {
+		if stdinIsTerminal() {
+			if lastErr = runElevated("sudo", shArgs); lastErr == nil {
+				fmt.Println("AppArmor profile installed.")
+				return
+			}
+		} else {
+			// No terminal to ask for a sudo password in (or to show errors in): re-run
+			// in one. Only returns if no terminal emulator could be started.
+			relaunchInTerminal()
+			if lastErr == nil {
+				lastErr = fmt.Errorf("no pkexec and no terminal emulator found")
+			}
 		}
-	} else if lastErr == nil {
-		// No pkexec and no terminal to ask for a sudo password in: re-run in one.
-		relaunchInTerminal()
-		lastErr = fmt.Errorf("no pkexec and no terminal emulator found")
 	}
 
 	printManualAppArmorSteps(profilePath, profile, lastErr)
@@ -107,7 +120,7 @@ func runElevated(tool string, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s: %v", tool, err)
+		return fmt.Errorf("%s: %w", tool, err)
 	}
 	return nil
 }
