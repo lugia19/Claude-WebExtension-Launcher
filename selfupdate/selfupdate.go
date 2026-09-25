@@ -202,3 +202,10 @@ func compareVersions(v1, v2 string) int {
 
 	return 0
 }
+
+// Notify tells the user something they need to act on and waits until they've seen
+// it. main points it at the window (or the terminal with --debug).
+var Notify = func(title, detail string) {
+	fmt.Println(title)
+	fmt.Println(detail)
+}

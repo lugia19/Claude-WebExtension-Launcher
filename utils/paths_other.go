@@ -7,3 +7,8 @@ package utils
 func ResolveInstallPath(relativePath string) string {
 	return ResolvePath(relativePath)
 }
+
+// logDir is the launcher's data directory.
+func logDir() string {
+	return ResolvePath(".")
+}

@@ -33,7 +33,6 @@ const (
 	// emulated amd64 launcher on ARM64 still provisions native arm64 Claude.
 	windowsMSIXRedirectURLFmt = "https://claude.ai/api/desktop/win32/%s/msix/latest/redirect"
 	appFolderName             = "app-latest"
-	KeepDownloadedArchive     = false
 	PatchVersion              = "10"
 )
 
@@ -74,13 +73,6 @@ func init() {
 
 func InstallBaseDir() string {
 	return installBaseDir
-}
-
-// ForceRedownload deletes the version file and forces a full re-download and re-patch.
-func ForceRedownload() error {
-	claudeVersionFile := filepath.Join(installBaseDir, "claude-version.txt")
-	os.Remove(claudeVersionFile)
-	return EnsurePatched(true)
 }
 
 func DeploySentinelExtension() error {
@@ -202,11 +194,6 @@ func installWrapper(tempDir string, version string) error {
 	return nil
 }
 
-func canFallbackToExisting() bool {
-	_, err := os.Stat(appExePath)
-	return err == nil
-}
-
 const stagingSuffix = ".staging"
 
 // buildAndSwap downloads and patches a fresh Claude into a staging folder, then
@@ -264,91 +251,66 @@ func swapAppFolder(staging, target string) error {
 	return nil
 }
 
-func EnsurePatched(forceUpdate bool) error {
+// ClaudeUpdate is the launcher's view of whether Claude needs (re)building.
+type ClaudeUpdate struct {
+	Installed string // installed version, "" if none
+	Latest    string
+	URL       string
+	Needed    bool
+	Reason    string // why it's needed, for the log
+}
+
+// CheckClaude compares the install with the latest release. A new version, a changed
+// PatchVersion (the injections changed) or force all mean a rebuild. If the latest
+// release can't be determined, the error is returned alongside what is installed.
+func CheckClaude(force bool) (ClaudeUpdate, error) {
+	u := ClaudeUpdate{Installed: readVersionFile("claude-version.txt")}
+	if u.Installed != "" {
+		fmt.Printf("Current version: %s\n", u.Installed)
+	}
+
+	latest, url, err := GetLatestVersion()
+	if err != nil {
+		return u, err
+	}
+	u.Latest, u.URL = latest, url
+	fmt.Printf("Latest version: %s\n", latest)
+
+	switch {
+	case u.Installed == "":
+		u.Needed, u.Reason = true, "not installed"
+	case u.Installed != latest:
+		u.Needed, u.Reason = true, "new version"
+	case readVersionFile("patch-version.txt") != PatchVersion:
+		u.Needed, u.Reason = true, "patch changed"
+	case force:
+		u.Needed, u.Reason = true, "forced"
+	}
+	return u, nil
+}
+
+// Install builds a patched Claude version into a staging folder from the package the
+// launcher downloaded (PrefetchedPackage), swaps it into place, and records it. Only
+// after the swap are the version files written, so an interrupted build can never
+// leave a "patched" marker on a stock or half-built app. Runs in the worker.
+func Install(version, url string) error {
 	if err := prepareInstallDir(); err != nil {
 		return fmt.Errorf("setting up install directory: %v", err)
 	}
-
-	// Get current version (stored at installBaseDir level, not inside AppFolder)
-	currentVersion := ""
-	claudeVersionFile := filepath.Join(installBaseDir, "claude-version.txt")
-	if data, err := os.ReadFile(claudeVersionFile); err == nil {
-		currentVersion = strings.TrimSpace(string(data))
-		fmt.Printf("Current version: %s\n", currentVersion)
+	if err := buildAndSwap(version, url); err != nil {
+		return err
 	}
-
-	// Get latest version and download URL
-	newestVersion, downloadURL, err := GetLatestVersion()
-	if err != nil {
-		// If we have an existing installation, continue using it
-		if currentVersion != "" {
-			fmt.Printf("Warning: %v\n", err)
-			fmt.Printf("Continuing with existing installation (version %s)\n", currentVersion)
-			debugPause()
-
-			// Check if the app executable exists
-			if _, err := os.Stat(appExePath); os.IsNotExist(err) {
-				return fmt.Errorf("existing installation is incomplete (executable not found)")
-			}
-
-			return nil // Continue with existing installation
-		}
-		// No existing installation and no version available
-		return fmt.Errorf("no versions available and no existing installation found")
-	}
-
-	fmt.Printf("Latest version: %s\n", newestVersion)
-
-	// Update to the latest version, or rebuild in place when forced (the
-	// --force-update recovery path re-applies a lost/corrupted patch even when the
-	// Claude version is unchanged).
-	versionChanged := currentVersion != newestVersion
-	shouldUpdate := forceUpdate || versionChanged
-
-	patchVersionFile := filepath.Join(installBaseDir, "patch-version.txt")
-	if shouldUpdate {
-		if versionChanged {
-			fmt.Printf("Updating to %s...\n", newestVersion)
-		} else {
-			fmt.Printf("Re-applying patch for %s...\n", newestVersion)
-		}
-
-		if err := buildAndSwap(newestVersion, downloadURL); err != nil {
-			if canFallbackToExisting() {
-				fmt.Printf("Warning: update failed (%v), continuing with existing installation.\n", err)
-				debugPause()
-				return nil
-			}
-			return err
-		}
-		// Record success only after the new install is fully built and swapped in,
-		// so an interrupted patch can never leave a stale "patched" marker on a stock app.
-		os.WriteFile(claudeVersionFile, []byte(newestVersion), 0644)
-		os.WriteFile(patchVersionFile, []byte(PatchVersion), 0644)
-	} else {
-		fmt.Println("Already on the latest version")
-
-		// Injection code changed but the Claude version didn't — re-patch.
-		currentPatchVersion := ""
-		if data, err := os.ReadFile(patchVersionFile); err == nil {
-			currentPatchVersion = strings.TrimSpace(string(data))
-		}
-		if currentPatchVersion != PatchVersion {
-			fmt.Printf("Patch version changed (%s -> %s), re-patching...\n", currentPatchVersion, PatchVersion)
-			if err := buildAndSwap(newestVersion, downloadURL); err != nil {
-				if canFallbackToExisting() {
-					fmt.Printf("Warning: re-patching failed (%v), continuing with existing installation.\n", err)
-					debugPause()
-					return nil
-				}
-				return err
-			}
-			os.WriteFile(claudeVersionFile, []byte(newestVersion), 0644)
-			os.WriteFile(patchVersionFile, []byte(PatchVersion), 0644)
-		}
-	}
-
+	os.WriteFile(filepath.Join(installBaseDir, "claude-version.txt"), []byte(version), 0644)
+	os.WriteFile(filepath.Join(installBaseDir, "patch-version.txt"), []byte(PatchVersion), 0644)
 	return nil
+}
+
+func readVersionFile(name string) string {
+	data, err := os.ReadFile(filepath.Join(installBaseDir, name))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func applyPatches(version string) error {

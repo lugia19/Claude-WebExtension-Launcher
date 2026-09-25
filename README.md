@@ -61,9 +61,11 @@ On first launch, you might see a crash dialog about the network service. This is
 ### Linux: password prompt on first launch (Ubuntu 24.04+)
 Ubuntu 24.04 and newer block the sandbox Claude relies on unless the app has an AppArmor profile. The official package installs one for its own location, so the launcher adds one for its install. That needs root once, so you'll be asked for your password on the first launch. Other distros don't need this and won't ask.
 
-### Debug flag
+### Logs and the debug flag
 
-If anything else happens or goes wrong, execute the launcher with the --debug flag to be able to see the full logs.
+If anything goes wrong, click **Open logs** in the launcher's window (it's there during the countdown and on errors). The log is `launcher.log` in `%LOCALAPPDATA%\ClaudeWebExtLauncher` on Windows, and in the launcher's data folder on macOS/Linux; the previous run's is kept as `launcher.previous.log`.
+
+Running the launcher with `--debug` skips the window and shows everything in the terminal instead, with Claude attached to it so its own output is visible too.
 
 ## Installation
 

@@ -3,71 +3,44 @@
 package main
 
 import (
-	"claude-webext-patcher/extensions"
-	"claude-webext-patcher/patcher"
-	"claude-webext-patcher/utils"
-	"fmt"
 	"os"
+	"os/exec"
 	"time"
 )
 
-// releaseAdminContext is a no-op on non-Windows platforms.
-func releaseAdminContext() {}
-
-// claudeInstalled returns true if the Claude executable exists in the install directory.
-func claudeInstalled() bool {
-	_, err := os.Stat(claudeExecutablePath())
-	return err == nil
-}
-
 const (
-	// patchLockName serializes patching and extension updates across launchers
-	// started together (e.g. several named instances), which share the staging,
-	// asar-temp and web-extensions paths.
+	// patchLockName serializes the worker across launchers started together (e.g.
+	// several named instances), which share the staging, asar-temp and
+	// web-extensions paths.
 	patchLockName = "patch"
 	// patchLockTimeout is generous: a real update downloads Claude (~175-250 MB).
 	patchLockTimeout = 10 * time.Minute
 )
 
-// ensureClaudeReady runs patching and extension updates in-process on macOS and Linux.
-func ensureClaudeReady(forceUpdate bool) error {
-	lock, locked := utils.AcquirePatchLock(patchLockName, patchLockTimeout)
-	if !locked {
-		if claudeInstalled() {
-			// The staging swap never leaves a half-written install, so launching
-			// whatever is there is safe.
-			fmt.Println("Warning: timed out waiting for another launcher to finish updating; launching existing installation.")
-			return nil
-		}
-		// Nothing to launch yet (e.g. a slow first download in another launcher).
-		// Never patch without the lock: keep waiting for it instead.
-		fmt.Println("Waiting for another launcher to finish installing Claude...")
-		if lock, locked = utils.AcquirePatchLock(patchLockName, 24*time.Hour); !locked {
-			return fmt.Errorf("could not acquire the install lock")
-		}
-	}
-	// No separate re-check needed: EnsurePatched compares against the version files,
-	// so a launcher that waited here finds the work already done.
-	defer lock.Release()
+// ensureConsole is a no-op outside Windows, which has no GUI/console subsystem split.
+func ensureConsole() {}
 
-	if err := patcher.EnsurePatched(forceUpdate); err != nil {
-		if claudeInstalled() {
-			fmt.Printf("Warning: patching failed (%v), launching existing installation.\n", err)
-		} else {
-			return err
-		}
+// startWorker runs the worker as a child process (same user, no elevation) and
+// returns its exit code. Its output joins the launcher's (the log file).
+func startWorker(args []string) (int, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return -1, err
 	}
-	if err := extensions.UpdateAll(); err != nil {
-		fmt.Printf("Warning: extension update failed: %v\n", err)
+	cmd := exec.Command(exe, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err = cmd.Run()
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return exitErr.ExitCode(), nil
 	}
-	if err := patcher.DeploySentinelExtension(); err != nil {
-		fmt.Printf("Warning: sentinel extension deployment failed: %v\n", err)
+	if err != nil {
+		return -1, err
 	}
-	return nil
+	return 0, nil
 }
 
-// runPatcherMode is not used on non-Windows platforms.
-func runPatcherMode(forceUpdate bool, debug bool) int {
-	fmt.Println("--patcher is not supported on this platform")
-	return 1
-}
+// Worker hooks: nothing to set up or tear down outside Windows.
+func workerBefore() error   { return nil }
+func workerAfter()          {}
+func registerCowork() error { return nil }
