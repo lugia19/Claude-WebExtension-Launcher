@@ -63,7 +63,7 @@ Ubuntu 24.04 and newer block the sandbox Claude relies on unless the app has an 
 
 ### Logs and the debug flag
 
-If anything goes wrong, click **Open logs** in the launcher's window (it's there during the countdown and on errors). The log is `launcher.log` in `%LOCALAPPDATA%\ClaudeWebExtLauncher` on Windows, and in the launcher's data folder on macOS/Linux; the previous run's is kept as `launcher.previous.log`.
+If anything goes wrong, click **Open logs** in the launcher's window (it's there during the countdown and on errors). The log is `launcher.log` (or `launcher-<name>.log` for a named `--instance`) in `%LOCALAPPDATA%\ClaudeWebExtLauncher` on Windows, and in the launcher's data folder on macOS/Linux; the previous run's is kept as `launcher.previous.log`.
 
 Running the launcher with `--debug` skips the window and shows everything in the terminal instead, with Claude attached to it so its own output is visible too.
 

@@ -65,7 +65,7 @@ func main() {
 		forceUpdate: *forceUpdate,
 		instance:    *instanceName,
 		debug:       *debug,
-		logPath:     utils.LogPath(),
+		logPath:     utils.LogPath(*instanceName, defaultInstanceName),
 	}
 
 	if opts.debug {

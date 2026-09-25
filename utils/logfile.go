@@ -8,9 +8,25 @@ import (
 	"strings"
 )
 
-// LogPath is where the launcher and worker write their log.
-func LogPath() string {
-	return filepath.Join(logDir(), "launcher.log")
+// LogPath is where the launcher and worker write their log: launcher.log for the
+// default instance, launcher-<name>.log for named ones. Separate files because
+// launchers for several instances are often started together, and would otherwise
+// rotate and truncate each other's log.
+func LogPath(instance, defaultInstance string) string {
+	name := "launcher.log"
+	if instance != defaultInstance {
+		name = "launcher-" + sanitizeFileName(instance) + ".log"
+	}
+	return filepath.Join(logDir(), name)
+}
+
+func sanitizeFileName(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 32 || strings.ContainsRune(`<>:"/\|?*`, r) {
+			return '_'
+		}
+		return r
+	}, s)
 }
 
 // StartLog sends everything printed to stdout/stderr into the log file at path, and
