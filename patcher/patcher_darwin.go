@@ -220,26 +220,9 @@ func downloadAndExtract(version, downloadURL string) error {
 	if KeepDownloadedArchive && fileExists {
 		fmt.Printf("Using existing file: %s\n", newVersionZipName)
 	} else {
-		// Download if file doesn't exist or if we're not keeping files
-		fmt.Printf("Downloading from: %s\n", downloadURL)
-
-		resp, err := http.Get(downloadURL)
-		if err != nil {
-			return fmt.Errorf("downloading: %v", err)
+		if err := downloadFile(downloadURL, newVersionDownloadPath); err != nil {
+			return err
 		}
-		defer resp.Body.Close()
-
-		// Use the already defined download path
-		outFile, err := os.Create(newVersionDownloadPath)
-		if err != nil {
-			return fmt.Errorf("creating file: %v", err)
-		}
-		_, err = io.Copy(outFile, progressBody(resp))
-		outFile.Close()
-		if err != nil {
-			return fmt.Errorf("saving file: %v", err)
-		}
-		fmt.Printf("Downloaded: %s\n", newVersionDownloadPath)
 	}
 
 	// Extract

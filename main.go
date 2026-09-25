@@ -17,36 +17,6 @@ var launchClaudeInTerminal = false
 // knows not to relaunch itself in a terminal.
 var guiMode = false
 
-// step reports the launcher's current phase to the status window (no-op in terminal mode).
-var step = func(string) {}
-
-// ask puts a multiple-choice question to the user and returns the chosen index, or -1
-// if they didn't pick one. The status window replaces it with its own question view.
-var ask = askInTerminal
-
-func askInTerminal(question, detail string, options []string) int {
-	fmt.Println()
-	fmt.Println("============================================================")
-	fmt.Println(question)
-	fmt.Println()
-	fmt.Println(detail)
-	fmt.Println()
-	for i, o := range options {
-		fmt.Printf("[%d] %s\n", i+1, o)
-	}
-	fmt.Println("============================================================")
-	fmt.Print("Choose: ")
-
-	var input string
-	fmt.Scanln(&input)
-	for i := range options {
-		if input == fmt.Sprint(i+1) {
-			return i
-		}
-	}
-	return -1
-}
-
 // Version is the current version of the application
 const Version = "3.3.3"
 
@@ -84,9 +54,7 @@ func main() {
 
 	// Patcher mode: do admin work and exit (Windows only)
 	if *patcherMode {
-		patcher.PrefetchedPackage = *packagePath
-		patcher.PrefetchedVersion = *packageVersion
-		os.Exit(runPatcherMode(*forceUpdate, *debug))
+		os.Exit(runPatcherMode(*forceUpdate, *debug, *packagePath, *packageVersion))
 	}
 
 	// Show the status window unless the terminal is wanted: --debug keeps everything
@@ -100,20 +68,9 @@ func main() {
 	}
 
 	guiMode = true
-	err, _ := gui.Run("Claude WebExtension Launcher", func(s *gui.Status) error {
-		step = s.Step
-		ask = s.Ask
-		lastPct := -1
-		patcher.DownloadProgress = func(done, total int64) {
-			if total <= 0 {
-				return
-			}
-			if pct := int(done * 100 / total); pct != lastPct {
-				lastPct = pct
-				s.Progress(float64(done) / float64(total))
-				s.Step(fmt.Sprintf("Downloading Claude... %d%% (%d / %d MB)", pct, done>>20, total>>20))
-			}
-		}
+	err := gui.Run("Claude WebExtension Launcher", func(s *gui.Status) error {
+		ui = s
+		patcher.DownloadProgress = s.DownloadProgress
 		return runLauncher(*forceUpdate, *instanceName)
 	})
 	if err != nil {
@@ -136,7 +93,7 @@ func runLauncher(forceUpdate bool, instanceName string) error {
 	fmt.Printf("Version: %s\n", Version)
 
 	// Check for self-updates
-	step("Checking for launcher updates...")
+	ui.Step("Checking for launcher updates...")
 	if err := selfupdate.CheckAndUpdate(); err != nil {
 		fmt.Printf("Update check failed: %v\n", err)
 		// Continue anyway
@@ -145,7 +102,7 @@ func runLauncher(forceUpdate bool, instanceName string) error {
 	// Ensure Claude is patched and extensions are up-to-date.
 	// On Windows this may invoke an elevated patcher subprocess via UAC.
 	// On macOS and Linux this runs in-process.
-	step("Checking for Claude updates...")
+	ui.Step("Checking for Claude updates...")
 	if err := ensureClaudeReady(forceUpdate); err != nil {
 		if _, statErr := os.Stat(claudeExecutablePath()); statErr != nil {
 			return err
@@ -180,7 +137,7 @@ func runLauncher(forceUpdate bool, instanceName string) error {
 	}
 
 	// Launch Claude
-	step("Launching Claude...")
+	ui.Step("Launching Claude...")
 	fmt.Println("Launching Claude.")
 	claudePath := claudeExecutablePath()
 	instanceArg := fmt.Sprintf("--instance=%s", instanceName)

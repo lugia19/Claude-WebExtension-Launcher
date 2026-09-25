@@ -76,7 +76,7 @@ func isMSIXInstalled() bool {
 }
 
 func promptMSIXChoice() string {
-	choice := ask(
+	choice := ui.Ask(
 		"Official Claude Desktop (MSIX) detected.",
 		"It takes over claude:// links, so magic-link login won't reach the patched app.",
 		[]string{"Uninstall it (recommended)", "Keep it (login codes only)", "Ask me later"},

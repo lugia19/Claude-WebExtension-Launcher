@@ -1,5 +1,5 @@
-// Package gui shows the launcher's status window: what it's doing, a progress bar
-// for downloads, and any error, so the launcher doesn't need a terminal.
+// Package gui is the launcher's status window: the current step, a progress bar,
+// the latest log line, questions and errors, so the launcher needs no terminal.
 //
 // SPIKE: evaluating gogpu/ui (pure Go, no cgo on any platform).
 package gui
@@ -10,6 +10,8 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/gogpu/gg/gpu" // GPU-accelerated drawing; falls back to CPU
@@ -25,156 +27,254 @@ import (
 	"github.com/gogpu/ui/widget"
 )
 
-// Status is the handle the launcher's work uses to update the window. Safe for
-// concurrent use; every setter just updates a signal and requests a redraw.
-type Status struct {
-	gogpuApp *gogpu.App
+const (
+	maxButtons   = 3
+	windowWidth  = 560
+	windowHeight = 180
+)
 
-	step     state.Signal[string]
+var (
+	accent     = widget.Hex(0xD97757) // Claude's orange
+	background = widget.RGBA8(250, 249, 245, 255)
+)
+
+// Status is the handle the launcher's work uses to drive the window. All methods are
+// safe to call from any goroutine: they only set gogpu/ui signals (thread-safe) and
+// widget visibility (mutex-guarded).
+//
+// The window is one fixed view: headline, progress bar, detail line, and a row of up
+// to three buttons that is hidden unless something is waiting for a click. It has to
+// stay a tree of gogpu/ui's own widgets: the window composites from repaint-boundary
+// layers rooted at its root widget, and a custom root widget renders nothing.
+type Status struct {
+	app *gogpu.App
+
+	headline state.Signal[string]
 	detail   state.Signal[string]
 	progress state.Signal[float64]
-	noClose  state.Signal[bool]
+	labels   [maxButtons]state.Signal[string]
 
-	root   *switcher
-	closed chan struct{} // closed once the window loop has ended
+	progressBox *primitives.BoxWidget
+	buttonBoxes [maxButtons]*primitives.BoxWidget
+
+	mu      sync.Mutex
+	clicked chan int // receives the index of a clicked button; nil when none is shown
+
+	// pinned stops log lines from overwriting the detail line while it's showing a
+	// question or an error.
+	pinned  atomic.Bool
+	lastPct atomic.Int64
+	closed  chan struct{} // closed when the window loop has ended
 }
 
-// Step sets the headline ("Downloading Claude 2.7032.0...").
+// Step sets the headline.
 func (s *Status) Step(text string) {
-	s.step.Set(text)
-	s.gogpuApp.RequestRedraw()
+	s.headline.Set(text)
+	s.app.RequestRedraw()
 }
 
-// Progress sets the bar, 0..1. Pass a negative value to empty it.
-func (s *Status) Progress(frac float64) {
-	if frac < 0 {
-		frac = 0
+// DownloadProgress reports download progress; it fits patcher.DownloadProgress.
+func (s *Status) DownloadProgress(done, total int64) {
+	if total <= 0 {
+		return
 	}
-	s.progress.Set(frac)
-	s.gogpuApp.RequestRedraw()
+	pct := done * 100 / total
+	if s.lastPct.Swap(pct) == pct {
+		return // redraw only when the percentage changes
+	}
+	s.progress.Set(float64(done) / float64(total))
+	if done >= total {
+		s.Step("Installing Claude...")
+	} else {
+		s.Step(fmt.Sprintf("Downloading Claude... %d%% (%d / %d MB)", pct, done>>20, total>>20))
+	}
 }
 
-// Detail sets the small line under the bar (latest log line, byte counts...).
-func (s *Status) Detail(text string) {
-	s.detail.Set(text)
-	s.gogpuApp.RequestRedraw()
+// Ask shows a question with one button per option (up to three) and blocks until one
+// is clicked, then restores the previous view. Returns the index clicked, or -1 if
+// the window was closed instead.
+func (s *Status) Ask(question, detail string, options []string) int {
+	prevHeadline, prevDetail := s.headline.Get(), s.detail.Get()
+	defer func() {
+		s.progressBox.SetVisible(true)
+		s.pinned.Store(false)
+		s.headline.Set(prevHeadline)
+		s.detail.Set(prevDetail)
+		s.app.RequestRedraw()
+	}()
+	return s.prompt(question, detail, options)
 }
 
-// Run shows the status window and runs work on a background goroutine; it must be
-// called from the main goroutine. Everything work prints to stdout/stderr is mirrored
-// into the window's detail line (and still written to the original stdout). On success
-// the window closes by itself; on error it shows the error and waits to be closed.
-//
-// If the window can't be created at all (no display, no usable GPU or software
-// fallback), work runs without it and ok is false, so the caller can fall back to
-// its terminal behaviour for the next launch.
-func Run(title string, work func(s *Status) error) (workErr error, ok bool) {
-	m3 := material3.New(widget.Hex(0xD97757)) // Claude's orange
+// prompt replaces the progress bar with buttons, shows headline and detail, and
+// waits for a click (or the window closing: -1). The caller restores the view.
+func (s *Status) prompt(headline, detail string, options []string) int {
+	if len(options) > maxButtons {
+		options = options[:maxButtons]
+	}
+	clicked := make(chan int, 1)
 
+	s.pinned.Store(true)
+	s.progressBox.SetVisible(false)
+	s.headline.Set(headline)
+	s.detail.Set(detail)
+	s.setButtons(options, clicked)
+	defer s.setButtons(nil, nil)
+
+	select {
+	case i := <-clicked:
+		return i
+	case <-s.closed:
+		return -1
+	}
+}
+
+// setButtons shows one button per label, hiding the rest, and routes their clicks to
+// clicked. setButtons(nil, nil) hides them all.
+func (s *Status) setButtons(labels []string, clicked chan int) {
+	s.mu.Lock()
+	s.clicked = clicked
+	s.mu.Unlock()
+	for i := range s.buttonBoxes {
+		label := ""
+		if i < len(labels) {
+			label = labels[i]
+		}
+		// Visibility first: the label change is what marks the view for redraw.
+		s.buttonBoxes[i].SetVisible(label != "")
+		s.labels[i].Set(label)
+	}
+	s.app.RequestRedraw()
+}
+
+func (s *Status) click(i int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.clicked != nil {
+		select {
+		case s.clicked <- i:
+		default: // already have a click
+		}
+	}
+}
+
+// Run shows the status window and runs work on another goroutine; call it from the
+// main goroutine. Whatever work prints is mirrored to the detail line (and still
+// reaches the original stdout, if there is one). On success the window closes
+// itself; on error it shows the error until closed. If the window can't open at all
+// (no display, no usable renderer), work simply finishes without it.
+func Run(title string, work func(s *Status) error) error {
 	gogpuApp := gogpu.NewApp(gogpu.DefaultConfig().
 		WithTitle(title).
-		WithSize(560, 220).
+		WithSize(windowWidth, windowHeight).
 		WithResizable(false))
 
 	s := &Status{
-		gogpuApp: gogpuApp,
-		step:     state.NewSignal("Starting..."),
+		app:      gogpuApp,
+		headline: state.NewSignal("Starting..."),
 		detail:   state.NewSignal(""),
 		progress: state.NewSignal(0.0),
-		noClose:  state.NewSignal(true),
 		closed:   make(chan struct{}),
+	}
+	s.lastPct.Store(-1)
+	for i := range s.labels {
+		s.labels[i] = state.NewSignal("")
 	}
 
 	uiApp := app.New(
 		app.WithWindowProvider(gogpuApp),
 		app.WithPlatformProvider(gogpuApp),
 		app.WithEventSource(gogpuApp.EventSource()),
-		app.WithTheme(m3.AsTheme()),
+		app.WithTheme(material3.New(accent).AsTheme()),
 	)
-	s.root = newSwitcher(buildUI(s, gogpuApp))
-	uiApp.SetRoot(s.root)
+	uiApp.SetRoot(s.build())
+	s.setButtons(nil, nil)
 
-	restore := captureOutput(s)
+	restore := mirrorOutput(s)
+	defer restore()
 
 	var result error
 	finished := make(chan struct{})
-	runReturned := s.closed
 	go func() {
 		defer close(finished)
 		result = work(s)
-		if result != nil {
-			s.Step("Something went wrong")
-			s.Detail(result.Error())
-			s.noClose.Set(false) // enable the Close button
-			gogpuApp.RequestRedraw()
-			return
+		switch {
+		case result != nil:
+			s.prompt("Something went wrong", result.Error(), []string{"Close"})
+		case os.Getenv("CLAUDE_WEBEXT_GUI_HOLD") != "":
+			// Testing aid: keep the finished window up for inspection.
+			s.prompt(s.headline.Get(), "Done.", []string{"Finish"})
 		}
-		// Keep asking until the loop is gone: a Quit that lands before desktop.Run
-		// has started its loop would otherwise be lost.
-		for {
-			gogpuApp.Quit()
-			select {
-			case <-runReturned:
-				return
-			case <-time.After(100 * time.Millisecond):
-			}
-		}
+		quit(gogpuApp, s.closed)
 	}()
 
-	runErr := desktop.Run(gogpuApp, uiApp)
-	close(runReturned)
-	restore()
-
-	select {
-	case <-finished:
-		return result, runErr == nil
-	default:
+	if err := desktop.Run(gogpuApp, uiApp); err != nil {
+		fmt.Fprintf(os.Stderr, "Status window unavailable (%v), continuing without it\n", err)
 	}
-
-	if runErr != nil {
-		// The window never came up (or died): finish the work without it.
-		fmt.Fprintf(os.Stderr, "Status window unavailable (%v), continuing without it\n", runErr)
-		<-finished
-		return result, false
-	}
-	// Window closed by the user while work was still running: let it finish.
-	<-finished
-	return result, true
+	close(s.closed)
+	<-finished // also covers the user closing the window while work is still running
+	return result
 }
 
-func buildUI(s *Status, gogpuApp *gogpu.App) widget.Widget {
-	card := primitives.VBox(
-		primitives.Text("Claude WebExtension Launcher").
-			FontSize(13).
-			Color(widget.RGBA8(120, 120, 120, 255)),
-		primitives.Text("").ContentSignal(s.step).
-			FontSize(18).
-			Bold().
-			Color(widget.RGBA8(33, 33, 33, 255)),
+// quit ends the window loop. gogpu drops a Quit that arrives before its loop has
+// started, so keep asking until the loop is gone.
+func quit(a *gogpu.App, closed <-chan struct{}) {
+	for {
+		a.Quit()
+		select {
+		case <-closed:
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+func (s *Status) build() widget.Widget {
+	// Hideable parts sit in their own Box: Box.Draw skips itself when hidden, but not
+	// every widget checks its own visibility.
+	s.progressBox = primitives.Box(
 		progressbar.New(
 			progressbar.ValueSignal(s.progress),
 			progressbar.Height(8),
 			progressbar.Radius(4),
+			progressbar.ColorSchemeOpt(progressbar.ProgressBarColorScheme{
+				Bar:   accent,
+				Track: widget.Hex(0xE8E4DC),
+			}),
 		),
+	).CrossAlign(primitives.CrossAxisStretch)
+
+	buttons := make([]widget.Widget, maxButtons)
+	for i := range buttons {
+		i := i
+		s.buttonBoxes[i] = primitives.Box(button.New(
+			button.TextSignal(s.labels[i]),
+			button.OnClick(func() { s.click(i) }),
+		))
+		buttons[i] = s.buttonBoxes[i]
+	}
+
+	// CrossAxisStretch (here and on progressBox) gives children the full width; the
+	// progress bar would otherwise sit at its ~200px preferred width.
+	return primitives.VBox(
+		primitives.Text("").ContentSignal(s.headline).
+			FontSize(18).
+			Bold().
+			Color(widget.RGBA8(33, 33, 33, 255)),
+		s.progressBox,
 		primitives.Text("").ContentSignal(s.detail).
 			FontSize(12).
 			Color(widget.RGBA8(100, 100, 100, 255)),
-		button.New(
-			button.TextOpt("Close"),
-			button.DisabledSignal(s.noClose),
-			button.OnClick(gogpuApp.Quit),
-		),
+		primitives.HBox(buttons...).Gap(8),
 	).
+		CrossAlign(primitives.CrossAxisStretch).
 		Padding(24).
 		Gap(10).
-		Background(widget.RGBA8(250, 249, 245, 255))
-
-	return card
+		Background(background)
 }
 
-// captureOutput mirrors stdout/stderr into the window's detail line, keeping the
-// original streams as well. Returns a function that restores them.
-func captureOutput(s *Status) func() {
+// mirrorOutput redirects stdout/stderr into the detail line, while still copying it
+// to the original stdout. Returns a function that restores them.
+func mirrorOutput(s *Status) func() {
 	origOut, origErr := os.Stdout, os.Stderr
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -185,12 +285,17 @@ func captureOutput(s *Status) func() {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		sc := bufio.NewScanner(io.TeeReader(r, origOut))
+		// The copy to the original stdout ignores errors: a Windows GUI build has no
+		// stdout, and a failing write must not stop this loop, or the pipe fills up
+		// and every print in the launcher blocks.
+		sc := bufio.NewScanner(io.TeeReader(r, ignoreErrors{origOut}))
 		for sc.Scan() {
-			if line := strings.TrimSpace(sc.Text()); line != "" {
-				s.Detail(truncate(line, 90))
+			if line := strings.TrimSpace(sc.Text()); line != "" && !s.pinned.Load() {
+				s.detail.Set(truncate(line, 90))
+				s.app.RequestRedraw()
 			}
 		}
+		io.Copy(io.Discard, r) // an over-long line stops the scanner; keep draining
 	}()
 
 	return func() {
@@ -201,57 +306,16 @@ func captureOutput(s *Status) func() {
 	}
 }
 
-func truncate(s string, n int) string {
-	if len([]rune(s)) <= n {
-		return s
-	}
-	return string([]rune(s)[:n-1]) + "…"
+type ignoreErrors struct{ w io.Writer }
+
+func (i ignoreErrors) Write(p []byte) (int, error) {
+	i.w.Write(p)
+	return len(p), nil
 }
 
-// Ask replaces the progress view with a question and one button per option, and
-// blocks until one is clicked. Returns the chosen index, or -1 if the window was
-// closed instead.
-func (s *Status) Ask(question, detail string, options []string) int {
-	choice := make(chan int, 1)
-	buttons := make([]widget.Widget, len(options))
-	for i, label := range options {
-		i := i
-		buttons[i] = button.New(
-			button.TextOpt(label),
-			button.OnClick(func() {
-				select {
-				case choice <- i:
-				default:
-				}
-			}),
-		)
+func truncate(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n-1]) + "…"
 	}
-
-	view := primitives.VBox(
-		primitives.Text(question).
-			FontSize(16).
-			Bold().
-			Color(widget.RGBA8(33, 33, 33, 255)),
-		primitives.Text(detail).
-			FontSize(12).
-			Color(widget.RGBA8(80, 80, 80, 255)),
-		primitives.HBox(buttons...).Gap(8),
-	).
-		Padding(24).
-		Gap(12).
-		Background(widget.RGBA8(250, 249, 245, 255))
-
-	s.root.show(view)
-	s.gogpuApp.RequestRedraw()
-	defer func() {
-		s.root.show(nil)
-		s.gogpuApp.RequestRedraw()
-	}()
-
-	select {
-	case i := <-choice:
-		return i
-	case <-s.closed:
-		return -1
-	}
+	return s
 }

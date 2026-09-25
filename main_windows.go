@@ -52,8 +52,10 @@ func claudeExecutablePath() string {
 
 // runPatcherMode runs the elevated patcher code path. Called when the launcher
 // is re-invoked with --patcher via UAC.
-func runPatcherMode(forceUpdate bool, debug bool) int {
+func runPatcherMode(forceUpdate, debug bool, packagePath, packageVersion string) int {
 	fmt.Println("Running in elevated patcher mode...")
+	patcher.PrefetchedPackage = packagePath
+	patcher.PrefetchedVersion = packageVersion
 
 	if err := patcher.TakeWindowsAppsOwnership(); err != nil {
 		fmt.Printf("Failed to take WindowsApps ownership: %v\n", err)
@@ -163,10 +165,9 @@ func ensureClaudeReady(forceUpdate bool) error {
 		args += fmt.Sprintf(` --package="%s" --package-version=%s`, pkg, pkgVersion)
 	}
 
-	step("Waiting for administrator permission...")
+	ui.Step("Installing Claude...")
 	fmt.Println("Administrator privileges required for patching...")
 	exitCode, err := utils.RunElevatedAndWait(exe, args)
-	step("Checking for Claude updates...")
 	if err != nil {
 		// UAC denied or ShellExecuteEx failed
 		if claudeInstalled() {

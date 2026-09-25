@@ -111,32 +111,6 @@ func downloadAndExtract(version, downloadURL string) error {
 	return nil
 }
 
-func downloadFile(url, dst string) error {
-	fmt.Printf("Downloading from: %s\n", url)
-	resp, err := http.Get(url)
-	if err != nil {
-		return fmt.Errorf("downloading: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("downloading: HTTP %d", resp.StatusCode)
-	}
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return fmt.Errorf("creating file: %v", err)
-	}
-	_, err = io.Copy(out, progressBody(resp))
-	if cerr := out.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return fmt.Errorf("saving file: %v", err)
-	}
-	fmt.Printf("Downloaded: %s\n", dst)
-	return nil
-}
-
 func verifySHA256(filePath, expected string) error {
 	f, err := os.Open(filePath)
 	if err != nil {

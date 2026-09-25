@@ -5,7 +5,6 @@ package patcher
 import (
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +16,13 @@ import (
 // user-writable, so the elevated side never trusts it: it copies the package into the
 // admin-only install folder and verifies Anthropic's signature on that copy before
 // extracting anything. See useVerifiedPackage.
+
+// PrefetchedPackage / PrefetchedVersion are the package handed to the elevated
+// patcher via --package / --package-version (set in runPatcherMode).
+var (
+	PrefetchedPackage string
+	PrefetchedVersion string
+)
 
 // msixSigner is the publisher Claude's MSIX must be signed by. Matched on the subject
 // rather than a thumbprint, which changes whenever Anthropic renews the certificate.
@@ -44,28 +50,9 @@ func PrefetchWindowsPackage(forceUpdate bool) (path, version string, err error) 
 	}
 	path = filepath.Join(dir, fmt.Sprintf("Claude-%s.msix", latest))
 
-	fmt.Printf("Downloading from: %s\n", url)
-	resp, err := http.Get(url)
-	if err != nil {
-		return "", "", fmt.Errorf("downloading: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("downloading: HTTP %d", resp.StatusCode)
-	}
-	out, err := os.Create(path)
-	if err != nil {
+	if err := downloadFile(url, path); err != nil {
 		return "", "", err
 	}
-	_, err = io.Copy(out, progressBody(resp))
-	if cerr := out.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		os.Remove(path)
-		return "", "", fmt.Errorf("saving download: %v", err)
-	}
-	fmt.Printf("Downloaded: %s\n", path)
 	return path, latest, nil
 }
 

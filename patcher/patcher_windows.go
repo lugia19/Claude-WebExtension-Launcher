@@ -6,7 +6,6 @@ import (
 	"archive/zip"
 	"claude-webext-patcher/utils"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -243,30 +242,16 @@ func downloadAndExtract(version, downloadURL string) error {
 	newVersionZipName := fmt.Sprintf("Claude-%s.msix", version)
 
 	// The package lives inside the admin-only install folder while it's verified and
-	// extracted, so nothing unelevated can swap it in between.
-	newVersionDownloadPath := filepath.Join(installBaseDir, newVersionZipName+".tmp")
+	// extracted, so nothing unelevated can swap it in between. It must keep the .msix
+	// extension: Get-AuthenticodeSignature picks its verifier by extension and reports
+	// UnknownError for anything else.
+	newVersionDownloadPath := filepath.Join(installBaseDir, "downloading-"+newVersionZipName)
 	defer os.Remove(newVersionDownloadPath)
 
 	if !useVerifiedPackage(version, newVersionDownloadPath) {
-		fmt.Printf("Downloading from: %s\n", downloadURL)
-
-		resp, err := http.Get(downloadURL)
-		if err != nil {
-			return fmt.Errorf("downloading: %v", err)
+		if err := downloadFile(downloadURL, newVersionDownloadPath); err != nil {
+			return err
 		}
-		defer resp.Body.Close()
-
-		outFile, err := os.Create(newVersionDownloadPath)
-		if err != nil {
-			return fmt.Errorf("creating file: %v", err)
-		}
-		_, err = io.Copy(outFile, progressBody(resp))
-		outFile.Close()
-		if err != nil {
-			return fmt.Errorf("saving file: %v", err)
-		}
-		fmt.Printf("Downloaded: %s\n", newVersionDownloadPath)
-
 		if err := verifyMSIXSignature(newVersionDownloadPath); err != nil {
 			return fmt.Errorf("downloaded package failed verification: %v", err)
 		}
