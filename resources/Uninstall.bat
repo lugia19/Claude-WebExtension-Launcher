@@ -30,11 +30,14 @@ if /i not "%Confirm%"=="Y" (
     exit /b 0
 )
 
-:: Remove the Start Menu / Startup shortcuts (default and named instances). Done
-:: before elevating, so %APPDATA% is still this user's.
+:: Remove the Start Menu / Startup shortcuts: the launcher's ("Claude Desktop
+:: (Extended)") and the instances' ("Claude (<name>)"). Done before elevating, so
+:: %APPDATA% is still this user's.
 echo Removing Start Menu and Startup shortcuts...
-del /q "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Claude Desktop (Extended)*.lnk" >nul 2>&1
-del /q "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Claude Desktop (Extended)*.lnk" >nul 2>&1
+for %%D in ("%APPDATA%\Microsoft\Windows\Start Menu\Programs" "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup") do (
+    del /q "%%~D\Claude Desktop (Extended).lnk" >nul 2>&1
+    del /q "%%~D\Claude (*).lnk" >nul 2>&1
+)
 
 :: Self-elevate
 echo Requesting administrator privileges...

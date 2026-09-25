@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // Settings are the launcher's own preferences, in settings.json next to the log.
@@ -12,7 +13,18 @@ import (
 // deletion can never disagree with a stored copy.
 type Settings struct {
 	SetupDone bool `json:"setupDone"` // the first-run setup screen has been shown
+
+	// ManageInstances shows the instance list after the checklist.
+	ManageInstances bool `json:"manageInstances,omitempty"`
+	// Instances are the named instances in the list (the default one is implicit).
+	Instances []string `json:"instances,omitempty"`
+	// InstancesImported: existing instance data folders were added to Instances once.
+	InstancesImported bool `json:"instancesImported,omitempty"`
 }
+
+// settingsMu serializes UpdateSettings within this process (the setup screen and the
+// instance list change settings from different goroutines).
+var settingsMu sync.Mutex
 
 func settingsPath() string {
 	return filepath.Join(logDir(), "settings.json")
@@ -37,4 +49,13 @@ func SaveSettings(s Settings) error {
 		return err
 	}
 	return os.WriteFile(settingsPath(), data, 0644)
+}
+
+// UpdateSettings loads the settings, lets change modify them, and saves the result.
+func UpdateSettings(change func(s *Settings)) error {
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
+	s := LoadSettings()
+	change(&s)
+	return SaveSettings(s)
 }

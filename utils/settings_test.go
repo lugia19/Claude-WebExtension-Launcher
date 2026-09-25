@@ -18,4 +18,16 @@ func TestSettingsRoundTrip(t *testing.T) {
 	if !LoadSettings().SetupDone {
 		t.Fatal("SetupDone didn't survive a save/load")
 	}
+
+	err := UpdateSettings(func(s *Settings) {
+		s.ManageInstances = true
+		s.Instances = append(s.Instances, "work")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := LoadSettings()
+	if !got.SetupDone || !got.ManageInstances || len(got.Instances) != 1 || got.Instances[0] != "work" {
+		t.Fatalf("UpdateSettings result = %+v", got)
+	}
 }

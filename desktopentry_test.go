@@ -33,10 +33,13 @@ func TestDesktopEntry(t *testing.T) {
 }
 
 func TestEntryNames(t *testing.T) {
-	if entryName(defaultInstanceName) != shortcutName || entryArgs(defaultInstanceName) != nil {
-		t.Fatal("default instance should use the plain name and no arguments")
+	if entryName(launcherEntry) != shortcutName || entryArgs(launcherEntry) != nil {
+		t.Fatal("the launcher's entry should use the plain name and no arguments")
 	}
-	if entryName("work") != shortcutName+" - work" {
+	if entryName(mainInstanceName) != "Claude (Main)" || entryArgs(mainInstanceName)[0] != "--instance=Main" {
+		t.Fatal("the main instance should get its own entry, like any instance")
+	}
+	if entryName("work") != "Claude (work)" {
 		t.Fatalf("named instance: %q", entryName("work"))
 	}
 	if a := entryArgs("work"); len(a) != 1 || a[0] != "--instance=work" {

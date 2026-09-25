@@ -19,7 +19,8 @@ const (
 	rowLaunch     = "launch"
 )
 
-func checklistRows(withSandbox, withCowork bool) []gui.Row {
+// withLaunch is false when the run ends on the instance list rather than launching.
+func checklistRows(withSandbox, withCowork, withLaunch bool) []gui.Row {
 	rows := []gui.Row{
 		{ID: rowLauncher, Label: "Launcher update"},
 		{ID: rowClaude, Label: "Claude", Download: true},
@@ -34,7 +35,10 @@ func checklistRows(withSandbox, withCowork bool) []gui.Row {
 	if withCowork {
 		rows = append(rows, gui.Row{ID: rowCowork, Label: "Cowork service"})
 	}
-	return append(rows, gui.Row{ID: rowLaunch, Label: "Launching Claude"})
+	if withLaunch {
+		rows = append(rows, gui.Row{ID: rowLaunch, Label: "Launching Claude"})
+	}
+	return rows
 }
 
 // userInterface is how the launcher's flow talks to the user: the window

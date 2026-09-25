@@ -7,8 +7,15 @@ const fs = require("fs");
 // ================================================================
 // Instance isolation — redirect userData before anything reads it
 // ================================================================
-// Parse instance name supporting both `--instance=name` and `--instance name`
-let instanceName = "modified";
+// Parse instance name supporting both `--instance=name` and `--instance name`.
+// Without one it's the main instance, "Main". That used to be "modified": the launcher
+// renames its data folder, but until it has, keep using the old one (e.g. Claude
+// started from a taskbar pin before the launcher's first run since the rename).
+let instanceName = "Main";
+if (!fs.existsSync(path.join(app.getPath("appData"), app.getName() + "-Main")) &&
+    fs.existsSync(path.join(app.getPath("appData"), app.getName() + "-modified"))) {
+    instanceName = "modified";
+}
 const eqArg = process.argv.find(a => a.startsWith("--instance="));
 const spaceIdx = process.argv.indexOf("--instance");
 
