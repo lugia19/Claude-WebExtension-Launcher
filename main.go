@@ -43,6 +43,8 @@ func main() {
 	installURL := flag.String("install-url", "", "Download URL of --install-version (internal)")
 	packagePath := flag.String("package", "", "Downloaded package for --install-version (internal)")
 	cowork := flag.Bool("cowork", false, "Register the Cowork service (internal)")
+
+	showSetup := flag.Bool("show-setup", false, "Show the setup screen again (applications menu, start at login) before launching")
 	flag.Parse()
 
 	selfupdate.CurrentVersion = Version
@@ -84,7 +86,7 @@ func main() {
 
 	stop, _ := utils.StartLog(opts.logPath, true, nil)
 	rows := checklistRows(sandboxNeeded(), coworkNeeded())
-	err := gui.Run("Claude WebExtension Launcher", rows, opts.logPath, func(s *gui.Status) error {
+	err := gui.Run("Claude WebExtension Launcher", rows, opts.logPath, firstRunSetup(opts.instance, *showSetup), func(s *gui.Status) error {
 		ui = s
 		patcher.DownloadProgress = s.DownloadProgress
 		selfupdate.Notify = func(title, detail string) { s.Ask(title, detail, []string{"OK"}) }
@@ -340,4 +342,54 @@ func launchClaude(o launcherOptions) error {
 func claudeInstalled() bool {
 	_, err := os.Stat(claudeExecutablePath())
 	return err == nil
+}
+
+// firstRunSetup returns the setup screen for the first launch (or when asked for with
+// --show-setup), or nil once it has been shown, and always on macOS, where there's
+// nothing on it to choose. The checkboxes
+// start from what's already on disk, so shortcuts made with the old Toggle-*.bat
+// scripts are reflected; unchecking one removes it.
+func firstRunSetup(instance string, force bool) *gui.Setup {
+	if !menuEntrySupported() || (utils.LoadSettings().SetupDone && !force) {
+		return nil
+	}
+	return &gui.Setup{
+		Title: "Welcome to the WebExtension Launcher",
+		Subtitle: []string{
+			"A couple of choices before the first launch.",
+			"You can change them later by running the launcher with --show-setup.",
+		},
+		Options: []gui.SetupOption{
+			{Label: "Add to the applications menu", Checked: true},
+			{Label: "Start when I log in", Checked: hasStartup(instance)},
+		},
+		Apply: func(checked []bool) {
+			applyEntry := func(what string, want, have bool, add, remove func() error) {
+				var err error
+				switch {
+				case want && !have:
+					err = add()
+				case !want && have:
+					err = remove()
+				default:
+					return
+				}
+				if err != nil {
+					fmt.Printf("Warning: could not update the %s: %v\n", what, err)
+				}
+			}
+			applyEntry("applications menu entry", checked[0], hasMenuEntry(instance),
+				func() error { return addMenuEntry(instance) },
+				func() error { return removeMenuEntry(instance) })
+			applyEntry("startup entry", checked[1], hasStartup(instance),
+				func() error { return setStartup(instance, true) },
+				func() error { return setStartup(instance, false) })
+
+			settings := utils.LoadSettings()
+			settings.SetupDone = true
+			if err := utils.SaveSettings(settings); err != nil {
+				fmt.Printf("Warning: could not save settings: %v\n", err)
+			}
+		},
+	}
 }

@@ -164,8 +164,6 @@ if [ -f "$APP_NAME.exe" ]; then
     
     # Copy executable and batch scripts to temp directory
     cp "$APP_NAME.exe" "$temp_dir/"
-    cp "resources/Toggle-Startup.bat" "$temp_dir/"
-    cp "resources/Toggle-StartMenu.bat" "$temp_dir/"
     
     # Create zip from temp directory
     cd "$temp_dir"

@@ -30,6 +30,12 @@ if /i not "%Confirm%"=="Y" (
     exit /b 0
 )
 
+:: Remove the Start Menu / Startup shortcuts (default and named instances). Done
+:: before elevating, so %APPDATA% is still this user's.
+echo Removing Start Menu and Startup shortcuts...
+del /q "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Claude Desktop (Extended)*.lnk" >nul 2>&1
+del /q "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Claude Desktop (Extended)*.lnk" >nul 2>&1
+
 :: Self-elevate
 echo Requesting administrator privileges...
 powershell -Command "Start-Process -FilePath '%~f0' -ArgumentList 'ELEVATED' -Verb RunAs"

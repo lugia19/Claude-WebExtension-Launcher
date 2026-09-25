@@ -8,8 +8,11 @@ import (
 	"syscall"
 )
 
-// platformSetup has nothing to do on Linux.
-func platformSetup() {}
+// platformSetup keeps the hidden claude:// link handler entry current (see
+// shortcuts_linux.go), so magic links reach the patched app.
+func platformSetup() {
+	writeLinkHandler()
+}
 
 // claudeUserDataDir mirrors Electron's appData on Linux: $XDG_CONFIG_HOME, defaulting
 // to ~/.config. The wrapper appends "-<instance>" to the app name there.
