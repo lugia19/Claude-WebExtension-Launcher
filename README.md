@@ -90,12 +90,24 @@ Running the launcher with `--debug` skips the window and shows everything in the
 ### Quick Start
 Download the latest installer from [Releases](https://github.com/lugia19/Claude-WebExtension-Launcher/releases) and run it. The installer will handle everything automatically.
 
-On Linux, pick the `linux-amd64` or `linux-arm64` zip, extract it and run `Claude_WebExtension_Launcher`. The binary can live anywhere; the modified Claude and its extensions are kept in `~/.local/share/claude-webext-launcher`.
+On first run the launcher installs itself to a fixed place and runs from there from then on, so its shortcuts and updates always use the same path:
+
+| OS | Installed launcher |
+|---|---|
+| Windows | `%LOCALAPPDATA%\ClaudeWebExtLauncher\Claude_WebExtension_Launcher.exe` |
+| macOS | `~/Applications/Claude_WebExtension_Launcher.app` |
+| Linux | `~/.local/share/claude-webext-launcher/Claude_WebExtension_Launcher` |
+
+After that you can delete what you downloaded. Running a downloaded copy again simply hands over to the installed one, or replaces it first if the download is a newer version.
+
+To uninstall, run `Uninstall.bat` in `%LOCALAPPDATA%\ClaudeWebExtLauncher` (Windows) or `Uninstall.command` in `~/Library/Application Support/Claude WebExtension Launcher` (macOS); the launcher keeps them there. Your conversation data is kept.
+
+On Linux, pick the `linux-amd64` or `linux-arm64` zip, extract it and run `Claude_WebExtension_Launcher`. The modified Claude and its extensions are kept in `~/.local/share/claude-webext-launcher` too.
 
 ### Applications menu and startup
 On first launch (Windows and Linux) the launcher asks whether to add itself to the applications menu (the Start Menu on Windows) and whether to start when you log in. To change your mind later, run it with `--show-setup` to get the same screen again. Instances can have their own entries too, from the cog in the instance list (see [Multi-instance](#multi-instance)).
 
-On macOS, put the app in Applications and use System Settings → General → Login Items instead.
+On macOS the launcher is in your Applications folder (`~/Applications`) once it has run; for starting at login, use System Settings → General → Login Items.
 
 On Linux, the launcher also registers itself for `claude://` links, so magic-link login opens in the modified app.
 

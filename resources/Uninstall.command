@@ -5,9 +5,10 @@
 # Double-click this file on macOS to run it.
 
 INSTALL_DIR="$HOME/Library/Application Support/Claude WebExtension Launcher"
+LAUNCHER_APP="$HOME/Applications/Claude_WebExtension_Launcher.app"
 
-if [ ! -d "$INSTALL_DIR" ]; then
-    echo "Nothing to uninstall - install directory does not exist."
+if [ ! -d "$INSTALL_DIR" ] && [ ! -d "$LAUNCHER_APP" ]; then
+    echo "Nothing to uninstall - neither the launcher nor the patched Claude is installed."
     echo ""
     read -p "Press Enter to exit..."
     exit 0
@@ -30,6 +31,9 @@ if [ "$CONFIRM" != "Y" ] && [ "$CONFIRM" != "y" ]; then
 fi
 
 echo ""
+echo "Removing the installed launcher..."
+rm -rf "$LAUNCHER_APP"
+
 echo "Removing $INSTALL_DIR..."
 rm -rf "$INSTALL_DIR"
 
