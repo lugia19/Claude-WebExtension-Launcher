@@ -62,21 +62,28 @@ func fetchLatestRelease(ext Extension) (*extensionRelease, error) {
 }
 
 // NeedsUpdate checks whether any extension has a newer version available
-// without downloading anything. Used by the unelevated launcher to decide
-// whether to invoke the elevated patcher.
-func NeedsUpdate() bool {
+// without downloading anything. Used by the launcher to decide whether to run the
+// worker. err is set when some lookup failed (e.g. GitHub unreachable or rate
+// limited), so "no update found" can be told apart from "couldn't check".
+func NeedsUpdate() (bool, error) {
+	var failed []string
 	for _, ext := range extensions {
 		currentVersion := getInstalledVersion(ext)
 		release, err := fetchLatestRelease(ext)
 		if err != nil {
+			fmt.Printf("  %s: error checking: %v\n", ext.Folder, err)
+			failed = append(failed, ext.Folder)
 			continue
 		}
 		releaseVersion := strings.TrimPrefix(release.TagName, "v")
 		if compareVersions(currentVersion, releaseVersion) < 0 {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	if len(failed) > 0 {
+		return false, fmt.Errorf("couldn't check %s for updates", strings.Join(failed, ", "))
+	}
+	return false, nil
 }
 
 func UpdateAll() error {

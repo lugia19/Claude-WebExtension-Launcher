@@ -183,12 +183,22 @@ func runLauncher(o launcherOptions) error {
 // new Claude, extension updates, the Cowork service), and follows its progress. A
 // failure is fatal only when there's no existing install to fall back to.
 func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg string) error {
-	needCowork := coworkNeeded()
-	needExtensions := extensions.NeedsUpdate()
-	if !update.Needed && !needExtensions && !needCowork {
+	// nothingToDo marks the rows when no worker is needed. A failed extension check
+	// is a warning, not "up to date".
+	nothingToDo := func(extErr error) error {
 		ui.SetRow(rowPatch, status.Skipped, "Patching", "up to date")
-		ui.SetRow(rowExtensions, status.Skipped, "Extensions", "up to date")
+		if extErr != nil {
+			ui.SetRow(rowExtensions, status.Warning, "Extensions", "couldn't check for updates")
+		} else {
+			ui.SetRow(rowExtensions, status.Skipped, "Extensions", "up to date")
+		}
 		return nil
+	}
+
+	needCowork := coworkNeeded()
+	needExtensions, extErr := extensions.NeedsUpdate()
+	if !update.Needed && !needExtensions && !needCowork {
+		return nothingToDo(extErr)
 	}
 
 	// Serialize with other launchers started at the same time.
@@ -215,11 +225,9 @@ func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg strin
 		update.Needed = false
 	}
 	needCowork = coworkNeeded()
-	needExtensions = extensions.NeedsUpdate()
+	needExtensions, extErr = extensions.NeedsUpdate()
 	if !update.Needed && !needExtensions && !needCowork {
-		ui.SetRow(rowPatch, status.Skipped, "Patching", "up to date")
-		ui.SetRow(rowExtensions, status.Skipped, "Extensions", "up to date")
-		return nil
+		return nothingToDo(extErr)
 	}
 
 	statusPath := filepath.Join(os.TempDir(), fmt.Sprintf("claude-webext-status-%d.jsonl", os.Getpid()))
