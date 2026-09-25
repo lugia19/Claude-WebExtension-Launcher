@@ -350,7 +350,8 @@ func claudeInstalled() bool {
 // start from what's already on disk, so shortcuts made with the old Toggle-*.bat
 // scripts are reflected; unchecking one removes it.
 func firstRunSetup(instance string, force bool) *gui.Setup {
-	if !menuEntrySupported() || (utils.LoadSettings().SetupDone && !force) {
+	setupDone := utils.LoadSettings().SetupDone
+	if !menuEntrySupported() || (setupDone && !force) {
 		return nil
 	}
 	return &gui.Setup{
@@ -360,7 +361,9 @@ func firstRunSetup(instance string, force bool) *gui.Setup {
 			"You can change them later by running the launcher with --show-setup.",
 		},
 		Options: []gui.SetupOption{
-			{Label: "Add to the applications menu", Checked: true},
+			// Suggested on the first run; reopened, it shows what's there, so Continue
+			// doesn't recreate an entry the user removed.
+			{Label: "Add to the applications menu", Checked: !setupDone || hasMenuEntry(instance)},
 			{Label: "Start when I log in", Checked: hasStartup(instance)},
 		},
 		Apply: func(checked []bool) {
