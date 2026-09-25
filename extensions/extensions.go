@@ -156,7 +156,9 @@ func downloadAndExtractExtension(url, folder string) error {
 	}
 	defer resp.Body.Close()
 
-	tempFile := utils.ResolvePath(folder + "-temp.zip")
+	// Install path, not launcher-local: on Windows this runs elevated, and the
+	// launcher-local folder is user-writable.
+	tempFile := utils.ResolveInstallPath(folder + "-temp.zip")
 	out, _ := os.Create(tempFile)
 	io.Copy(out, resp.Body)
 	out.Close()

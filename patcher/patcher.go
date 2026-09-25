@@ -341,7 +341,9 @@ func applyPatches(version string) error {
 	}
 
 	asarPath := filepath.Join(appResourcesDir, "app.asar")
-	tempDir := utils.ResolvePath("asar-temp")
+	// Under the install folder: on Windows the elevated worker extracts and deletes this,
+	// and the launcher-local folder (utils.ResolvePath) is user-writable.
+	tempDir := filepath.Join(installBaseDir, "asar-temp")
 
 	// Unpack asar
 	fmt.Println("Unpacking asar...")

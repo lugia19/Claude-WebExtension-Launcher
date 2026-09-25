@@ -231,6 +231,9 @@ func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg strin
 	if !update.Needed && !needExtensions && !needCowork {
 		return nothingToDo(extErr)
 	}
+	if !needCowork {
+		ui.SetRow(rowCowork, status.Skipped, "Cowork service", "set up") // registered meanwhile
+	}
 
 	statusPath := filepath.Join(os.TempDir(), fmt.Sprintf("claude-webext-status-%d.jsonl", os.Getpid()))
 	os.Remove(statusPath)
@@ -289,9 +292,15 @@ wait:
 			ui.SetRow(rowPatch, status.Failed, "", "")
 			return fmt.Errorf("couldn't install Claude: %v", res.err)
 		}
+		// Nothing the worker was asked to do happened.
 		ui.SetRow(rowPatch, status.Warning, "", "not updated: "+res.err.Error())
+		ui.SetRow(rowExtensions, status.Warning, "", "not updated")
+		ui.SetRow(rowCowork, status.Warning, "", "not set up")
 	case res.code != 0:
 		detail := failed[status.StepPatch]
+		if detail == "" {
+			detail = "see the log"
+		}
 		if !claudeInstalled() {
 			return fmt.Errorf("installing Claude failed: %s", detail)
 		}
