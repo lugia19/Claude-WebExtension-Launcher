@@ -18,6 +18,7 @@ import (
 	"github.com/gogpu/ui/app"
 	"github.com/gogpu/ui/desktop"
 	"github.com/gogpu/ui/theme/material3"
+	"github.com/gogpu/ui/widget"
 
 	"claude-webext-patcher/utils"
 )
@@ -51,6 +52,39 @@ func (w *window) runOnUI(fn func()) {
 	w.queued = append(w.queued, fn)
 	w.mu.Unlock()
 	w.gogpuApp.RequestRedraw() // wakes the loop, which then calls drain
+}
+
+// setRoot switches the window to another screen. UI thread only.
+//
+// On Linux (GLES), gogpu/ui sometimes shows a stale picture after a switch (an
+// earlier screen) until something on the new one repaints. So once the new screen has
+// been drawn, everything on it is marked for redrawing, like a hover would. Doing it
+// in the same frame is too early: it has to come after that frame's draw.
+func (w *window) setRoot(root widget.Widget) {
+	w.uiApp.SetRoot(root)
+	w.runOnUI(func() { // start of the next frame: still before this one's draw
+		w.runOnUI(func() { // the frame after: the switch has been drawn
+			if w.uiApp.Window().Root() == root {
+				markTreeForRedraw(root)
+			}
+		})
+	})
+}
+
+// markTreeForRedraw marks every widget in the tree as needing a repaint, and drops
+// the cached pictures of those that keep one (repaint boundaries).
+func markTreeForRedraw(wd widget.Widget) {
+	type redrawable interface{ SetNeedsRedraw(bool) }
+	type sceneCached interface{ InvalidateScene() }
+	if r, ok := wd.(redrawable); ok {
+		r.SetNeedsRedraw(true)
+	}
+	if c, ok := wd.(sceneCached); ok {
+		c.InvalidateScene()
+	}
+	for _, child := range wd.Children() {
+		markTreeForRedraw(child)
+	}
 }
 
 // drain runs the queued calls; it's gogpu's OnUpdate, which runs on the UI thread
@@ -114,12 +148,12 @@ func Run(title string, rows []Row, logPath string, setup *Setup, instances *Inst
 	s.hideButtons()
 	setupDone := make(chan []bool, 1)
 	if setup != nil {
-		uiApp.SetRoot(buildSetup(setup, "Continue", func(checked []bool) {
+		w.setRoot(buildSetup(setup, "Continue", func(checked []bool) {
 			setupDone <- checked
-			uiApp.SetRoot(checklist)
+			w.setRoot(checklist)
 		}, nil))
 	} else {
-		uiApp.SetRoot(checklist)
+		w.setRoot(checklist)
 	}
 
 	var result error

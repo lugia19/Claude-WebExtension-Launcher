@@ -62,7 +62,7 @@ func (w *window) showList() {
 		button.PainterOpt(iconPainter{icon: cogIcon, fg: textColor, bg: &trackColor}),
 		button.OnClick(w.showLauncherSettings),
 	).MinWidth(180)
-	w.uiApp.SetRoot(primitives.VBox(
+	w.setRoot(primitives.VBox(
 		title,
 		primitives.Expanded(list),
 		primitives.HBox(
@@ -160,7 +160,7 @@ func (w *window) showAdd() {
 		textfield.PainterOpt(themedTextField{}),
 	)
 
-	w.uiApp.SetRoot(primitives.VBox(
+	w.setRoot(primitives.VBox(
 		primitives.Text("Add an instance").FontSize(18).Bold().Color(textColor),
 		primitives.Text("Each instance has its own login, settings and sessions.").FontSize(13).Color(dimColor),
 		field,
@@ -217,7 +217,7 @@ func (w *window) showDelete(inst Instance) {
 			).Gap(8),
 		)
 	}
-	w.uiApp.SetRoot(primitives.VBox(children...).
+	w.setRoot(primitives.VBox(children...).
 		CrossAlign(primitives.CrossAxisStretch).
 		Padding(24).
 		Gap(14).
@@ -232,7 +232,7 @@ func (w *window) showSettings(inst Instance) {
 	if setup == nil {
 		return
 	}
-	w.uiApp.SetRoot(buildSetup(setup, "Save", func(checked []bool) {
+	w.setRoot(buildSetup(setup, "Save", func(checked []bool) {
 		w.setNote(inst.Name, "Saving settings…")
 		w.showList()
 		go func() {
@@ -246,7 +246,7 @@ func (w *window) showSettings(inst Instance) {
 // and applies them in the background.
 func (w *window) showLauncherSettings() {
 	setup := w.inst.LauncherSettings()
-	w.uiApp.SetRoot(buildSetup(setup, "Save", func(checked []bool) {
+	w.setRoot(buildSetup(setup, "Save", func(checked []bool) {
 		w.showList()
 		go setup.Apply(checked)
 	}, w.showList))
