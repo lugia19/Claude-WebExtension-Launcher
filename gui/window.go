@@ -40,14 +40,6 @@ func Run(title string, rows []Row, logPath string, work func(s *Status) error) e
 	ui.SetLogger(logger)
 	gg.SetLogger(logger)
 
-	// gogpu/ui's "damage-aware blit" redraws only the changed rectangles on top of the
-	// previous frame. That assumes the swapchain keeps its contents between frames,
-	// which some drivers/compositors don't (seen with llvmpipe under Wayland): the rest
-	// of the window turned black, and shrinking text left stale pixels behind. A full
-	// redraw of a window this small costs nothing, so always do that.
-	if os.Getenv("GOGPU_DAMAGE_BLIT") == "" {
-		os.Setenv("GOGPU_DAMAGE_BLIT", "0")
-	}
 	if os.Getenv("GOGPU_GRAPHICS_API") == "" && defaultGraphicsAPI != "" {
 		os.Setenv("GOGPU_GRAPHICS_API", defaultGraphicsAPI) // read by gogpu.DefaultConfig
 	}

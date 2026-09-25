@@ -98,8 +98,6 @@ type Status struct {
 	mu      sync.Mutex
 	clicked chan int // receives the index of a clicked button; nil when none is shown
 
-	root widget.Widget // set by build
-
 	closedFlag atomic.Bool
 	closed     chan struct{} // closed when the window loop has ended
 }
@@ -144,20 +142,10 @@ func (s *Status) markClosed() {
 	close(s.closed)
 }
 
-// redraw repaints the whole window. gogpu/ui normally repaints only the widgets that
-// changed, on top of its saved image of the window; where that saved image isn't
-// reliable (seen with llvmpipe under Wayland) the rest of the window came out black
-// and changed text was drawn over the old. Marking the whole (small) tree dirty makes
-// every change a full repaint. Each widget is marked under its own lock, so this is
-// safe off the UI thread.
 func (s *Status) redraw() {
-	if s.isClosed() {
-		return
+	if !s.isClosed() {
+		s.app.RequestRedraw()
 	}
-	if s.root != nil {
-		widget.MarkRedrawInTree(s.root)
-	}
-	s.app.RequestRedraw()
 }
 
 // SetRow updates a checklist row. An empty label keeps the current one.
@@ -364,7 +352,7 @@ func (s *Status) build() widget.Widget {
 
 	// CrossAxisStretch gives children the full width; the progress bar would otherwise
 	// sit at its ~200px preferred width.
-	s.root = primitives.VBox(
+	return primitives.VBox(
 		primitives.VBox(checklist...).Gap(10).CrossAlign(primitives.CrossAxisStretch),
 		primitives.VBox(
 			s.title.widget,
@@ -376,5 +364,4 @@ func (s *Status) build() widget.Widget {
 		Padding(24).
 		Gap(24).
 		Background(background)
-	return s.root
 }
