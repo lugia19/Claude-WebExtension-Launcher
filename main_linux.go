@@ -2,16 +2,24 @@ package main
 
 import (
 	"claude-webext-patcher/patcher"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
-// relaunchedEnv marks a launcher started by relaunchInTerminal, so a terminal that
-// somehow still gives us no TTY can't cause a relaunch loop.
+// relaunchedEnv marks a launcher started by relaunchInTerminal (so a terminal that
+// somehow still gives us no TTY can't cause a relaunch loop). Its value is a marker
+// file the relaunched copy creates to confirm it actually started.
 const relaunchedEnv = "CLAUDE_WEBEXT_IN_TERMINAL"
+
+// relaunchConfirmTimeout is how long to wait for the relaunched copy to check in. A
+// terminal binary can start fine and still fail to open a window (no display, no
+// session bus), so starting it isn't proof enough to exit.
+const relaunchConfirmTimeout = 10 * time.Second
 
 // prepareAdminContext relaunches the launcher inside a terminal emulator when it was
 // started without one (e.g. double-clicked in a file manager), so its output and any
@@ -19,16 +27,20 @@ const relaunchedEnv = "CLAUDE_WEBEXT_IN_TERMINAL"
 // macOS. It then makes sure Chromium's sandbox can start from our install location: on
 // Ubuntu 24.04+ that needs a one-time, root-installed AppArmor profile.
 func prepareAdminContext() error {
-	if !stdinIsTerminal() && os.Getenv(relaunchedEnv) == "" {
-		relaunchInTerminal() // only returns if no terminal emulator could be started
+	if marker := os.Getenv(relaunchedEnv); marker != "" {
+		// We are the relaunched copy: tell the original we made it into a terminal.
+		os.WriteFile(marker, nil, 0600)
+	} else if !stdinIsTerminal() {
+		relaunchInTerminal() // only returns if no terminal could be started
 	}
 	ensureAppArmorProfile()
 	return nil
 }
 
-// relaunchInTerminal re-runs the launcher inside a terminal emulator and exits. The
-// terminal stays open on failure so the error can be read, and closes on success.
-// Returns only if no terminal could be started.
+// relaunchInTerminal re-runs the launcher inside a terminal emulator and exits once the
+// new copy confirms it started. The terminal stays open on failure so the error can be
+// read, and closes on success. Returns only if no terminal worked, in which case the
+// caller simply carries on without one.
 func relaunchInTerminal() {
 	exe, err := os.Executable()
 	if err != nil {
@@ -58,17 +70,30 @@ func relaunchInTerminal() {
 		terminal{"xterm", []string{"-e"}},
 	)
 
+	marker := filepath.Join(os.TempDir(), fmt.Sprintf("claude-webext-relaunch-%d", os.Getpid()))
+	defer os.Remove(marker)
+
 	for _, t := range candidates {
 		bin, err := exec.LookPath(t.bin)
 		if err != nil {
 			continue
 		}
+		os.Remove(marker)
 		cmd := exec.Command(bin, append(t.args, self...)...)
-		cmd.Env = append(os.Environ(), relaunchedEnv+"=1")
+		cmd.Env = append(os.Environ(), relaunchedEnv+"="+marker)
 		if err := cmd.Start(); err != nil {
 			continue
 		}
-		os.Exit(0)
+		go cmd.Wait() // reap it; many terminals hand off to a server and exit at once
+
+		for deadline := time.Now().Add(relaunchConfirmTimeout); time.Now().Before(deadline); {
+			if _, err := os.Stat(marker); err == nil {
+				os.Remove(marker)
+				os.Exit(0)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		fmt.Printf("%s did not start the launcher, trying the next terminal...\n", t.bin)
 	}
 }
 

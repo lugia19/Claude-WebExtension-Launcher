@@ -5,8 +5,10 @@ package main
 import (
 	"claude-webext-patcher/extensions"
 	"claude-webext-patcher/patcher"
+	"claude-webext-patcher/utils"
 	"fmt"
 	"os"
+	"time"
 )
 
 // releaseAdminContext is a no-op on non-Windows platforms.
@@ -18,8 +20,29 @@ func claudeInstalled() bool {
 	return err == nil
 }
 
+const (
+	// patchLockName serializes patching and extension updates across launchers
+	// started together (e.g. several named instances), which share the staging,
+	// asar-temp and web-extensions paths.
+	patchLockName = "patch"
+	// patchLockTimeout is generous: a real update downloads Claude (~175-250 MB).
+	patchLockTimeout = 10 * time.Minute
+)
+
 // ensureClaudeReady runs patching and extension updates in-process on macOS and Linux.
 func ensureClaudeReady(forceUpdate bool) error {
+	lock, locked := utils.AcquirePatchLock(patchLockName, patchLockTimeout)
+	if locked {
+		// No separate re-check needed: EnsurePatched compares against the version
+		// files, so a launcher that waited here finds the work already done.
+		defer lock.Release()
+	} else if claudeInstalled() {
+		// The staging swap never leaves a half-written install, so launching
+		// whatever is there is safe.
+		fmt.Println("Warning: timed out waiting for another launcher to finish updating; launching existing installation.")
+		return nil
+	}
+
 	if err := patcher.EnsurePatched(forceUpdate); err != nil {
 		if claudeInstalled() {
 			fmt.Printf("Warning: patching failed (%v), launching existing installation.\n", err)

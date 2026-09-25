@@ -2,16 +2,43 @@
 
 package utils
 
-import "time"
+import (
+	"os"
+	"syscall"
+	"time"
+)
 
-// PatchLock is a no-op cross-process lock on non-Windows platforms. macOS patches
-// in-process during a single launcher run, so there is nothing to serialize.
-type PatchLock struct{}
-
-// AcquirePatchLock always succeeds immediately on non-Windows platforms.
-func AcquirePatchLock(name string, timeout time.Duration) (*PatchLock, bool) {
-	return &PatchLock{}, true
+// PatchLock is an acquired cross-process lock: an flock on a file in the launcher's
+// data directory. The kernel drops it when the holder exits, so a launcher that dies
+// mid-patch never deadlocks the ones waiting behind it.
+type PatchLock struct {
+	file *os.File
 }
 
-// Release is a no-op.
-func (l *PatchLock) Release() {}
+// AcquirePatchLock blocks until the named lock is acquired or the timeout elapses.
+// Returns (lock, true) on success, or (nil, false) on timeout/failure.
+func AcquirePatchLock(name string, timeout time.Duration) (*PatchLock, bool) {
+	f, err := os.OpenFile(ResolvePath(name+".lock"), os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return nil, false
+	}
+
+	deadline := time.Now().Add(timeout)
+	for {
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return &PatchLock{file: f}, true
+		}
+		if err != syscall.EWOULDBLOCK || time.Now().After(deadline) {
+			f.Close()
+			return nil, false
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+// Release unlocks and closes the lock file.
+func (l *PatchLock) Release() {
+	syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN)
+	l.file.Close()
+}
