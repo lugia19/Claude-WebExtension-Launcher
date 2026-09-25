@@ -1,6 +1,7 @@
 package main
 
 import (
+	"claude-webext-patcher/gui"
 	"claude-webext-patcher/patcher"
 	"claude-webext-patcher/selfupdate"
 	"flag"
@@ -11,6 +12,13 @@ import (
 )
 
 var launchClaudeInTerminal = false
+
+// guiMode is true while the launcher runs behind the status window, so platform code
+// knows not to relaunch itself in a terminal.
+var guiMode = false
+
+// step reports the launcher's current phase to the status window (no-op in terminal mode).
+var step = func(string) {}
 
 // Version is the current version of the application
 const Version = "3.3.3"
@@ -43,19 +51,53 @@ func main() {
 		os.Exit(runPatcherMode(*forceUpdate, *debug))
 	}
 
+	// Show the status window unless the terminal is wanted: --debug keeps everything
+	// in the terminal, and CLAUDE_WEBEXT_NO_GUI=1 is an escape hatch while this is new.
+	if *debug || os.Getenv("CLAUDE_WEBEXT_NO_GUI") != "" {
+		if err := runLauncher(*forceUpdate, *instanceName); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	guiMode = true
+	err, _ := gui.Run("Claude WebExtension Launcher", func(s *gui.Status) error {
+		step = s.Step
+		lastPct := -1
+		patcher.DownloadProgress = func(done, total int64) {
+			if total <= 0 {
+				return
+			}
+			if pct := int(done * 100 / total); pct != lastPct {
+				lastPct = pct
+				s.Progress(float64(done) / float64(total))
+				s.Step(fmt.Sprintf("Downloading Claude... %d%% (%d / %d MB)", pct, done>>20, total>>20))
+			}
+		}
+		return runLauncher(*forceUpdate, *instanceName)
+	})
+	if err != nil {
+		os.Exit(1)
+	}
+}
+
+// runLauncher is the launcher's flow after flag parsing: update itself, make sure
+// Claude is patched and extensions are current, then start Claude.
+func runLauncher(forceUpdate bool, instanceName string) error {
 	// Handle update completion first
 	selfupdate.FinishUpdateIfNeeded()
 
 	// Platform-specific setup before the main flow
 	if err := prepareAdminContext(); err != nil {
-		fmt.Printf("Failed to prepare admin context: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("failed to prepare admin context: %v", err)
 	}
 
 	fmt.Println("Claude WebExtension Launcher starting...")
 	fmt.Printf("Version: %s\n", Version)
 
 	// Check for self-updates
+	step("Checking for launcher updates...")
 	if err := selfupdate.CheckAndUpdate(); err != nil {
 		fmt.Printf("Update check failed: %v\n", err)
 		// Continue anyway
@@ -63,15 +105,14 @@ func main() {
 
 	// Ensure Claude is patched and extensions are up-to-date.
 	// On Windows this may invoke an elevated patcher subprocess via UAC.
-	// On macOS this runs in-process.
-	if err := ensureClaudeReady(*forceUpdate); err != nil {
-		if _, statErr := os.Stat(claudeExecutablePath()); statErr == nil {
-			fmt.Printf("Warning: %v\n", err)
-			fmt.Println("Continuing with existing installation...")
-		} else {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+	// On macOS and Linux this runs in-process.
+	step("Checking for Claude updates...")
+	if err := ensureClaudeReady(forceUpdate); err != nil {
+		if _, statErr := os.Stat(claudeExecutablePath()); statErr != nil {
+			return err
 		}
+		fmt.Printf("Warning: %v\n", err)
+		fmt.Println("Continuing with existing installation...")
 	}
 
 	// Release any platform-specific privileges before launching Claude
@@ -80,14 +121,14 @@ func main() {
 	// Reconcile Cowork/Code session sharing before any uninstall prompt (Windows only):
 	// repair a named instance that was wrongly pooled by an older build, then (only for the
 	// default instance) share with the official install via junctions into a neutral store.
-	RepairSessionSharing(*instanceName)
-	SetupSessionSharing(*instanceName)
+	RepairSessionSharing(instanceName)
+	SetupSessionSharing(instanceName)
 
 	// Check for official Claude MSIX installation (Windows only)
-	checkMSIXAndPrompt(*instanceName)
+	checkMSIXAndPrompt(instanceName)
 
 	// Clear caches that interfere with extension loading and updates
-	claudeDataDir := claudeUserDataDir(*instanceName)
+	claudeDataDir := claudeUserDataDir(instanceName)
 	if claudeDataDir != "" {
 		cacheDirs := []string{"Service Worker", "WebStorage", "Cache", "Code Cache"}
 		fmt.Printf("Clearing cache folders:\n")
@@ -100,9 +141,10 @@ func main() {
 	}
 
 	// Launch Claude
+	step("Launching Claude...")
 	fmt.Println("Launching Claude.")
 	claudePath := claudeExecutablePath()
-	instanceArg := fmt.Sprintf("--instance=%s", *instanceName)
+	instanceArg := fmt.Sprintf("--instance=%s", instanceName)
 
 	if launchClaudeInTerminal {
 		// In developer mode, run Claude in the same terminal to see debug output
@@ -112,11 +154,15 @@ func main() {
 		cmd.Stderr = os.Stderr
 		cmd.Stdin = os.Stdin
 		cmd.Run()
-	} else {
-		// Launch detached
-		cmd := exec.Command(claudePath, instanceArg)
-		cmd.Dir = filepath.Dir(claudePath)
-		detachFromTerminal(cmd)
-		cmd.Start()
+		return nil
 	}
+
+	// Launch detached
+	cmd := exec.Command(claudePath, instanceArg)
+	cmd.Dir = filepath.Dir(claudePath)
+	detachFromTerminal(cmd)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("could not start Claude: %v", err)
+	}
+	return nil
 }

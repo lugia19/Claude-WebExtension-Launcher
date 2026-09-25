@@ -126,7 +126,7 @@ func downloadFile(url, dst string) error {
 	if err != nil {
 		return fmt.Errorf("creating file: %v", err)
 	}
-	_, err = io.Copy(out, resp.Body)
+	_, err = io.Copy(out, progressBody(resp))
 	if cerr := out.Close(); err == nil {
 		err = cerr
 	}

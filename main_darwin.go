@@ -12,7 +12,7 @@ import (
 // prepareAdminContext relaunches the launcher inside Terminal.app when there is no
 // controlling terminal, so console output is visible.
 func prepareAdminContext() error {
-	if os.Getenv("TERM") == "" {
+	if !guiMode && os.Getenv("TERM") == "" {
 		executable, _ := os.Executable()
 		execDir := filepath.Dir(executable)
 

@@ -234,7 +234,7 @@ func downloadAndExtract(version, downloadURL string) error {
 		if err != nil {
 			return fmt.Errorf("creating file: %v", err)
 		}
-		_, err = io.Copy(outFile, resp.Body)
+		_, err = io.Copy(outFile, progressBody(resp))
 		outFile.Close()
 		if err != nil {
 			return fmt.Errorf("saving file: %v", err)

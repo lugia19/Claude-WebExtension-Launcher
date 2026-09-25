@@ -30,7 +30,7 @@ func prepareAdminContext() error {
 	if marker := os.Getenv(relaunchedEnv); marker != "" {
 		// We are the relaunched copy: tell the original we made it into a terminal.
 		os.WriteFile(marker, nil, 0600)
-	} else if !stdinIsTerminal() {
+	} else if !guiMode && !stdinIsTerminal() {
 		relaunchInTerminal() // only returns if no terminal could be started
 	}
 	ensureAppArmorProfile()
