@@ -8,6 +8,10 @@
 */.vs/*
 */x64*
 *.syso
+# The launcher exe's icon, linked in by go build. Regenerate after changing app.ico:
+# go run github.com/tc-hib/go-winres@latest simply --arch amd64,arm64 --out rsrc --manifest none --icon resources/icons/app.ico
+!/rsrc_windows_amd64.syso
+!/rsrc_windows_arm64.syso
 
 # macOS
 .DS_Store
