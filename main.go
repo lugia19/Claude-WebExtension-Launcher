@@ -349,10 +349,7 @@ func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg strin
 		ui.SetRow(rowExtensions, status.Warning, "", "not updated")
 		ui.SetRow(rowCowork, status.Warning, "", "not set up")
 	case res.code != 0:
-		detail := res.failed[status.StepPatch]
-		if detail == "" {
-			detail = "see the log"
-		}
+		detail := res.detail(status.StepPatch)
 		if !claudeInstalled() {
 			return fmt.Errorf("installing Claude failed: %s", detail)
 		}
@@ -366,6 +363,14 @@ type workerResult struct {
 	code   int
 	err    error             // it couldn't be started (e.g. UAC declined)
 	failed map[string]string // steps it reported as failed, with their details
+}
+
+// detail is why step failed, as the worker reported it.
+func (r workerResult) detail(step string) string {
+	if d := r.failed[step]; d != "" {
+		return d
+	}
+	return "see the log"
 }
 
 // followWorker runs the worker (--worker plus args) and mirrors the steps it reports

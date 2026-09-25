@@ -94,8 +94,7 @@ func RegisterCoworkService() error {
 // cowork-svc.exe. Idempotent: stable rule names are deleted (ignoring "no rules match")
 // before being re-added.
 func configureCoworkFirewall(binPath string) error {
-	utils.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+coworkFirewallIn).Run()
-	utils.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+coworkFirewallOut).Run()
+	deleteCoworkFirewallRules()
 
 	rules := []struct {
 		name string
@@ -120,7 +119,7 @@ func configureCoworkFirewall(binPath string) error {
 // left alone), and removes our firewall rules either way. Must be called elevated,
 // before the install folder is deleted (cowork-svc.exe is locked while it runs).
 func RemoveCoworkService() {
-	out, _ := runSC("qc", coworkServiceName)
+	out, qcErr := runSC("qc", coworkServiceName)
 	if strings.Contains(strings.ToLower(out), strings.ToLower(filepath.Clean(utils.WindowsInstallDir))) {
 		fmt.Println("Removing CoworkVMService...")
 		runSC("stop", coworkServiceName)
@@ -133,9 +132,19 @@ func RemoveCoworkService() {
 		if out, err := runSC("delete", coworkServiceName); err != nil {
 			fmt.Printf("Warning: deleting CoworkVMService failed: %v\n%s\n", err, out)
 		}
-	} else if CoworkServiceExists() {
+	} else if qcErr == nil {
 		fmt.Println("CoworkVMService isn't ours (an official install's); leaving it.")
 	}
+	deleteCoworkFirewallRules()
+}
+
+// CoworkFirewallRulesExist reports whether our Cowork firewall rules are there.
+func CoworkFirewallRulesExist() bool {
+	return utils.Command("netsh", "advfirewall", "firewall", "show", "rule", "name="+coworkFirewallIn).Run() == nil
+}
+
+// deleteCoworkFirewallRules removes our Cowork firewall rules ("no rules match" is fine).
+func deleteCoworkFirewallRules() {
 	utils.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+coworkFirewallIn).Run()
 	utils.Command("netsh", "advfirewall", "firewall", "delete", "rule", "name="+coworkFirewallOut).Run()
 }

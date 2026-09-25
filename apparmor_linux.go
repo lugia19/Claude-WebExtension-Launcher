@@ -39,8 +39,7 @@ func appArmorProfile() (path, content string, ok bool) {
 		return "", "", false
 	}
 
-	// One profile per user, since each user's install path differs.
-	name := fmt.Sprintf("claude-webext-launcher-%d", os.Getuid())
+	path = appArmorProfilePath()
 	exePath := filepath.Join(utils.ResolvePath("app-latest"), "claude-desktop")
 	if strings.ContainsAny(exePath, "\"\n") {
 		fmt.Printf("Warning: cannot write an AppArmor profile for %q (unsupported characters in path).\n", exePath)
@@ -52,8 +51,14 @@ include <tunables/global>
 profile %s "%s" flags=(unconfined) {
   userns,
 }
-`, name, exePath)
-	return filepath.Join(appArmorDir, name), content, true
+`, filepath.Base(path), exePath)
+	return path, content, true
+}
+
+// appArmorProfilePath is where our profile goes: one per user, since each user's
+// install path differs.
+func appArmorProfilePath() string {
+	return filepath.Join(appArmorDir, fmt.Sprintf("claude-webext-launcher-%d", os.Getuid()))
 }
 
 // sandboxNeeded reports whether the AppArmor profile has to be (re)installed.
@@ -88,9 +93,7 @@ func installSandbox() error {
 	return err
 }
 
-// writeAppArmorProfile installs the profile as root: through pkexec (the desktop's
-// password dialog), or through sudo when pkexec is missing or couldn't ask (e.g. no
-// polkit agent) and the launcher is running in a terminal (--debug).
+// writeAppArmorProfile installs the profile as root (runShAsRoot).
 func writeAppArmorProfile(path, content string) error {
 	tmp, err := os.CreateTemp("", "claude-webext-apparmor-*")
 	if err != nil {
@@ -106,13 +109,19 @@ func writeAppArmorProfile(path, content string) error {
 	}
 	os.Chmod(tmp.Name(), 0644)
 
-	// Positional args keep the paths out of the shell string entirely. If the parser
-	// rejects the profile, remove the file again: an unloaded profile left on disk
-	// would match on the next launch and never be retried.
-	script := `install -m 0644 "$1" "$2" && { apparmor_parser -r -W -T "$2" || { rm -f "$2"; exit 1; }; }`
-	shArgs := []string{"/bin/sh", "-c", script, "sh", tmp.Name(), path}
+	// If the parser rejects the profile, remove the file again: an unloaded profile
+	// left on disk would match on the next launch and never be retried.
+	return runShAsRoot(`install -m 0644 "$1" "$2" && { apparmor_parser -r -W -T "$2" || { rm -f "$2"; exit 1; }; }`,
+		tmp.Name(), path)
+}
 
-	err = errors.New("pkexec is not installed")
+// runShAsRoot runs a shell script as root, with args as its positional parameters
+// ($1, $2, ...), which keeps paths out of the script string entirely. It goes through
+// pkexec (the desktop's password dialog), or through sudo when pkexec is missing or
+// couldn't ask (e.g. no polkit agent) and the launcher is running in a terminal.
+func runShAsRoot(script string, args ...string) error {
+	shArgs := append([]string{"/bin/sh", "-c", script, "sh"}, args...)
+	err := errors.New("pkexec is not installed")
 	if _, lookErr := exec.LookPath("pkexec"); lookErr == nil {
 		if err = runAsRoot("pkexec", shArgs); err == nil {
 			return nil

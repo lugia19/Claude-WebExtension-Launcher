@@ -261,7 +261,7 @@ func (w *window) showSettings(inst Instance) {
 			setup.Apply(checked)
 			w.setNote(inst.Name, "Settings saved")
 		})
-	}, "Back", w.showList))
+	}, w.showList))
 }
 
 // showLauncherSettings switches to the launcher's settings; saving returns to the list
@@ -271,7 +271,7 @@ func (w *window) showLauncherSettings() {
 	w.setRoot(w.buildSetup(setup, "Save", func(checked []bool) {
 		w.showList()
 		w.background(func() { setup.Apply(checked) })
-	}, "Back", w.showList))
+	}, w.showList))
 }
 
 // themedTextField draws text fields in the window's colors, like themedCheckbox.

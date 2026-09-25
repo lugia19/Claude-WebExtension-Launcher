@@ -8,6 +8,7 @@ package main
 // uninstall_<os>.go.
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,7 +24,7 @@ import (
 
 const (
 	rowUnshare       = "unshare"
-	rowRemoveClaude  = status.StepRemoveClaude // reported by the worker on Windows
+	rowRemoveClaude  = status.StepRemoveClaude // also reported by the worker on Windows
 	rowUnregister    = "unregister"
 	rowInstanceData  = "instance-data"
 	rowLauncherFiles = "launcher-files"
@@ -31,7 +32,7 @@ const (
 
 func uninstallRows() []gui.Row {
 	var rows []gui.Row
-	if hasSharedSessions {
+	if sessionsShared() {
 		rows = append(rows, gui.Row{ID: rowUnshare, Label: "Shared Cowork and Code sessions"})
 	}
 	return append(rows,
@@ -41,8 +42,6 @@ func uninstallRows() []gui.Row {
 		gui.Row{ID: rowLauncherFiles, Label: "Launcher files"},
 	)
 }
-
-const deleteDataLabel = "Also delete my instances' data (logins, settings and local sessions)"
 
 // runUninstall is --uninstall. It returns the process exit code.
 func runUninstall(debug bool) int {
@@ -57,45 +56,52 @@ func runUninstall(debug bool) int {
 	defer stop()
 	fmt.Printf("Claude WebExtension Launcher %s: uninstall, %s\n", Version, time.Now().Format(time.RFC1123))
 
-	deleteData, ran := false, false
+	// Asked through ui like any other question: in the window or the terminal. If the
+	// window can't open, the answer is -1, which cancels.
+	uninstalled := false
 	work := func() error {
-		ran = true
-		return uninstallAll(deleteData, logPath)
+		if ui.Ask("Uninstall Claude Desktop (Extended)?",
+			"This removes the launcher, the patched Claude and their shortcuts. The official Claude app, if you have it, isn't touched.",
+			[]string{"Uninstall", "Cancel"}) != 0 {
+			return nil
+		}
+		choice := ui.Ask("Also delete your instances' data?",
+			"Their logins, settings and local sessions. Keep it if you might reinstall.",
+			[]string{"Keep it", "Delete it", "Cancel"})
+		if choice != 0 && choice != 1 {
+			return nil
+		}
+		if err := uninstallAll(choice == 1, logPath); err != nil {
+			return err
+		}
+		uninstalled = true
+		return nil
 	}
+
 	var err error
 	if debug {
-		if ui.Ask("Uninstall Claude Desktop (Extended)?", uninstallSummary, []string{"Uninstall", "Cancel"}) != 0 {
-			fmt.Println("Cancelled.")
-			return 0
-		}
-		deleteData = ui.Ask(deleteDataLabel+"?", "", []string{"Keep it", "Delete it"}) == 1
 		err = work()
 	} else {
 		err = gui.Run(gui.Options{
 			Title:   "Uninstall Claude Desktop (Extended)",
 			Rows:    uninstallRows(),
 			LogPath: logPath,
-			Setup: &gui.Setup{
-				Title:    "Uninstall Claude Desktop (Extended)?",
-				Subtitle: strings.Split(uninstallSummary, "\n"),
-				Options:  []gui.SetupOption{{Label: deleteDataLabel}},
-				Apply:    func(checked []bool) { deleteData = checked[0] },
-				Confirm:  "Uninstall",
-				Danger:   true,
+			Done: func() string {
+				if uninstalled {
+					return "Claude Desktop (Extended) has been uninstalled."
+				}
+				return "" // cancelled: just close
 			},
-			SetupRequired: true,
-			Cancel:        "Cancel",
-			Done:          "Claude Desktop (Extended) has been uninstalled.",
 		}, func(s *gui.Status) error {
 			ui = s
 			return work()
 		})
 	}
-	if err != nil {
+	switch {
+	case err != nil:
 		fmt.Printf("Uninstall failed: %v\n", err)
 		return 1
-	}
-	if !ran {
+	case !uninstalled:
 		fmt.Println("Cancelled.")
 		return 0
 	}
@@ -104,9 +110,6 @@ func runUninstall(debug bool) int {
 	finishUninstall()
 	return 0
 }
-
-const uninstallSummary = "This removes the launcher, the patched Claude and their shortcuts.\n" +
-	"The official Claude app, if you have it, isn't touched."
 
 // uninstallAll does the removal, mirroring each step to the checklist.
 func uninstallAll(deleteData bool, logPath string) error {
@@ -124,47 +127,59 @@ func uninstallAll(deleteData bool, logPath string) error {
 		return fmt.Errorf("another launcher window is open; close it first, then try again")
 	}
 
-	if hasSharedSessions {
-		ui.SetRow(rowUnshare, status.Running, "", "")
-		if err := unshareSessions(instances); err != nil {
-			ui.SetRow(rowUnshare, status.Failed, "", err.Error())
+	if sessionsShared() {
+		err := runStep(rowUnshare, func() (string, error) { return "", unshareSessions(instances, !deleteData) })
+		if err != nil {
 			return fmt.Errorf("couldn't give the shared sessions back their own folders: %w", err)
 		}
-		ui.SetRow(rowUnshare, status.Done, "", "")
 	}
-
-	ui.SetRow(rowRemoveClaude, status.Running, "", "")
-	if err := removePatchedClaude(logPath); err != nil {
-		ui.SetRow(rowRemoveClaude, status.Failed, "", err.Error())
+	if err := runStep(rowRemoveClaude, func() (string, error) { return removePatchedClaude(logPath) }); err != nil {
 		return err
 	}
-
-	ui.SetRow(rowUnregister, status.Running, "", "")
-	if err := removeRegistrations(); err != nil {
-		fmt.Printf("Warning: %v\n", err)
-		ui.SetRow(rowUnregister, status.Warning, "", err.Error())
-	} else {
-		ui.SetRow(rowUnregister, status.Done, "", "")
-	}
-
-	if deleteData {
-		ui.SetRow(rowInstanceData, status.Running, "", "")
-		if err := removeInstanceData(instances); err != nil {
-			fmt.Printf("Warning: %v\n", err)
-			ui.SetRow(rowInstanceData, status.Warning, "", err.Error())
-		} else {
-			ui.SetRow(rowInstanceData, status.Done, "", "")
+	runStep(rowUnregister, func() (string, error) { return "", asWarning(removeRegistrations()) })
+	runStep(rowInstanceData, func() (string, error) {
+		if !deleteData {
+			return "", stepSkipped("kept")
 		}
-	} else {
-		ui.SetRow(rowInstanceData, status.Skipped, "", "kept")
-	}
+		return "", asWarning(removeInstanceData(instances))
+	})
+	return runStep(rowLauncherFiles, removeLauncherFiles)
+}
 
-	ui.SetRow(rowLauncherFiles, status.Running, "", "")
-	if err := removeLauncherFiles(); err != nil {
-		ui.SetRow(rowLauncherFiles, status.Failed, "", err.Error())
+// stepSkipped, returned by a step, marks its row skipped, with the text as its note.
+type stepSkipped string
+
+func (s stepSkipped) Error() string { return string(s) }
+
+// stepWarning, returned by a step, marks its row with a warning; the uninstall goes on.
+type stepWarning struct{ error }
+
+func asWarning(err error) error {
+	if err == nil {
+		return nil
+	}
+	return stepWarning{err}
+}
+
+// runStep shows row running, runs step, and shows how it went: done (with the note it
+// returned), skipped, a warning, or failed. Only a failure is returned.
+func runStep(row string, step func() (note string, err error)) error {
+	ui.SetRow(row, status.Running, "", "")
+	note, err := step()
+	var skipped stepSkipped
+	var warning stepWarning
+	switch {
+	case err == nil:
+		ui.SetRow(row, status.Done, "", note)
+	case errors.As(err, &skipped):
+		ui.SetRow(row, status.Skipped, "", string(skipped))
+	case errors.As(err, &warning):
+		fmt.Printf("Warning: %v\n", warning.error)
+		ui.SetRow(row, status.Warning, "", warning.Error())
+	default:
+		ui.SetRow(row, status.Failed, "", err.Error())
 		return err
 	}
-	ui.SetRow(rowLauncherFiles, status.Done, "", "")
 	return nil
 }
 
@@ -200,7 +215,7 @@ func removeInstanceData(instances []string) error {
 	for _, name := range instances {
 		dir := claudeUserDataDir(name)
 		for _, d := range []string{dir, dir + companionSuffix} {
-			if _, err := os.Stat(d); err != nil {
+			if !dirExists(d) {
 				continue
 			}
 			if !safeToDelete(d) {
@@ -257,13 +272,13 @@ func startUninstall() {
 
 // otherLauncherRunning reports whether another launcher process is running. The one
 // that started this uninstall (the Uninstall button) is on its way out, so it's given
-// a few seconds.
+// a moment.
 func otherLauncherRunning() bool {
-	for i := 0; i < 25; i++ {
+	for i := 0; i < 10; i++ {
 		if !launcherProcessRunning() {
 			return false
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 	}
 	return true
 }

@@ -124,21 +124,17 @@ type Options struct {
 	// Setup, if not nil, is shown first; work only starts once it's confirmed (and
 	// Setup.Apply has run). Closing the window on it ends the run without doing
 	// anything. If the window can't open, it's skipped (Apply never runs, so it's offered
-	// again next time) and work runs anyway, unless SetupRequired.
+	// again next time) and work runs anyway.
 	Setup *Setup
-	// SetupRequired: work never runs unless Setup was confirmed (for an uninstall).
-	SetupRequired bool
-	// Cancel, if set, labels a button on the Setup screen that closes the window.
-	Cancel string
 
 	// Instances that are Enabled: a successful work is followed by the instance list
 	// instead of the countdown; the window then stays until the user closes it. If the
 	// window can't open, Instances.Headless is launched instead.
 	Instances *Instances
 
-	// Done, if set, replaces the countdown after a successful work: the window shows
-	// this message until closed.
-	Done string
+	// Done, if set, replaces the countdown after a successful work: the window shows the
+	// message it returns until closed, or just closes if that's empty.
+	Done func() string
 }
 
 // Run shows the window with the checklist and runs work on another goroutine; call
@@ -178,14 +174,10 @@ func Run(o Options, work func(s *Status) error) error {
 	s.hideButtons()
 	setupDone := make(chan []bool, 1)
 	if setup != nil {
-		var onCancel func()
-		if o.Cancel != "" {
-			onCancel = func() { gogpuApp.Quit() }
-		}
 		w.setRoot(w.buildSetup(setup, "Continue", func(checked []bool) {
 			setupDone <- checked
 			w.setRoot(checklist)
-		}, o.Cancel, onCancel))
+		}, nil))
 	} else {
 		w.setRoot(checklist)
 	}
@@ -212,8 +204,10 @@ func Run(o Options, work func(s *Status) error) error {
 			w.runOnUI(w.showList)
 			<-s.closed // the user closes the window when done
 			return
-		case o.Done != "":
-			s.showDone(o.Done)
+		case o.Done != nil:
+			if msg := o.Done(); msg != "" {
+				s.showDone(msg)
+			}
 		default:
 			s.countDown(countdown)
 		}
@@ -228,11 +222,7 @@ func Run(o Options, work func(s *Status) error) error {
 	if windowErr != nil {
 		fmt.Printf("Window unavailable (%v); ran without it\n", windowErr)
 		if skippedWork {
-			if o.SetupRequired {
-				result = fmt.Errorf("the window couldn't open, so nothing was done (run with --debug to use the terminal)")
-			} else {
-				result = work(s)
-			}
+			result = work(s)
 		}
 		if result == nil && instances != nil && instances.Enabled() {
 			result = instances.Launch(instances.Headless)

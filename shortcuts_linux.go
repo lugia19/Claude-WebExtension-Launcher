@@ -30,10 +30,13 @@ func autostartDir() string { return filepath.Join(xdgDir("XDG_CONFIG_HOME", ".co
 // including the escape character _ itself, so distinct instances never share a file.
 var escapedFileChars = regexp.MustCompile(`[^A-Za-z0-9.-]`)
 
+// desktopFilePrefix starts every entry's .desktop file name.
+const desktopFilePrefix = "claude-webext-launcher"
+
 // entryFile is the .desktop file name for an entry (see shortcuts.go).
 func entryFile(entry string) string {
 	if entry == launcherEntry {
-		return "claude-webext-launcher.desktop"
+		return desktopFilePrefix + ".desktop"
 	}
 	escaped := escapedFileChars.ReplaceAllStringFunc(entry, func(c string) string {
 		var b strings.Builder
@@ -42,7 +45,7 @@ func entryFile(entry string) string {
 		}
 		return b.String()
 	})
-	return "claude-webext-launcher-" + escaped + ".desktop"
+	return desktopFilePrefix + "-" + escaped + ".desktop"
 }
 
 func hasMenuEntry(instance string) bool {

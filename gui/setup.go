@@ -17,10 +17,6 @@ type Setup struct {
 	// confirmed. It runs on a background goroutine: for the first-run setup, before the
 	// launcher's work starts.
 	Apply func(checked []bool)
-	// Confirm labels the confirm button, overriding the screen's default; Danger makes
-	// it red (for destructive actions).
-	Confirm string
-	Danger  bool
 	// Extra are more buttons, after the others.
 	Extra []SetupButton
 }
@@ -38,11 +34,10 @@ type SetupOption struct {
 	Checked bool // initial state
 }
 
-// buildSetup returns a setup screen: the checkboxes, a confirm button (labelled
-// confirm unless setup.Confirm says otherwise) that hands the final states to
-// onConfirm, a cancel button (labelled cancel) if onCancel isn't nil, and setup.Extra.
+// buildSetup returns a setup screen: the checkboxes, a confirm button that hands the
+// final states to onConfirm, a Back button if onCancel isn't nil, and setup.Extra.
 // They all run in the click handler, on the UI thread, so they may switch screens.
-func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked []bool), cancel string, onCancel func()) widget.Widget {
+func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked []bool), onCancel func()) widget.Widget {
 	checked := make([]bool, len(setup.Options))
 	subtitle := make([]widget.Widget, len(setup.Subtitle))
 	for i, line := range setup.Subtitle {
@@ -63,31 +58,23 @@ func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked
 		))
 	}
 
-	if setup.Confirm != "" {
-		confirm = setup.Confirm
-	}
 	sent := false
-	onClick := func() {
+	buttons := []widget.Widget{primaryButton(confirm, func() {
 		if sent {
 			return
 		}
 		sent = true
 		onConfirm(append([]bool(nil), checked...))
-	}
-	var confirmButton widget.Widget
-	if setup.Danger {
-		confirmButton = button.New(button.TextOpt(confirm), button.BackgroundOpt(errorColor), button.OnClick(onClick))
-	} else {
-		confirmButton = primaryButton(confirm, onClick)
-	}
-	buttons := []widget.Widget{confirmButton}
+	})}
 	if onCancel != nil {
-		buttons = append(buttons, button.New(button.TextOpt(cancel), button.OnClick(onCancel)))
+		buttons = append(buttons, button.New(button.TextOpt("Back"), button.OnClick(onCancel)))
 	}
 	for _, extra := range setup.Extra {
 		extra := extra
 		buttons = append(buttons, button.New(button.TextOpt(extra.Label), button.OnClick(func() {
-			extra.OnClick()
+			if extra.OnClick != nil {
+				extra.OnClick()
+			}
 			if extra.CloseWindow {
 				w.gogpuApp.Quit()
 			}

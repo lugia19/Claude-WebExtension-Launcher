@@ -219,21 +219,18 @@ func (s *Status) Ask(question, detail string, options []string) int {
 }
 
 func (s *Status) showError(err error) {
-	s.setMessage("Something went wrong", err.Error())
-	for {
-		switch <-s.waitForClick([]string{"Open logs", "Close"}) {
-		case 0:
-			utils.OpenInViewer(s.logPath)
-		default: // Close, or the window was closed
-			return
-		}
-	}
+	s.showFinal("Something went wrong", err.Error())
 }
 
-// showDone shows msg until the window is closed (Close, or the window's own button).
+// showDone shows msg as the run's end: see showFinal.
 func (s *Status) showDone(msg string) {
-	s.setMessage(msg, "")
-	for <-s.waitForClick([]string{"Close", "Open logs"}) == 1 {
+	s.showFinal(msg, "")
+}
+
+// showFinal shows a message with Open logs and Close until the window is closed.
+func (s *Status) showFinal(title, detail string) {
+	s.setMessage(title, detail)
+	for <-s.waitForClick([]string{"Open logs", "Close"}) == 0 {
 		utils.OpenInViewer(s.logPath)
 	}
 }

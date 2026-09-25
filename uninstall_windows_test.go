@@ -25,7 +25,7 @@ func TestUnshareFolder(t *testing.T) {
 		t.Error("a folder holding a session junction was considered safe to delete")
 	}
 
-	if err := unshareFolder(link); err != nil {
+	if err := unshareFolder(link, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Readlink(link); err == nil {
@@ -40,7 +40,7 @@ func TestUnshareFolder(t *testing.T) {
 	if !safeToDelete(filepath.Dir(link)) {
 		t.Error("an unshared folder wasn't considered safe to delete")
 	}
-	if err := unshareFolder(link); err != nil { // a real folder: nothing to do
+	if err := unshareFolder(link, true); err != nil { // a real folder: nothing to do
 		t.Fatal(err)
 	}
 }
