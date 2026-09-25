@@ -32,21 +32,10 @@ const (
 	// .nupkg does not contain. The arch is the native host arch (see HostArch), so an
 	// emulated amd64 launcher on ARM64 still provisions native arm64 Claude.
 	windowsMSIXRedirectURLFmt = "https://claude.ai/api/desktop/win32/%s/msix/latest/redirect"
-	macosReleasesURL          = "https://downloads.claude.ai/releases/darwin/universal/RELEASES.json"
 	appFolderName             = "app-latest"
 	KeepDownloadedArchive     = false
 	PatchVersion              = "10"
 )
-
-type MacOSManifest struct {
-	CurrentRelease string `json:"currentRelease"`
-	Releases       []struct {
-		Version  string `json:"version"`
-		UpdateTo struct {
-			URL string `json:"url"`
-		} `json:"updateTo"`
-	} `json:"releases"`
-}
 
 type Patch struct {
 	Files   []string
