@@ -27,21 +27,6 @@ $env:GOARCH = "amd64"
 & go build -ldflags "-H=windowsgui" -o ".\builds\$APP_NAME.exe"
 
 if (Test-Path ".\builds\$APP_NAME.exe") {
-	# Add icon if rcedit exists
-	if (Test-Path ".\resources\rcedit.exe") {
-		Write-Host "Embedding icon..." -ForegroundColor Cyan
-		& ".\resources\rcedit.exe" ".\builds\$APP_NAME.exe" --set-icon ".\resources\icons\app.ico"
-		if ($LASTEXITCODE -eq 0) {
-			Write-Host "Icon embedded successfully" -ForegroundColor Green
-		}
-		else {
-			Write-Host "Warning: Failed to embed icon" -ForegroundColor Yellow
-		}
-	}
- else {
-		Write-Host "Warning: rcedit.exe not found, skipping icon embedding" -ForegroundColor Yellow
-	}
-
 	Write-Host "Windows build complete: builds\$APP_NAME.exe" -ForegroundColor Green
     
 	# Create distribution zip using PowerShell's Compress-Archive

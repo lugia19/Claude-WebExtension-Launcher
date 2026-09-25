@@ -27,14 +27,6 @@ $env:GOARCH = "amd64"
 & go build -ldflags "-H=windowsgui" -o ".\builds\$APP_NAME.exe"
 
 if (Test-Path ".\builds\$APP_NAME.exe") {
-    # Add icon if rcedit exists
-    if (Test-Path ".\resources\rcedit.exe") {
-        & ".\resources\rcedit.exe" ".\builds\$APP_NAME.exe" --set-icon ".\resources\icons\app.ico"
-    }
-    else {
-        Write-Host "Warning: rcedit.exe not found, skipping icon embedding" -ForegroundColor Yellow
-    }
-
     Write-Host "Windows build complete: builds\$APP_NAME.exe" -ForegroundColor Green
 }
 else {
