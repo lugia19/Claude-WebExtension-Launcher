@@ -187,6 +187,7 @@ func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg strin
 	// is a warning, not "up to date".
 	nothingToDo := func(extErr error) error {
 		ui.SetRow(rowPatch, status.Skipped, "Patching", "up to date")
+		ui.SetRow(rowCowork, status.Skipped, "Cowork service", "set up") // no-op if the row isn't shown
 		if extErr != nil {
 			ui.SetRow(rowExtensions, status.Warning, "Extensions", "couldn't check for updates")
 		} else {
@@ -208,6 +209,7 @@ func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg strin
 			fmt.Println("Timed out waiting for another launcher to finish updating; launching the existing install.")
 			ui.SetRow(rowPatch, status.Warning, "Patching", "another launcher is updating")
 			ui.SetRow(rowExtensions, status.Skipped, "Extensions", "")
+			ui.SetRow(rowCowork, status.Skipped, "Cowork service", "")
 			return nil
 		}
 		fmt.Println("Waiting for another launcher to finish installing Claude...")

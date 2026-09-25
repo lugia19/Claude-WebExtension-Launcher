@@ -2,8 +2,6 @@ module claude-webext-patcher
 
 go 1.25.0
 
-toolchain go1.26.4
-
 require (
 	github.com/gogpu/gg v0.52.3
 	github.com/gogpu/gogpu v0.53.0

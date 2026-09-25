@@ -54,9 +54,17 @@ func fetchLatestRelease(ext Extension) (*extensionRelease, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	// Error replies (e.g. a 403 rate limit) are JSON too and would otherwise decode into
+	// an empty release that looks like "no update".
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GitHub returned HTTP %d", resp.StatusCode)
+	}
 	var release extensionRelease
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
 		return nil, err
+	}
+	if release.TagName == "" {
+		return nil, fmt.Errorf("GitHub returned a release without a tag")
 	}
 	return &release, nil
 }
