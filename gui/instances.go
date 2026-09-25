@@ -1,14 +1,11 @@
 package gui
 
 import (
-	"os"
 	"strings"
 
 	"github.com/gogpu/ui/core/button"
 	"github.com/gogpu/ui/core/scrollview"
 	"github.com/gogpu/ui/core/textfield"
-	"github.com/gogpu/ui/geometry"
-	uiicon "github.com/gogpu/ui/icon"
 	"github.com/gogpu/ui/primitives"
 	"github.com/gogpu/ui/state"
 	"github.com/gogpu/ui/widget"
@@ -59,13 +56,10 @@ func (w *window) showList() {
 	}
 
 	title := primitives.Text("Instances").FontSize(18).Bold().Color(textColor)
-	var list widget.Widget = scrollview.New(primitives.VBox(rows...).Gap(14).CrossAlign(primitives.CrossAxisStretch))
-	if os.Getenv("CWL_LIST_NOSCROLL") != "" { // TEMP: Linux repaint bisect
-		list = primitives.VBox(rows...).Gap(14).CrossAlign(primitives.CrossAxisStretch)
-	}
+	list := scrollview.New(primitives.VBox(rows...).Gap(14).CrossAlign(primitives.CrossAxisStretch))
 	settings := button.New(
 		button.TextOpt("Launcher settings"),
-		button.PainterOpt(iconPainter{icon: uiicon.Settings, fg: textColor, bg: &trackColor}),
+		button.PainterOpt(iconPainter{icon: cogIcon, fg: textColor, bg: &trackColor}),
 		button.OnClick(w.showLauncherSettings),
 	).MinWidth(180)
 	w.uiApp.SetRoot(primitives.VBox(
@@ -93,7 +87,7 @@ func (w *window) listRow(inst Instance) widget.Widget {
 	// Launch is always last, so it lines up on the right whatever else a row has.
 	buttons := []widget.Widget{}
 	if w.inst.Settings != nil && w.inst.Settings(inst.Name) != nil {
-		buttons = append(buttons, iconButton(uiicon.Settings, dimColor, func() { w.showSettings(inst) }))
+		buttons = append(buttons, iconButton(cogIcon, dimColor, func() { w.showSettings(inst) }))
 	}
 	if inst.Deletable {
 		buttons = append(buttons, iconButton(trashIcon, errorColor, func() { w.showDelete(inst) }))
@@ -109,60 +103,6 @@ func (w *window) listRow(inst Instance) widget.Widget {
 	// HBox top-aligns its children, so the name block is only as tall as the buttons.
 	label := primitives.VBox(name, note.widget).Gap(2)
 	return primitives.HBox(append([]widget.Widget{primitives.Expanded(label)}, buttons...)...).Gap(8)
-}
-
-// Filled Material icons (Apache 2.0): gogpu's own trash and play are thin outlines.
-var (
-	trashIcon = uiicon.FromSVG("trash", 24, "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z")
-	playIcon  = uiicon.FromSVG("play", 24, "M8 5v14l11-7z")
-)
-
-// iconButton is a bare icon that highlights on hover.
-func iconButton(data uiicon.IconData, color widget.Color, onClick func()) widget.Widget {
-	return button.New(
-		button.SizeOpt(button.Small),
-		button.PainterOpt(iconPainter{icon: data, fg: color}),
-		button.OnClick(onClick),
-	).MinWidth(32)
-}
-
-// iconPainter draws a button as an icon, followed by its label if it has one. The
-// button widget has no icons of its own; the default painter's embedded metrics keep
-// its sizing.
-type iconPainter struct {
-	button.DefaultPainter
-	icon uiicon.IconData
-	fg   widget.Color
-	bg   *widget.Color // nil: no background, except a highlight on hover
-}
-
-func (p iconPainter) PaintButton(canvas widget.Canvas, st button.PaintState) {
-	b := st.Bounds
-	if b.IsEmpty() {
-		return
-	}
-	switch {
-	case p.bg != nil:
-		bg := *p.bg
-		if st.Pressed {
-			bg = bg.Lerp(widget.ColorBlack, 0.15)
-		} else if st.Hovered {
-			bg = bg.Lerp(trackColor, 0.15)
-		}
-		canvas.DrawRoundRect(b, bg, 6)
-	case st.Hovered || st.Pressed:
-		canvas.DrawRoundRect(b, trackColor, 6)
-	}
-
-	const size, pad, gap = 16, 12, 6
-	y := b.Min.Y + (b.Height()-size)/2
-	if st.Text == "" {
-		drawIcon(canvas, p.icon, geometry.NewRect(b.Min.X+(b.Width()-size)/2, y, size, size), p.fg)
-		return
-	}
-	drawIcon(canvas, p.icon, geometry.NewRect(b.Min.X+pad, y, size, size), p.fg)
-	textX := b.Min.X + pad + size + gap
-	canvas.DrawText(st.Text, geometry.NewRect(textX, b.Min.Y, b.Max.X-pad-textX, b.Height()), 13, p.fg, true, widget.TextAlignLeft)
 }
 
 // setNote sets an instance's note in the list, keeping it across list rebuilds.
@@ -330,14 +270,4 @@ func (p themedTextField) PaintTextField(canvas widget.Canvas, st *textfield.Pain
 		ErrorText:   errorColor,
 	}
 	p.DefaultPainter.PaintTextField(canvas, st)
-}
-
-// drawIcon draws an icon; CWL_LIST_NOICONS swaps it for a plain square. TEMP: Linux
-// repaint bisect.
-func drawIcon(canvas widget.Canvas, data uiicon.IconData, r geometry.Rect, c widget.Color) {
-	if os.Getenv("CWL_LIST_NOICONS") != "" {
-		canvas.DrawRoundRect(r, c, 3)
-		return
-	}
-	uiicon.Draw(canvas, data, r, c)
 }
