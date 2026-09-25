@@ -125,3 +125,16 @@ func verifySHA256(filePath, expected string) error {
 	fmt.Println("Verified SHA-256 of downloaded .deb")
 	return nil
 }
+
+// LinkHandlerDesktop is the hidden .desktop entry that handles claude:// links; the
+// launcher writes it (shortcuts_linux.go) and Claude registers it via desktopName.
+const LinkHandlerDesktop = "claude-webext-handler.desktop"
+
+// adjustPackageJSON points Claude's desktopName at our own .desktop entry. Electron
+// on Linux registers claude:// (setAsDefaultProtocolClient, called by Claude at
+// startup) against desktopName, which is otherwise the official package's
+// com.anthropic.Claude.desktop — so magic links would open the official app, or
+// nothing if it isn't installed.
+func adjustPackageJSON(pkg map[string]interface{}) {
+	pkg["desktopName"] = LinkHandlerDesktop
+}

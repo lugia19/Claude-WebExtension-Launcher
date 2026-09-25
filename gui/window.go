@@ -32,7 +32,13 @@ const (
 // down and closes (unless the user opens the log); when it fails the window shows the
 // error until closed. If the window can't open at all (no display, no renderer), work
 // still runs, and a failure is reported through a native dialog instead.
-func Run(title string, rows []Row, logPath string, work func(s *Status) error) error {
+//
+// With a non-nil setup, the window opens on the setup screen instead, and work only
+// starts once Continue has been clicked (and setup.Apply has run). Closing the window
+// on the setup screen ends the launch without doing anything. If the window can't
+// open, setup is skipped (Apply never runs, so it's offered again next time) and work
+// runs as usual.
+func Run(title string, rows []Row, logPath string, setup *Setup, work func(s *Status) error) error {
 	// gogpu logs through slog; keep it out of the user's way (it goes to the log file,
 	// since stdout/stderr are redirected there), and quiet unless something's wrong.
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
@@ -56,13 +62,29 @@ func Run(title string, rows []Row, logPath string, work func(s *Status) error) e
 		app.WithEventSource(gogpuApp.EventSource()),
 		app.WithTheme(material3.NewDark(accent).AsTheme()),
 	)
-	uiApp.SetRoot(s.build())
+	checklist := s.build()
 	s.hideButtons()
+	setupDone := make(chan []bool, 1)
+	if setup != nil {
+		uiApp.SetRoot(buildSetup(setup, uiApp, checklist, setupDone))
+	} else {
+		uiApp.SetRoot(checklist)
+	}
 
 	var result error
+	var skippedWork bool
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
+		if setup != nil {
+			select {
+			case checked := <-setupDone:
+				setup.Apply(checked)
+			case <-s.closed:
+				skippedWork = true // closed on the setup screen, or the window never opened
+				return
+			}
+		}
 		result = work(s)
 		if result != nil {
 			s.showError(result)
@@ -77,6 +99,9 @@ func Run(title string, rows []Row, logPath string, work func(s *Status) error) e
 	<-finished // also covers the user closing the window while work is still running
 
 	if windowErr != nil {
+		if skippedWork {
+			result = work(s)
+		}
 		fmt.Printf("Window unavailable (%v); ran without it\n", windowErr)
 		if result != nil {
 			utils.ShowErrorDialog(title, fmt.Sprintf("%v\n\nDetails are in the log:\n%s", result, logPath))

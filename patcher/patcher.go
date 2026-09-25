@@ -33,7 +33,7 @@ const (
 	// emulated amd64 launcher on ARM64 still provisions native arm64 Claude.
 	windowsMSIXRedirectURLFmt = "https://claude.ai/api/desktop/win32/%s/msix/latest/redirect"
 	appFolderName             = "app-latest"
-	PatchVersion              = "10"
+	PatchVersion              = "11"
 )
 
 type Patch struct {
@@ -161,6 +161,7 @@ func installWrapper(tempDir string, version string) error {
 
 	pkg["main"] = ".vite/build/wrapper.js"
 	pkg["_originalMain"] = originalMain
+	adjustPackageJSON(pkg)
 
 	newPkgData, err := json.MarshalIndent(pkg, "", "  ")
 	if err != nil {

@@ -321,3 +321,6 @@ func downloadAndExtract(version, downloadURL string) error {
 
 	return nil
 }
+
+// adjustPackageJSON has nothing to change here; see patcher_linux.go.
+func adjustPackageJSON(pkg map[string]interface{}) {}

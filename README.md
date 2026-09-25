@@ -82,6 +82,13 @@ Download the latest installer from [Releases](https://github.com/lugia19/Claude-
 
 On Linux, pick the `linux-amd64` or `linux-arm64` zip, extract it and run `Claude_WebExtension_Launcher`. The binary can live anywhere; the modified Claude and its extensions are kept in `~/.local/share/claude-webext-launcher`.
 
+### Applications menu and startup
+On first launch (Windows and Linux) the launcher asks whether to add itself to the applications menu (the Start Menu on Windows) and whether to start when you log in. To change your mind later, run it with `--show-setup` to get the same screen again. Add `--instance <name>` to manage a separate entry for that instance.
+
+On macOS, put the app in Applications and use System Settings → General → Login Items instead.
+
+On Linux, the launcher also registers itself for `claude://` links, so magic-link login opens in the modified app.
+
 ## Features
 
 The installer provides:

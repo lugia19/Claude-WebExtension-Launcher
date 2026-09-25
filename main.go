@@ -43,6 +43,8 @@ func main() {
 	installURL := flag.String("install-url", "", "Download URL of --install-version (internal)")
 	packagePath := flag.String("package", "", "Downloaded package for --install-version (internal)")
 	cowork := flag.Bool("cowork", false, "Register the Cowork service (internal)")
+
+	showSetup := flag.Bool("show-setup", false, "Show the setup screen again (applications menu, start at login) before launching")
 	flag.Parse()
 
 	selfupdate.CurrentVersion = Version
@@ -71,6 +73,7 @@ func main() {
 	if opts.debug {
 		ensureConsole()
 		stop, _ := utils.StartLog(opts.logPath, true, os.Stdout)
+		selfupdate.FinishUpdateIfNeeded()
 		err := runLauncher(opts)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
@@ -83,8 +86,11 @@ func main() {
 	}
 
 	stop, _ := utils.StartLog(opts.logPath, true, nil)
+	// Before the window: on Windows this restarts a freshly updated .new.exe as the
+	// real .exe, and setup must run there so shortcuts don't point at the temporary file.
+	selfupdate.FinishUpdateIfNeeded()
 	rows := checklistRows(sandboxNeeded(), coworkNeeded())
-	err := gui.Run("Claude WebExtension Launcher", rows, opts.logPath, func(s *gui.Status) error {
+	err := gui.Run("Claude WebExtension Launcher", rows, opts.logPath, firstRunSetup(opts.instance, *showSetup), func(s *gui.Status) error {
 		ui = s
 		patcher.DownloadProgress = s.DownloadProgress
 		selfupdate.Notify = func(title, detail string) { s.Ask(title, detail, []string{"OK"}) }
@@ -101,7 +107,6 @@ func main() {
 // Every step is mirrored to the checklist through ui.
 func runLauncher(o launcherOptions) error {
 	fmt.Printf("Claude WebExtension Launcher %s, %s\n", Version, time.Now().Format(time.RFC1123))
-	selfupdate.FinishUpdateIfNeeded()
 	platformSetup()
 
 	// Launcher self-update (restarts the launcher if it installs one).
@@ -340,4 +345,57 @@ func launchClaude(o launcherOptions) error {
 func claudeInstalled() bool {
 	_, err := os.Stat(claudeExecutablePath())
 	return err == nil
+}
+
+// firstRunSetup returns the setup screen for the first launch (or when asked for with
+// --show-setup), or nil once it has been shown, and always on macOS, where there's
+// nothing on it to choose. The checkboxes
+// start from what's already on disk, so shortcuts made with the old Toggle-*.bat
+// scripts are reflected; unchecking one removes it.
+func firstRunSetup(instance string, force bool) *gui.Setup {
+	setupDone := utils.LoadSettings().SetupDone
+	if !menuEntrySupported() || (setupDone && !force) {
+		return nil
+	}
+	return &gui.Setup{
+		Title: "Welcome to the WebExtension Launcher",
+		Subtitle: []string{
+			"A couple of choices before the first launch.",
+			"You can change them later by running the launcher with --show-setup.",
+		},
+		Options: []gui.SetupOption{
+			// Suggested on the first run; reopened, it shows what's there, so Continue
+			// doesn't recreate an entry the user removed.
+			{Label: "Add to the applications menu", Checked: !setupDone || hasMenuEntry(instance)},
+			{Label: "Start when I log in", Checked: hasStartup(instance)},
+		},
+		Apply: func(checked []bool) {
+			applyEntry := func(what string, want, have bool, add, remove func() error) {
+				var err error
+				switch {
+				case want: // rewrite even if it exists: it may point at an old launcher path
+					err = add()
+				case !want && have:
+					err = remove()
+				default:
+					return
+				}
+				if err != nil {
+					fmt.Printf("Warning: could not update the %s: %v\n", what, err)
+				}
+			}
+			applyEntry("applications menu entry", checked[0], hasMenuEntry(instance),
+				func() error { return addMenuEntry(instance) },
+				func() error { return removeMenuEntry(instance) })
+			applyEntry("startup entry", checked[1], hasStartup(instance),
+				func() error { return setStartup(instance, true) },
+				func() error { return setStartup(instance, false) })
+
+			settings := utils.LoadSettings()
+			settings.SetupDone = true
+			if err := utils.SaveSettings(settings); err != nil {
+				fmt.Printf("Warning: could not save settings: %v\n", err)
+			}
+		},
+	}
 }

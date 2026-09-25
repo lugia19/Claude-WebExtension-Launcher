@@ -221,8 +221,6 @@ if (Test-Path ".\builds\$APP_NAME.exe") {
     
     # Copy executable and batch scripts to temp directory
     Copy-Item ".\builds\$APP_NAME.exe" "$tempDir\$APP_NAME.exe"
-    Copy-Item ".\resources\Toggle-Startup.bat" "$tempDir\Toggle-Startup.bat"
-    Copy-Item ".\resources\Toggle-StartMenu.bat" "$tempDir\Toggle-StartMenu.bat"
     Copy-Item ".\resources\Uninstall.bat" "$tempDir\Uninstall.bat"
     
     $tempDirWSL = ConvertTo-WSLPath $tempDir
