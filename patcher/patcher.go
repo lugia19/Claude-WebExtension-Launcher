@@ -6,8 +6,6 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,11 +72,6 @@ var supportedVersions = map[string][]Patch{
 	// Add version-specific overrides here when needed
 }
 
-// Cached verified versions list (loaded on first use)
-var versionsVerifiedGenericCompatible []string
-
-const verifiedVersionsURL = "https://raw.githubusercontent.com/lugia19/Claude-WebExtension-Launcher/master/resources/verified_versions.json"
-
 var (
 	AppFolder       string
 	installBaseDir  string
@@ -99,57 +92,6 @@ func ForceRedownload() error {
 	claudeVersionFile := filepath.Join(installBaseDir, "claude-version.txt")
 	os.Remove(claudeVersionFile)
 	return EnsurePatched(true)
-}
-
-// Load verified versions from GitHub, with fallback to embedded JSON
-func loadVerifiedVersions() []string {
-	// Try fetching from GitHub first
-	resp, err := http.Get(verifiedVersionsURL)
-	if err == nil {
-		defer resp.Body.Close()
-		if resp.StatusCode == 200 {
-			body, err := io.ReadAll(resp.Body)
-			if err == nil {
-				var versions []string
-				if err := json.Unmarshal(body, &versions); err == nil {
-					fmt.Printf("Loaded %d verified versions from GitHub\n", len(versions))
-					return versions
-				}
-			}
-		}
-	}
-
-	// Fallback to embedded JSON
-	fmt.Println("Falling back to embedded verified versions list")
-	embeddedData, err := EmbeddedFS.ReadFile("resources/verified_versions.json")
-	if err != nil {
-		fmt.Printf("Warning: Could not load embedded verified versions: %v\n", err)
-		return []string{}
-	}
-
-	var versions []string
-	if err := json.Unmarshal(embeddedData, &versions); err != nil {
-		fmt.Printf("Warning: Could not parse embedded verified versions: %v\n", err)
-		return []string{}
-	}
-
-	fmt.Printf("Loaded %d verified versions from embedded file\n", len(versions))
-	return versions
-}
-
-// Check if a version is verified to work with generic patches
-func IsVersionVerified(version string) bool {
-	// Load versions on first use
-	if versionsVerifiedGenericCompatible == nil {
-		versionsVerifiedGenericCompatible = loadVerifiedVersions()
-	}
-
-	for _, v := range versionsVerifiedGenericCompatible {
-		if v == version {
-			return true
-		}
-	}
-	return false
 }
 
 func DeploySentinelExtension() error {
@@ -366,12 +308,6 @@ func EnsurePatched(forceUpdate bool) error {
 	// Claude version is unchanged).
 	versionChanged := currentVersion != newestVersion
 	shouldUpdate := forceUpdate || versionChanged
-	if versionChanged {
-		if !IsVersionVerified(newestVersion) {
-			fmt.Printf("Note: Version %s has not been explicitly verified, but should work fine.\n", newestVersion)
-			fmt.Println("If you run into issues, let me know on GitHub.")
-		}
-	}
 
 	patchVersionFile := filepath.Join(installBaseDir, "patch-version.txt")
 	if shouldUpdate {
