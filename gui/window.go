@@ -48,6 +48,9 @@ func Run(title string, rows []Row, logPath string, work func(s *Status) error) e
 	if os.Getenv("GOGPU_DAMAGE_BLIT") == "" {
 		os.Setenv("GOGPU_DAMAGE_BLIT", "0")
 	}
+	if os.Getenv("GOGPU_GRAPHICS_API") == "" && defaultGraphicsAPI != "" {
+		os.Setenv("GOGPU_GRAPHICS_API", defaultGraphicsAPI) // read by gogpu.DefaultConfig
+	}
 
 	gogpuApp := gogpu.NewApp(gogpu.DefaultConfig().
 		WithTitle(title).

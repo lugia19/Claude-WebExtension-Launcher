@@ -182,12 +182,6 @@ func (s *Status) SetRow(id, st, label, note string) {
 		r.label.Set(label)
 	}
 	r.note.Set(note)
-
-	for _, row := range s.rowOrder {
-		if row.ID == id && row.Download && st != status.Running {
-			s.progressBox.SetVisible(false)
-		}
-	}
 	s.redraw()
 }
 
