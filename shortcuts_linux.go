@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 func menuEntrySupported() bool { return true }
@@ -25,14 +26,23 @@ func applicationsDir() string {
 }
 func autostartDir() string { return filepath.Join(xdgDir("XDG_CONFIG_HOME", ".config"), "autostart") }
 
-var unsafeFileChars = regexp.MustCompile(`[^A-Za-z0-9._-]`)
+// escapedFileChars are escaped in entry file names: anything outside [A-Za-z0-9.-],
+// including the escape character _ itself, so distinct instances never share a file.
+var escapedFileChars = regexp.MustCompile(`[^A-Za-z0-9.-]`)
 
 // entryFile is the .desktop file name for an instance's menu/startup entry.
 func entryFile(instance string) string {
 	if instance == defaultInstanceName {
 		return "claude-webext-launcher.desktop"
 	}
-	return "claude-webext-launcher-" + unsafeFileChars.ReplaceAllString(instance, "_") + ".desktop"
+	escaped := escapedFileChars.ReplaceAllStringFunc(instance, func(c string) string {
+		var b strings.Builder
+		for i := 0; i < len(c); i++ {
+			fmt.Fprintf(&b, "_%02x", c[i]) // every byte as _xx, so decoding is unambiguous
+		}
+		return b.String()
+	})
+	return "claude-webext-launcher-" + escaped + ".desktop"
 }
 
 func hasMenuEntry(instance string) bool {

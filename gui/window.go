@@ -35,7 +35,9 @@ const (
 //
 // With a non-nil setup, the window opens on the setup screen instead, and work only
 // starts once Continue has been clicked (and setup.Apply has run). Closing the window
-// on the setup screen ends the launch without doing anything.
+// on the setup screen ends the launch without doing anything. If the window can't
+// open, setup is skipped (Apply never runs, so it's offered again next time) and work
+// runs as usual.
 func Run(title string, rows []Row, logPath string, setup *Setup, work func(s *Status) error) error {
 	// gogpu logs through slog; keep it out of the user's way (it goes to the log file,
 	// since stdout/stderr are redirected there), and quiet unless something's wrong.
@@ -70,6 +72,7 @@ func Run(title string, rows []Row, logPath string, setup *Setup, work func(s *St
 	}
 
 	var result error
+	var skippedWork bool
 	finished := make(chan struct{})
 	go func() {
 		defer close(finished)
@@ -78,7 +81,8 @@ func Run(title string, rows []Row, logPath string, setup *Setup, work func(s *St
 			case checked := <-setupDone:
 				setup.Apply(checked)
 			case <-s.closed:
-				return // window closed on the setup screen: don't launch
+				skippedWork = true // closed on the setup screen, or the window never opened
+				return
 			}
 		}
 		result = work(s)
@@ -95,6 +99,9 @@ func Run(title string, rows []Row, logPath string, setup *Setup, work func(s *St
 	<-finished // also covers the user closing the window while work is still running
 
 	if windowErr != nil {
+		if skippedWork {
+			result = work(s)
+		}
 		fmt.Printf("Window unavailable (%v); ran without it\n", windowErr)
 		if result != nil {
 			utils.ShowErrorDialog(title, fmt.Sprintf("%v\n\nDetails are in the log:\n%s", result, logPath))
