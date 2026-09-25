@@ -22,7 +22,7 @@ const defaultInstanceName = "modified"
 
 func main() {
 	// Parse command-line flags
-	forceUpdate := flag.Bool("force-update", false, "Force update to the latest version even if it's not verified compatible")
+	forceUpdate := flag.Bool("force-update", false, "Re-download and re-patch Claude even if already up to date")
 	instanceName := flag.String("instance", defaultInstanceName, "Instance name for separate data directory and lock")
 	patcherMode := flag.Bool("patcher", false, "Run in elevated patcher mode (internal)")
 	debug := flag.Bool("debug", false, "Keep console windows open and launch Claude attached to terminal")
@@ -116,6 +116,7 @@ func main() {
 		// Launch detached
 		cmd := exec.Command(claudePath, instanceArg)
 		cmd.Dir = filepath.Dir(claudePath)
+		detachFromTerminal(cmd)
 		cmd.Start()
 	}
 }

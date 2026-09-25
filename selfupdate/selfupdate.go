@@ -67,6 +67,14 @@ func CheckAndUpdate() error {
 
 	fmt.Printf("Update available: %s -> %s\n", currentVer, latestVersion)
 
+	// Serialize the rest: launchers started together would otherwise share the
+	// update-temp files and the platform's staging paths for the new binary.
+	unlock, locked := lockUpdate()
+	if !locked {
+		return fmt.Errorf("another launcher is installing an update; skipping")
+	}
+	defer unlock()
+
 	// Platform-specific asset selection
 	assets := make([]releaseAsset, len(release.Assets))
 	for i, a := range release.Assets {
@@ -145,11 +153,14 @@ func CheckAndUpdate() error {
 
 		os.MkdirAll(filepath.Dir(path), 0755)
 
-		src, _ := f.Open()
-		dst, _ := os.Create(path)
-		io.Copy(dst, src)
-		dst.Close()
-		src.Close()
+		// A truncated or corrupt download must abort the update here (the zip reader
+		// reports CRC mismatches from Read), not reach installUpdate as a partial file.
+		if err := utils.ExtractZipFile(f, path); err != nil {
+			zipReader.Close()
+			os.Remove(tempZip)
+			os.RemoveAll(tempDir)
+			return fmt.Errorf("failed to extract %s: %v", f.Name, err)
+		}
 	}
 	zipReader.Close()
 

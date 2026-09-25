@@ -143,6 +143,22 @@ else {
     Write-Host "macOS ARM64 build failed! Make sure Go can cross-compile to Darwin ARM64." -ForegroundColor Red
 }
 
+# Build for Linux (AMD64 and ARM64)
+foreach ($arch in @("amd64", "arm64")) {
+    Write-Host "`nBuilding for Linux ($arch)..." -ForegroundColor Cyan
+    $env:GOOS = "linux"
+    $env:GOARCH = $arch
+    & go build -o ".\builds\$APP_NAME-linux-$arch"
+
+    if (Test-Path ".\builds\$APP_NAME-linux-$arch") {
+        Write-Host "Linux $arch build complete: builds\$APP_NAME-linux-$arch" -ForegroundColor Green
+    }
+    else {
+        Write-Host "Linux $arch build failed!" -ForegroundColor Red
+    }
+}
+Remove-Item Env:GOOS, Env:GOARCH
+
 # Ad-hoc sign macOS app bundles with rcodesign
 if (Test-Path ".\resources\rcodesign.exe") {
     Write-Host "`nAd-hoc signing macOS app bundles..." -ForegroundColor Cyan
@@ -256,6 +272,27 @@ if ($arm64Bundle -and (Test-Path $arm64Bundle)) {
     Remove-Item ".\builds\Uninstall.command" -ErrorAction SilentlyContinue
 }
 
+# Linux zips (the binary is renamed to the plain app name the self-updater looks for)
+foreach ($arch in @("amd64", "arm64")) {
+    if (Test-Path ".\builds\$APP_NAME-linux-$arch") {
+        $zipName = "$APP_NAME-$VERSION-linux-$arch.zip"
+        $tempDir = ".\builds\temp-linux-$arch"
+        if (Test-Path $tempDir) {
+            Remove-Item $tempDir -Recurse -Force
+        }
+        New-Item -ItemType Directory -Path $tempDir | Out-Null
+        Move-Item ".\builds\$APP_NAME-linux-$arch" "$tempDir\$APP_NAME"
+
+        $tempDirWSL = ConvertTo-WSLPath $tempDir
+        wsl sh -c "cd '$tempDirWSL' && chmod +x '$APP_NAME' && rm -f '$currentDirWSL/builds/$zipName' && zip '$currentDirWSL/builds/$zipName' '$APP_NAME'"
+
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Created: builds\$zipName" -ForegroundColor Green
+        }
+        Remove-Item $tempDir -Recurse -Force
+    }
+}
+
 # Summary
 Write-Host "`nBuilds complete!" -ForegroundColor Green
 if (Test-Path ".\builds\$APP_NAME-$VERSION-windows.zip") {
@@ -266,4 +303,10 @@ if (Test-Path ".\builds\$APP_NAME-$VERSION-macos-amd64.zip") {
 }
 if (Test-Path ".\builds\$APP_NAME-$VERSION-macos-arm64.zip") {
     Write-Host "- macOS ARM64: builds\$APP_NAME-$VERSION-macos-arm64.zip" -ForegroundColor White
+}
+if (Test-Path ".\builds\$APP_NAME-$VERSION-linux-amd64.zip") {
+    Write-Host "- Linux AMD64: builds\$APP_NAME-$VERSION-linux-amd64.zip" -ForegroundColor White
+}
+if (Test-Path ".\builds\$APP_NAME-$VERSION-linux-arm64.zip") {
+    Write-Host "- Linux ARM64: builds\$APP_NAME-$VERSION-linux-arm64.zip" -ForegroundColor White
 }

@@ -1,0 +1,152 @@
+package selfupdate
+
+import (
+	"claude-webext-patcher/utils"
+	"debug/elf"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
+	"time"
+)
+
+const executableName = "Claude_WebExtension_Launcher"
+
+func selectAsset(assets []releaseAsset) (string, string, error) {
+	suffix := fmt.Sprintf("-linux-%s.zip", runtime.GOARCH)
+	fmt.Printf("Looking for Linux release (architecture: %s)...\n", runtime.GOARCH)
+
+	for _, asset := range assets {
+		if strings.HasSuffix(asset.Name, suffix) {
+			fmt.Printf("Found release: %s\n", asset.Name)
+			return asset.DownloadURL, asset.Name, nil
+		}
+	}
+
+	fmt.Println("No release found for platform: linux")
+	return "", "", fmt.Errorf("no compatible release file found for linux/%s", runtime.GOARCH)
+}
+
+// installUpdate swaps the new binary over the running one and re-execs it. Renaming
+// over a running executable is safe on Linux: the old process keeps its open inode.
+func installUpdate(tempDir, tempZip string) error {
+	defer os.Remove(tempZip)
+	defer os.RemoveAll(tempDir)
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locating current executable: %v", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+		exePath = resolved
+	}
+
+	data, err := os.ReadFile(filepath.Join(tempDir, executableName))
+	if err != nil {
+		return fmt.Errorf("update package has no %s: %v", executableName, err)
+	}
+
+	// Stage next to the target so the renames stay on one filesystem. Zip extraction
+	// drops the exec bit, so set it explicitly.
+	staged := exePath + ".new"
+	if err := os.WriteFile(staged, data, 0755); err != nil {
+		return fmt.Errorf("writing new executable: %v", err)
+	}
+	defer os.Remove(staged)
+	if err := os.Chmod(staged, 0755); err != nil {
+		return fmt.Errorf("making new executable runnable: %v", err)
+	}
+	if err := checkLinuxExecutable(staged); err != nil {
+		return fmt.Errorf("downloaded update is not a valid launcher: %v", err)
+	}
+
+	// Keep the current binary until the new one has actually started, so a failed
+	// exec can be rolled back instead of leaving no working launcher.
+	backup := exePath + ".old"
+	os.Remove(backup)
+	if err := os.Rename(exePath, backup); err != nil {
+		return fmt.Errorf("moving current executable aside: %v", err)
+	}
+	if err := os.Rename(staged, exePath); err != nil {
+		os.Rename(backup, exePath)
+		return fmt.Errorf("replacing executable: %v", err)
+	}
+
+	os.Remove(tempZip)
+	os.RemoveAll(tempDir)
+
+	fmt.Println("Update installed, restarting...")
+	args := append([]string{exePath}, os.Args[1:]...)
+	err = syscall.Exec(exePath, args, os.Environ())
+
+	// Exec only returns on failure: put the old launcher back and carry on with it.
+	os.Remove(exePath)
+	os.Rename(backup, exePath)
+	return fmt.Errorf("restarting updated launcher (kept the current version): %v", err)
+}
+
+// checkLinuxExecutable rejects anything that isn't an ELF executable for this
+// architecture, e.g. a wrong-arch or truncated binary.
+func checkLinuxExecutable(path string) error {
+	f, err := elf.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	want := map[string]elf.Machine{"amd64": elf.EM_X86_64, "arm64": elf.EM_AARCH64}[runtime.GOARCH]
+	if want != elf.EM_NONE && f.Machine != want {
+		return fmt.Errorf("built for %v, this machine is %s", f.Machine, runtime.GOARCH)
+	}
+	return nil
+}
+
+// startedFrom identifies the launcher binary this process was started from, so a
+// launcher that waited for the update lock can tell another one already replaced it.
+var startedFrom os.FileInfo
+
+func init() {
+	if exe, err := os.Executable(); err == nil {
+		startedFrom, _ = os.Stat(exe)
+	}
+}
+
+const updateLockName = "selfupdate"
+
+// finishUpdateIfNeeded removes the rollback copy installUpdate keeps until the new
+// binary has started. Only when the update lock is free: while it's held, another
+// launcher may be mid-update and still need its .old to roll back.
+func finishUpdateIfNeeded(exePath string) {
+	lock, ok := utils.AcquirePatchLock(updateLockName, 0)
+	if !ok {
+		return
+	}
+	defer lock.Release()
+	os.Remove(exePath + ".old")
+}
+
+// lockUpdate takes a per-user cross-process lock for the update. The flock's fd is
+// close-on-exec, so the successful re-exec in installUpdate releases it too. If a
+// launcher that held the lock before us already replaced the binary, restart into the
+// new version instead of downloading the same update again.
+func lockUpdate() (func(), bool) {
+	lock, ok := utils.AcquirePatchLock(updateLockName, 5*time.Minute)
+	if !ok {
+		return nil, false
+	}
+
+	exe, err := os.Executable()
+	if err == nil && startedFrom != nil {
+		if current, err := os.Stat(exe); err == nil && !os.SameFile(startedFrom, current) {
+			fmt.Println("Another launcher already installed the update, restarting...")
+			lock.Release()
+			args := append([]string{exe}, os.Args[1:]...)
+			err = syscall.Exec(exe, args, os.Environ())
+			fmt.Printf("Warning: could not restart into the updated launcher: %v\n", err)
+			return nil, false
+		}
+	}
+	return lock.Release, true
+}

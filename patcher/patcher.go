@@ -6,8 +6,6 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,21 +32,10 @@ const (
 	// .nupkg does not contain. The arch is the native host arch (see HostArch), so an
 	// emulated amd64 launcher on ARM64 still provisions native arm64 Claude.
 	windowsMSIXRedirectURLFmt = "https://claude.ai/api/desktop/win32/%s/msix/latest/redirect"
-	macosReleasesURL          = "https://downloads.claude.ai/releases/darwin/universal/RELEASES.json"
 	appFolderName             = "app-latest"
 	KeepDownloadedArchive     = false
 	PatchVersion              = "10"
 )
-
-type MacOSManifest struct {
-	CurrentRelease string `json:"currentRelease"`
-	Releases       []struct {
-		Version  string `json:"version"`
-		UpdateTo struct {
-			URL string `json:"url"`
-		} `json:"updateTo"`
-	} `json:"releases"`
-}
 
 type Patch struct {
 	Files   []string
@@ -74,11 +61,6 @@ var supportedVersions = map[string][]Patch{
 	// Add version-specific overrides here when needed
 }
 
-// Cached verified versions list (loaded on first use)
-var versionsVerifiedGenericCompatible []string
-
-const verifiedVersionsURL = "https://raw.githubusercontent.com/lugia19/Claude-WebExtension-Launcher/master/resources/verified_versions.json"
-
 var (
 	AppFolder       string
 	installBaseDir  string
@@ -101,57 +83,6 @@ func ForceRedownload() error {
 	return EnsurePatched(true)
 }
 
-// Load verified versions from GitHub, with fallback to embedded JSON
-func loadVerifiedVersions() []string {
-	// Try fetching from GitHub first
-	resp, err := http.Get(verifiedVersionsURL)
-	if err == nil {
-		defer resp.Body.Close()
-		if resp.StatusCode == 200 {
-			body, err := io.ReadAll(resp.Body)
-			if err == nil {
-				var versions []string
-				if err := json.Unmarshal(body, &versions); err == nil {
-					fmt.Printf("Loaded %d verified versions from GitHub\n", len(versions))
-					return versions
-				}
-			}
-		}
-	}
-
-	// Fallback to embedded JSON
-	fmt.Println("Falling back to embedded verified versions list")
-	embeddedData, err := EmbeddedFS.ReadFile("resources/verified_versions.json")
-	if err != nil {
-		fmt.Printf("Warning: Could not load embedded verified versions: %v\n", err)
-		return []string{}
-	}
-
-	var versions []string
-	if err := json.Unmarshal(embeddedData, &versions); err != nil {
-		fmt.Printf("Warning: Could not parse embedded verified versions: %v\n", err)
-		return []string{}
-	}
-
-	fmt.Printf("Loaded %d verified versions from embedded file\n", len(versions))
-	return versions
-}
-
-// Check if a version is verified to work with generic patches
-func IsVersionVerified(version string) bool {
-	// Load versions on first use
-	if versionsVerifiedGenericCompatible == nil {
-		versionsVerifiedGenericCompatible = loadVerifiedVersions()
-	}
-
-	for _, v := range versionsVerifiedGenericCompatible {
-		if v == version {
-			return true
-		}
-	}
-	return false
-}
-
 func DeploySentinelExtension() error {
 	sentinelDir := filepath.Join(utils.ResolveInstallPath("web-extensions"), "sentinel")
 	os.MkdirAll(sentinelDir, 0755)
@@ -172,6 +103,9 @@ func DeploySentinelExtension() error {
 
 // patchProtocolArray adds "chrome-extension:" to the allowed protocols array.
 // Matches the prefix ["devtools:","file:" and inserts before the closing ].
+// The Windows/macOS bundles quote the entries with double quotes; the Linux bundle
+// uses template-literal backticks ([`devtools:`,`file:`,...]), so both are tried and
+// the inserted entry reuses whichever quote matched.
 //
 // Claude's bundle is heavily code-split, so this runs against many chunk files
 // and only one contains the array. "Prefix not found" is therefore the normal
@@ -180,32 +114,36 @@ func DeploySentinelExtension() error {
 func patchProtocolArray(content []byte) ([]byte, bool) {
 	contentStr := string(content)
 
-	prefix := `["devtools:","file:"`
-	idx := strings.Index(contentStr, prefix)
-	if idx == -1 {
-		return content, false
+	for _, q := range []string{`"`, "`"} {
+		prefix := "[" + q + "devtools:" + q + "," + q + "file:" + q
+		idx := strings.Index(contentStr, prefix)
+		if idx == -1 {
+			continue
+		}
+
+		// Find the closing ] after the prefix
+		closingIdx := strings.Index(contentStr[idx:], "]")
+		if closingIdx == -1 {
+			fmt.Println("Warning: Could not find closing ] for protocol array")
+			debugPause()
+			return content, false
+		}
+		closingIdx += idx
+
+		// Check if chrome-extension: is already present
+		arrayContent := contentStr[idx : closingIdx+1]
+		if strings.Contains(arrayContent, "chrome-extension:") {
+			fmt.Println("Protocol array already contains chrome-extension:, skipping")
+			return content, false
+		}
+
+		// Insert ,"chrome-extension:" before the ]
+		contentStr = contentStr[:closingIdx] + "," + q + "chrome-extension:" + q + contentStr[closingIdx:]
+		fmt.Println("Added chrome-extension: to protocol array")
+		return []byte(contentStr), true
 	}
 
-	// Find the closing ] after the prefix
-	closingIdx := strings.Index(contentStr[idx:], "]")
-	if closingIdx == -1 {
-		fmt.Println("Warning: Could not find closing ] for protocol array")
-		debugPause()
-		return content, false
-	}
-	closingIdx += idx
-
-	// Check if chrome-extension: is already present
-	arrayContent := contentStr[idx : closingIdx+1]
-	if strings.Contains(arrayContent, "chrome-extension:") {
-		fmt.Println("Protocol array already contains chrome-extension:, skipping")
-		return content, false
-	}
-
-	// Insert ,"chrome-extension:" before the ]
-	contentStr = contentStr[:closingIdx] + `,"chrome-extension:"` + contentStr[closingIdx:]
-	fmt.Println("Added chrome-extension: to protocol array")
-	return []byte(contentStr), true
+	return content, false
 }
 
 // installWrapper copies the wrapper.js into the unpacked asar and redirects
@@ -366,12 +304,6 @@ func EnsurePatched(forceUpdate bool) error {
 	// Claude version is unchanged).
 	versionChanged := currentVersion != newestVersion
 	shouldUpdate := forceUpdate || versionChanged
-	if versionChanged {
-		if !IsVersionVerified(newestVersion) {
-			fmt.Printf("Note: Version %s has not been explicitly verified, but should work fine.\n", newestVersion)
-			fmt.Println("If you run into issues, let me know on GitHub.")
-		}
-	}
 
 	patchVersionFile := filepath.Join(installBaseDir, "patch-version.txt")
 	if shouldUpdate {

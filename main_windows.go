@@ -8,6 +8,7 @@ import (
 	"claude-webext-patcher/utils"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -225,3 +226,6 @@ func claudeInstalled() bool {
 	_, err := os.Stat(claudeExecutablePath())
 	return err == nil
 }
+
+// detachFromTerminal is a no-op here; see main_linux.go.
+func detachFromTerminal(cmd *exec.Cmd) {}

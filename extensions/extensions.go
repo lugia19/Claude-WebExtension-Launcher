@@ -162,11 +162,9 @@ func downloadAndExtractExtension(url, folder string) error {
 
 		os.MkdirAll(filepath.Dir(path), 0755)
 
-		src, _ := f.Open()
-		dst, _ := os.Create(path)
-		io.Copy(dst, src)
-		dst.Close()
-		src.Close()
+		if err := utils.ExtractZipFile(f, path); err != nil {
+			return fmt.Errorf("extracting %s: %v", f.Name, err)
+		}
 	}
 
 	return nil

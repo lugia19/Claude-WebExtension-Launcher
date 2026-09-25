@@ -1,5 +1,3 @@
-//go:build !windows
-
 package selfupdate
 
 import (
@@ -11,46 +9,30 @@ import (
 	"strings"
 )
 
-// finishUpdateIfNeeded is a no-op on non-Windows platforms.
-// macOS uses a shell script for bundle replacement, not .new files.
-func finishUpdateIfNeeded(exePath string) {}
-
 func selectAsset(assets []releaseAsset) (string, string, error) {
-	if runtime.GOOS == "darwin" {
-		arch := strings.ToLower(runtime.GOARCH) // "amd64" or "arm64"
-		archSpecificSuffix := fmt.Sprintf("-macos-%s", arch)
+	arch := strings.ToLower(runtime.GOARCH) // "amd64" or "arm64"
+	archSpecificSuffix := fmt.Sprintf("-macos-%s", arch)
 
-		fmt.Printf("Looking for macOS release (architecture: %s)...\n", arch)
+	fmt.Printf("Looking for macOS release (architecture: %s)...\n", arch)
 
-		// First try: architecture-specific (e.g., "-macos-arm64")
-		for _, asset := range assets {
-			if strings.Contains(asset.Name, archSpecificSuffix) && strings.HasSuffix(asset.Name, ".zip") {
-				fmt.Printf("Found architecture-specific release: %s\n", asset.Name)
-				return asset.DownloadURL, asset.Name, nil
-			}
-		}
-
-		// Second try: generic macOS (e.g., "-macos")
-		for _, asset := range assets {
-			if strings.Contains(asset.Name, "-macos") && strings.HasSuffix(asset.Name, ".zip") {
-				fmt.Printf("Found generic macOS release: %s\n", asset.Name)
-				return asset.DownloadURL, asset.Name, nil
-			}
-		}
-
-		fmt.Println("No release found for platform: darwin")
-		return "", "", fmt.Errorf("no compatible release file found for darwin")
-	}
-
-	// Generic non-Windows fallback (linux, etc.) — match by runtime.GOOS suffix
-	suffix := "-" + runtime.GOOS
+	// First try: architecture-specific (e.g., "-macos-arm64")
 	for _, asset := range assets {
-		if strings.Contains(asset.Name, suffix) && strings.HasSuffix(asset.Name, ".zip") {
+		if strings.Contains(asset.Name, archSpecificSuffix) && strings.HasSuffix(asset.Name, ".zip") {
+			fmt.Printf("Found architecture-specific release: %s\n", asset.Name)
 			return asset.DownloadURL, asset.Name, nil
 		}
 	}
-	fmt.Printf("No release found for platform: %s\n", runtime.GOOS)
-	return "", "", fmt.Errorf("no compatible release file found for %s", runtime.GOOS)
+
+	// Second try: generic macOS (e.g., "-macos")
+	for _, asset := range assets {
+		if strings.Contains(asset.Name, "-macos") && strings.HasSuffix(asset.Name, ".zip") {
+			fmt.Printf("Found generic macOS release: %s\n", asset.Name)
+			return asset.DownloadURL, asset.Name, nil
+		}
+	}
+
+	fmt.Println("No release found for platform: darwin")
+	return "", "", fmt.Errorf("no compatible release file found for darwin")
 }
 
 func installUpdate(tempDir, tempZip string) error {
@@ -142,3 +124,12 @@ func installUpdate(tempDir, tempZip string) error {
 	os.Exit(0)
 	return nil
 }
+
+// lockUpdate is a no-op on macOS: the update is only downloaded to ~/Downloads for
+// the user to install, and never replaces the running launcher.
+func lockUpdate() (func(), bool) {
+	return func() {}, true
+}
+
+// finishUpdateIfNeeded is a no-op on macOS: the new bundle is handed to the user.
+func finishUpdateIfNeeded(exePath string) {}

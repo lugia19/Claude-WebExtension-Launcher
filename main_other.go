@@ -5,56 +5,14 @@ package main
 import (
 	"claude-webext-patcher/extensions"
 	"claude-webext-patcher/patcher"
+	"claude-webext-patcher/utils"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
-	"strings"
+	"time"
 )
-
-// prepareAdminContext relaunches the launcher inside Terminal.app on macOS
-// when there is no controlling terminal, so console output is visible.
-// On other non-Windows platforms it is a no-op.
-func prepareAdminContext() error {
-	if runtime.GOOS == "darwin" && os.Getenv("TERM") == "" {
-		executable, _ := os.Executable()
-		execDir := filepath.Dir(executable)
-
-		// Change to the executable's directory, run, then exit terminal
-		// Escape single quotes in paths for AppleScript
-		execDirEscaped := strings.ReplaceAll(execDir, `'`, `'\''`)
-		executableEscaped := strings.ReplaceAll(executable, `'`, `'\''`)
-		script := fmt.Sprintf(`tell application "Terminal"
-			set newTab to do script "cd '%s' && '%s' && exit"
-			activate
-		end tell`, execDirEscaped, executableEscaped)
-
-		cmd := exec.Command("osascript", "-e", script)
-		cmd.Start()
-		os.Exit(0)
-	}
-	return nil
-}
 
 // releaseAdminContext is a no-op on non-Windows platforms.
 func releaseAdminContext() {}
-
-func claudeUserDataDir(instance string) string {
-	if runtime.GOOS == "darwin" {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, "Library", "Application Support", "Claude-"+instance)
-	}
-	return ""
-}
-
-func claudeExecutablePath() string {
-	if runtime.GOOS == "darwin" {
-		return filepath.Join(patcher.AppFolder, "Claude.app", "Contents", "MacOS", "Claude")
-	}
-	// Linux and other Unix-like systems
-	return filepath.Join(patcher.AppFolder, "claude")
-}
 
 // claudeInstalled returns true if the Claude executable exists in the install directory.
 func claudeInstalled() bool {
@@ -62,8 +20,36 @@ func claudeInstalled() bool {
 	return err == nil
 }
 
-// ensureClaudeReady runs patching and extension updates in-process on macOS.
+const (
+	// patchLockName serializes patching and extension updates across launchers
+	// started together (e.g. several named instances), which share the staging,
+	// asar-temp and web-extensions paths.
+	patchLockName = "patch"
+	// patchLockTimeout is generous: a real update downloads Claude (~175-250 MB).
+	patchLockTimeout = 10 * time.Minute
+)
+
+// ensureClaudeReady runs patching and extension updates in-process on macOS and Linux.
 func ensureClaudeReady(forceUpdate bool) error {
+	lock, locked := utils.AcquirePatchLock(patchLockName, patchLockTimeout)
+	if !locked {
+		if claudeInstalled() {
+			// The staging swap never leaves a half-written install, so launching
+			// whatever is there is safe.
+			fmt.Println("Warning: timed out waiting for another launcher to finish updating; launching existing installation.")
+			return nil
+		}
+		// Nothing to launch yet (e.g. a slow first download in another launcher).
+		// Never patch without the lock: keep waiting for it instead.
+		fmt.Println("Waiting for another launcher to finish installing Claude...")
+		if lock, locked = utils.AcquirePatchLock(patchLockName, 24*time.Hour); !locked {
+			return fmt.Errorf("could not acquire the install lock")
+		}
+	}
+	// No separate re-check needed: EnsurePatched compares against the version files,
+	// so a launcher that waited here finds the work already done.
+	defer lock.Release()
+
 	if err := patcher.EnsurePatched(forceUpdate); err != nil {
 		if claudeInstalled() {
 			fmt.Printf("Warning: patching failed (%v), launching existing installation.\n", err)
