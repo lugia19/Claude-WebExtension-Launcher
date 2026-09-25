@@ -194,9 +194,9 @@ for arch in amd64 arm64; do
         chmod +x "$temp_dir/$APP_NAME"
         (cd "$temp_dir" && zip "../$APP_NAME-$VERSION-linux-$arch.zip" "$APP_NAME")
         rm -rf "$temp_dir"
-        echo "  ✅ Created: builds/$APP_NAME-$VERSION-linux-$arch.zip"
+        echo "  ✅ Created: builds/$APP_NAME-$VERSION-linux-$arch.zip"
     else
-        echo "  ❌ Linux $arch build failed!"
+        echo "  ❌ Linux $arch build failed!"
     fi
 done
 
@@ -219,11 +219,11 @@ if [ -f "builds/$APP_NAME-$VERSION-windows.zip" ]; then
 fi
 
 if [ -f "builds/$APP_NAME-$VERSION-linux-amd64.zip" ]; then
-    echo "✅ Linux AMD64: builds/$APP_NAME-$VERSION-linux-amd64.zip"
+    echo "✅ Linux AMD64: builds/$APP_NAME-$VERSION-linux-amd64.zip"
 fi
 
 if [ -f "builds/$APP_NAME-$VERSION-linux-arm64.zip" ]; then
-    echo "✅ Linux ARM64: builds/$APP_NAME-$VERSION-linux-arm64.zip"
+    echo "✅ Linux ARM64: builds/$APP_NAME-$VERSION-linux-arm64.zip"
 fi
 
 echo ""

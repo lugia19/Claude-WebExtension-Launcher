@@ -304,9 +304,9 @@ if (Test-Path ".\builds\$APP_NAME-$VERSION-macos-amd64.zip") {
 if (Test-Path ".\builds\$APP_NAME-$VERSION-macos-arm64.zip") {
     Write-Host "- macOS ARM64: builds\$APP_NAME-$VERSION-macos-arm64.zip" -ForegroundColor White
 }
-if (Test-Path ".uilds\$APP_NAME-$VERSION-linux-amd64.zip") {
+if (Test-Path ".\builds\$APP_NAME-$VERSION-linux-amd64.zip") {
     Write-Host "- Linux AMD64: builds\$APP_NAME-$VERSION-linux-amd64.zip" -ForegroundColor White
 }
-if (Test-Path ".uilds\$APP_NAME-$VERSION-linux-arm64.zip") {
+if (Test-Path ".\builds\$APP_NAME-$VERSION-linux-arm64.zip") {
     Write-Host "- Linux ARM64: builds\$APP_NAME-$VERSION-linux-arm64.zip" -ForegroundColor White
 }
