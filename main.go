@@ -73,6 +73,7 @@ func main() {
 	if opts.debug {
 		ensureConsole()
 		stop, _ := utils.StartLog(opts.logPath, true, os.Stdout)
+		selfupdate.FinishUpdateIfNeeded()
 		err := runLauncher(opts)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
@@ -85,6 +86,9 @@ func main() {
 	}
 
 	stop, _ := utils.StartLog(opts.logPath, true, nil)
+	// Before the window: on Windows this restarts a freshly updated .new.exe as the
+	// real .exe, and setup must run there so shortcuts don't point at the temporary file.
+	selfupdate.FinishUpdateIfNeeded()
 	rows := checklistRows(sandboxNeeded(), coworkNeeded())
 	err := gui.Run("Claude WebExtension Launcher", rows, opts.logPath, firstRunSetup(opts.instance, *showSetup), func(s *gui.Status) error {
 		ui = s
@@ -103,7 +107,6 @@ func main() {
 // Every step is mirrored to the checklist through ui.
 func runLauncher(o launcherOptions) error {
 	fmt.Printf("Claude WebExtension Launcher %s, %s\n", Version, time.Now().Format(time.RFC1123))
-	selfupdate.FinishUpdateIfNeeded()
 	platformSetup()
 
 	// Launcher self-update (restarts the launcher if it installs one).
