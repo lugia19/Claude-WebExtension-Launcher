@@ -370,7 +370,7 @@ func firstRunSetup(instance string, force bool) *gui.Setup {
 			applyEntry := func(what string, want, have bool, add, remove func() error) {
 				var err error
 				switch {
-				case want && !have:
+				case want: // rewrite even if it exists: it may point at an old launcher path
 					err = add()
 				case !want && have:
 					err = remove()
