@@ -9,8 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
-	"unsafe"
 )
 
 // Ubuntu 24.04+ sets kernel.apparmor_restrict_unprivileged_userns=1, which stops
@@ -95,19 +93,17 @@ profile %s "%s" flags=(unconfined) {
 		var exitErr *exec.ExitError
 		userDismissed = errors.As(lastErr, &exitErr) && exitErr.ExitCode() == 126
 	}
+	// The launcher relaunches itself in a terminal when started without one (see
+	// prepareAdminContext), so sudo can normally prompt; stdin is only missing a TTY
+	// when no terminal emulator could be found.
 	if !userDismissed {
 		if stdinIsTerminal() {
 			if lastErr = runElevated("sudo", shArgs); lastErr == nil {
 				fmt.Println("AppArmor profile installed.")
 				return
 			}
-		} else {
-			// No terminal to ask for a sudo password in (or to show errors in): re-run
-			// in one. Only returns if no terminal emulator could be started.
-			relaunchInTerminal()
-			if lastErr == nil {
-				lastErr = fmt.Errorf("no pkexec and no terminal emulator found")
-			}
+		} else if lastErr == nil {
+			lastErr = fmt.Errorf("no pkexec, and no terminal to run sudo in")
 		}
 	}
 
@@ -135,54 +131,4 @@ func printManualAppArmorSteps(profilePath, profile string, cause error) {
 		fmt.Print("Press Enter to continue...")
 		bufio.NewReader(os.Stdin).ReadString('\n')
 	}
-}
-
-// relaunchInTerminal re-runs the launcher inside a terminal emulator, so sudo can ask
-// for a password, then exits. It returns only if no terminal could be started.
-func relaunchInTerminal() {
-	exe, err := os.Executable()
-	if err != nil {
-		return
-	}
-	self := append([]string{exe}, os.Args[1:]...)
-
-	type terminal struct {
-		bin  string
-		args []string // placed before the command
-	}
-	var candidates []terminal
-	if t := os.Getenv("TERMINAL"); t != "" {
-		candidates = append(candidates, terminal{t, []string{"-e"}})
-	}
-	candidates = append(candidates,
-		terminal{"x-terminal-emulator", []string{"-e"}},
-		terminal{"gnome-terminal", []string{"--"}},
-		terminal{"konsole", []string{"-e"}},
-		terminal{"xfce4-terminal", []string{"-x"}},
-		terminal{"kitty", nil},
-		terminal{"alacritty", []string{"-e"}},
-		terminal{"xterm", []string{"-e"}},
-	)
-
-	for _, t := range candidates {
-		bin, err := exec.LookPath(t.bin)
-		if err != nil {
-			continue
-		}
-		cmd := exec.Command(bin, append(t.args, self...)...)
-		if err := cmd.Start(); err != nil {
-			continue
-		}
-		fmt.Printf("Continuing in %s...\n", t.bin)
-		os.Exit(0)
-	}
-}
-
-// stdinIsTerminal reports whether stdin is a TTY. A desktop launch usually gets
-// /dev/null, which is also a character device, so this asks the tty layer directly
-// instead of checking the file mode.
-func stdinIsTerminal() bool {
-	var termios syscall.Termios
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, os.Stdin.Fd(), syscall.TCGETS, uintptr(unsafe.Pointer(&termios)))
-	return errno == 0
 }
