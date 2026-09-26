@@ -20,10 +20,17 @@ if (!(Test-Path ".\builds")) {
 	New-Item -ItemType Directory -Path ".\builds" | Out-Null
 }
 
+# The window (Fyne) needs cgo: gcc from WinLibs/MinGW-w64 on the PATH.
+if (!(Get-Command gcc -ErrorAction SilentlyContinue)) {
+	Write-Host "ERROR: gcc not found. Install WinLibs (winget install BrechtSanders.WinLibs.POSIX.UCRT) and open a new terminal." -ForegroundColor Red
+	exit 1
+}
+
 # Build for Windows
 Write-Host "`nBuilding for Windows..." -ForegroundColor Cyan
 $env:GOOS = "windows"
 $env:GOARCH = "amd64"
+$env:CGO_ENABLED = "1"
 & go build -ldflags "-H=windowsgui" -o ".\builds\$APP_NAME.exe"
 
 if (Test-Path ".\builds\$APP_NAME.exe") {

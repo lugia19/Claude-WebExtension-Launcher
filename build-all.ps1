@@ -20,6 +20,16 @@ if (!(Test-Path ".\builds")) {
     New-Item -ItemType Directory -Path ".\builds" | Out-Null
 }
 
+# The window (Fyne) needs cgo, so every build needs a C compiler for its target, and
+# can only be built on that platform: Windows here (gcc from WinLibs/MinGW-w64 on the
+# PATH), Linux through WSL (gcc and the X11/GL headers). macOS is built on a Mac
+# (build-all.sh).
+$env:CGO_ENABLED = "1"
+if (!(Get-Command gcc -ErrorAction SilentlyContinue)) {
+    Write-Host "ERROR: gcc not found. Install WinLibs (winget install BrechtSanders.WinLibs.POSIX.UCRT) and open a new terminal." -ForegroundColor Red
+    exit 1
+}
+
 # Build for Windows
 Write-Host "`nBuilding for Windows..." -ForegroundColor Cyan
 $env:GOOS = "windows"
@@ -33,154 +43,17 @@ else {
     Write-Host "Windows build failed!" -ForegroundColor Red
 }
 
-# Function to create macOS app bundle
-function Create-MacOSBundle {
-    param(
-        [string]$BinaryPath,
-        [string]$Architecture,
-        [string]$MinimumOS
-    )
-    
-    # Each architecture in its own folder: the bundle must be named plainly
-    # ($APP_NAME.app), since the launcher installs and self-updates by that name.
-    $appBundle = ".\builds\macos-$Architecture\$APP_NAME.app"
-    
-    Write-Host "Creating app bundle for $Architecture..."
-
-    # Clean up old bundle if it exists
-    if (Test-Path $appBundle) {
-        Remove-Item -Recurse -Force $appBundle
-    }
-
-    # Create directory structure
-    New-Item -ItemType Directory -Path "$appBundle\Contents\MacOS" -Force | Out-Null
-    New-Item -ItemType Directory -Path "$appBundle\Contents\Resources" -Force | Out-Null
-
-    # Move binary
-    Move-Item $BinaryPath "$appBundle\Contents\MacOS\$APP_NAME"
-
-    # Create Info.plist with architecture-specific settings
-    $archPriority = if ($Architecture -eq "arm64") {
-        @"
-    <key>LSArchitecturePriority</key>
-    <array>
-        <string>arm64</string>
-    </array>
-"@
-    }
-    else { "" }
-
-    $infoPlist = @"
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>$APP_NAME</string>
-    <key>CFBundleIconFile</key>
-    <string>app.icns</string>
-    <key>CFBundleIdentifier</key>
-    <string>$PACKAGE_NAME</string>
-    <key>CFBundleName</key>
-    <string>$APP_NAME</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleVersion</key>
-    <string>$VERSION</string>
-    <key>CFBundleShortVersionString</key>
-    <string>$VERSION</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>$MinimumOS</string>$archPriority
-</dict>
-</plist>
-"@
-    $infoPlist | Out-File -FilePath "$appBundle\Contents\Info.plist" -Encoding UTF8
-
-    # Copy icon
-    if (Test-Path ".\resources\icons\app.icns") {
-        Copy-Item ".\resources\icons\app.icns" "$appBundle\Contents\Resources\" -Force
-        Write-Host "Icon added to app bundle" -ForegroundColor Green
-    }
-    else {
-        Write-Host "Warning: app.icns not found in resources\icons\" -ForegroundColor Yellow
-    }
-
-    return $appBundle
-}
-
-# Build for macOS Intel (x64)
-Write-Host "`nBuilding for macOS Intel (x64)..." -ForegroundColor Cyan
-$env:GOOS = "darwin"
-$env:GOARCH = "amd64"
-& go build -o ".\$APP_NAME-mac-intel"
-
-if (Test-Path ".\$APP_NAME-mac-intel") {
-    $intelBundle = Create-MacOSBundle -BinaryPath ".\$APP_NAME-mac-intel" -Architecture "amd64" -MinimumOS "10.12"
-    Write-Host "macOS Intel build complete: $intelBundle" -ForegroundColor Green
+# Build for Linux (amd64) in WSL, with its Go (~/sdk/go, or on the PATH). ARM64 needs
+# an ARM64 machine.
+Write-Host "`nBuilding for Linux (amd64) in WSL..." -ForegroundColor Cyan
+wsl -e sh -c "GO=`$HOME/sdk/go/bin/go; [ -x `$GO ] || GO=go; CGO_ENABLED=1 `$GO build -o 'builds/$APP_NAME-linux-amd64'"
+if (Test-Path ".\builds\$APP_NAME-linux-amd64") {
+    Write-Host "Linux amd64 build complete: builds\$APP_NAME-linux-amd64" -ForegroundColor Green
 }
 else {
-    Write-Host "macOS Intel build failed! Make sure Go can cross-compile to Darwin." -ForegroundColor Red
+    Write-Host "Linux amd64 build failed! WSL needs Go, gcc, and libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev." -ForegroundColor Red
 }
-
-# Build for macOS ARM64 (Apple Silicon)
-Write-Host "`nBuilding for macOS ARM64 (Apple Silicon)..." -ForegroundColor Cyan
-$env:GOOS = "darwin"
-$env:GOARCH = "arm64"
-& go build -o ".\$APP_NAME-mac-arm64"
-
-if (Test-Path ".\$APP_NAME-mac-arm64") {
-    $arm64Bundle = Create-MacOSBundle -BinaryPath ".\$APP_NAME-mac-arm64" -Architecture "arm64" -MinimumOS "11.0"
-    Write-Host "macOS ARM64 build complete: $arm64Bundle" -ForegroundColor Green
-}
-else {
-    Write-Host "macOS ARM64 build failed! Make sure Go can cross-compile to Darwin ARM64." -ForegroundColor Red
-}
-
-# Build for Linux (AMD64 and ARM64)
-foreach ($arch in @("amd64", "arm64")) {
-    Write-Host "`nBuilding for Linux ($arch)..." -ForegroundColor Cyan
-    $env:GOOS = "linux"
-    $env:GOARCH = $arch
-    & go build -o ".\builds\$APP_NAME-linux-$arch"
-
-    if (Test-Path ".\builds\$APP_NAME-linux-$arch") {
-        Write-Host "Linux $arch build complete: builds\$APP_NAME-linux-$arch" -ForegroundColor Green
-    }
-    else {
-        Write-Host "Linux $arch build failed!" -ForegroundColor Red
-    }
-}
-Remove-Item Env:GOOS, Env:GOARCH
-
-# Ad-hoc sign macOS app bundles with rcodesign
-if (Test-Path ".\resources\rcodesign.exe") {
-    Write-Host "`nAd-hoc signing macOS app bundles..." -ForegroundColor Cyan
-
-    # Sign Intel bundle if it exists
-    if ($intelBundle -and (Test-Path $intelBundle)) {
-        Write-Host "Signing Intel app bundle..." -ForegroundColor Cyan
-        & ".\resources\rcodesign.exe" sign $intelBundle
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "Intel app bundle signed successfully" -ForegroundColor Green
-        } else {
-            Write-Host "Warning: Failed to sign Intel app bundle" -ForegroundColor Yellow
-        }
-    }
-
-    # Sign ARM64 bundle if it exists
-    if ($arm64Bundle -and (Test-Path $arm64Bundle)) {
-        Write-Host "Signing ARM64 app bundle..." -ForegroundColor Cyan
-        & ".\resources\rcodesign.exe" sign $arm64Bundle
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "ARM64 app bundle signed successfully" -ForegroundColor Green
-        } else {
-            Write-Host "Warning: Failed to sign ARM64 app bundle" -ForegroundColor Yellow
-        }
-    }
-} else {
-    Write-Host "`nWarning: rcodesign.exe not found in resources folder, skipping ad-hoc signing" -ForegroundColor Yellow
-    Write-Host "Download from: https://github.com/indygreg/apple-platform-rs/releases" -ForegroundColor Yellow
-}
+Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED
 
 # Create distribution zips using WSL
 Write-Host "`nCreating distribution zips with WSL..."
@@ -226,53 +99,24 @@ if (Test-Path ".\builds\$APP_NAME.exe") {
     }
 }
 
-# macOS Intel zip
-if ($intelBundle -and (Test-Path $intelBundle)) {
-    $bundleName = Split-Path $intelBundle -Leaf
-    $zipName = "$APP_NAME-$VERSION-macos-amd64.zip"
-    
-    # Set the executable bit and create the zip
-    wsl sh -c "cd '$currentDirWSL/builds/macos-amd64' && chmod +x '$bundleName/Contents/MacOS/$APP_NAME' && zip -r '../$zipName' '$bundleName'"
-
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "Created: builds\$zipName" -ForegroundColor Green
-    }
-    Remove-Item -Recurse -Force ".\builds\macos-amd64"
-}
-
-# macOS ARM64 zip
-if ($arm64Bundle -and (Test-Path $arm64Bundle)) {
-    $bundleName = Split-Path $arm64Bundle -Leaf
-    $zipName = "$APP_NAME-$VERSION-macos-arm64.zip"
-
-    # Set the executable bit and create the zip
-    wsl sh -c "cd '$currentDirWSL/builds/macos-arm64' && chmod +x '$bundleName/Contents/MacOS/$APP_NAME' && zip -r '../$zipName' '$bundleName'"
-
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "Created: builds\$zipName" -ForegroundColor Green
-    }
-    Remove-Item -Recurse -Force ".\builds\macos-arm64"
-}
-
 # Linux zips (the binary is renamed to the plain app name the self-updater looks for)
-foreach ($arch in @("amd64", "arm64")) {
-    if (Test-Path ".\builds\$APP_NAME-linux-$arch") {
-        $zipName = "$APP_NAME-$VERSION-linux-$arch.zip"
-        $tempDir = ".\builds\temp-linux-$arch"
-        if (Test-Path $tempDir) {
-            Remove-Item $tempDir -Recurse -Force
-        }
-        New-Item -ItemType Directory -Path $tempDir | Out-Null
-        Move-Item ".\builds\$APP_NAME-linux-$arch" "$tempDir\$APP_NAME"
-
-        $tempDirWSL = ConvertTo-WSLPath $tempDir
-        wsl sh -c "cd '$tempDirWSL' && chmod +x '$APP_NAME' && rm -f '$currentDirWSL/builds/$zipName' && zip '$currentDirWSL/builds/$zipName' '$APP_NAME'"
-
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "Created: builds\$zipName" -ForegroundColor Green
-        }
+$arch = "amd64"
+if (Test-Path ".\builds\$APP_NAME-linux-$arch") {
+    $zipName = "$APP_NAME-$VERSION-linux-$arch.zip"
+    $tempDir = ".\builds\temp-linux-$arch"
+    if (Test-Path $tempDir) {
         Remove-Item $tempDir -Recurse -Force
     }
+    New-Item -ItemType Directory -Path $tempDir | Out-Null
+    Move-Item ".\builds\$APP_NAME-linux-$arch" "$tempDir\$APP_NAME"
+
+    $tempDirWSL = ConvertTo-WSLPath $tempDir
+    wsl sh -c "cd '$tempDirWSL' && chmod +x '$APP_NAME' && rm -f '$currentDirWSL/builds/$zipName' && zip '$currentDirWSL/builds/$zipName' '$APP_NAME'"
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Created: builds\$zipName" -ForegroundColor Green
+    }
+    Remove-Item $tempDir -Recurse -Force
 }
 
 # Summary
@@ -280,15 +124,6 @@ Write-Host "`nBuilds complete!" -ForegroundColor Green
 if (Test-Path ".\builds\$APP_NAME-$VERSION-windows.zip") {
     Write-Host "- Windows: builds\$APP_NAME-$VERSION-windows.zip" -ForegroundColor White
 }
-if (Test-Path ".\builds\$APP_NAME-$VERSION-macos-amd64.zip") {
-    Write-Host "- macOS Intel: builds\$APP_NAME-$VERSION-macos-amd64.zip" -ForegroundColor White
-}
-if (Test-Path ".\builds\$APP_NAME-$VERSION-macos-arm64.zip") {
-    Write-Host "- macOS ARM64: builds\$APP_NAME-$VERSION-macos-arm64.zip" -ForegroundColor White
-}
 if (Test-Path ".\builds\$APP_NAME-$VERSION-linux-amd64.zip") {
     Write-Host "- Linux AMD64: builds\$APP_NAME-$VERSION-linux-amd64.zip" -ForegroundColor White
-}
-if (Test-Path ".\builds\$APP_NAME-$VERSION-linux-arm64.zip") {
-    Write-Host "- Linux ARM64: builds\$APP_NAME-$VERSION-linux-arm64.zip" -ForegroundColor White
 }

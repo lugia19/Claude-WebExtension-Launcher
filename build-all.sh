@@ -10,7 +10,12 @@ if [ -z "$VERSION" ]; then
     exit 1
 fi
 
-echo "Building version: $VERSION for all platforms"
+# The window (Fyne) needs cgo, so each platform is built on that platform: this script
+# builds macOS (both architectures, on a Mac); Windows and Linux come from
+# build-all.ps1 / build-windows.ps1.
+export CGO_ENABLED=1
+
+echo "Building version: $VERSION for macOS"
 echo "============================================"
 
 # Create builds directory
@@ -150,54 +155,6 @@ else
     echo "  ❌ Intel macOS build failed!"
 fi
 
-# Build 3: Windows (AMD64)
-echo ""
-echo "3. Building Windows (AMD64)..."
-GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui" -o "$APP_NAME.exe"
-
-if [ -f "$APP_NAME.exe" ]; then
-    echo "  Creating Windows distribution zip..."
-    
-    # Create temporary directory for packaging
-    temp_dir="builds/temp-windows"
-    mkdir -p "$temp_dir"
-    
-    # Copy executable and batch scripts to temp directory
-    cp "$APP_NAME.exe" "$temp_dir/"
-    
-    # Create zip from temp directory
-    cd "$temp_dir"
-    zip "../$APP_NAME-$VERSION-windows.zip" *
-    cd ../..
-    
-    # Clean up
-    rm "$APP_NAME.exe"
-    rm -rf "$temp_dir"
-    
-    echo "  ✅ Created: builds/$APP_NAME-$VERSION-windows.zip"
-else
-    echo "  ❌ Windows build failed!"
-fi
-
-# Build 4 & 5: Linux (AMD64, ARM64)
-for arch in amd64 arm64; do
-    echo ""
-    echo "Building Linux ($arch)..."
-    GOOS=linux GOARCH=$arch go build -o "$APP_NAME-linux-$arch"
-
-    if [ -f "$APP_NAME-linux-$arch" ]; then
-        temp_dir="builds/temp-linux-$arch"
-        mkdir -p "$temp_dir"
-        mv "$APP_NAME-linux-$arch" "$temp_dir/$APP_NAME"
-        chmod +x "$temp_dir/$APP_NAME"
-        (cd "$temp_dir" && zip "../$APP_NAME-$VERSION-linux-$arch.zip" "$APP_NAME")
-        rm -rf "$temp_dir"
-        echo "  ✅ Created: builds/$APP_NAME-$VERSION-linux-$arch.zip"
-    else
-        echo "  ❌ Linux $arch build failed!"
-    fi
-done
-
 # Summary
 echo ""
 echo "============================================"
@@ -210,18 +167,6 @@ fi
 
 if [ -f "builds/$APP_NAME-$VERSION-macos-amd64.zip" ]; then
     echo "✅ macOS Intel: builds/$APP_NAME-$VERSION-macos-amd64.zip"
-fi
-
-if [ -f "builds/$APP_NAME-$VERSION-windows.zip" ]; then
-    echo "✅ Windows: builds/$APP_NAME-$VERSION-windows.zip"
-fi
-
-if [ -f "builds/$APP_NAME-$VERSION-linux-amd64.zip" ]; then
-    echo "✅ Linux AMD64: builds/$APP_NAME-$VERSION-linux-amd64.zip"
-fi
-
-if [ -f "builds/$APP_NAME-$VERSION-linux-arm64.zip" ]; then
-    echo "✅ Linux ARM64: builds/$APP_NAME-$VERSION-linux-arm64.zip"
 fi
 
 echo ""

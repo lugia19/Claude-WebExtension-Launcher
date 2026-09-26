@@ -17,7 +17,7 @@ mkdir -p builds
 
 # Build for Apple Silicon (ARM64)
 echo "Building for macOS ARM64..."
-GOOS=darwin GOARCH=arm64 go build -o "$APP_NAME-mac-arm64"
+CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -o "$APP_NAME-mac-arm64"
 
 if [ ! -f "$APP_NAME-mac-arm64" ]; then
     echo "ARM64 build failed!"

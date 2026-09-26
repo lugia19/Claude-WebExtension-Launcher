@@ -1,10 +1,10 @@
 package gui
 
 import (
-	"github.com/gogpu/ui/core/button"
-	"github.com/gogpu/ui/core/checkbox"
-	"github.com/gogpu/ui/primitives"
-	"github.com/gogpu/ui/widget"
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/theme"
+	"fyne.io/fyne/v2/widget"
 )
 
 // Setup is a screen of checkboxes: the first-run setup (Run shows it before the
@@ -34,85 +34,81 @@ type SetupOption struct {
 	Checked bool // initial state
 }
 
+// heading is a screen's title.
+func heading(text string) *widget.Label {
+	l := widget.NewLabel(text)
+	l.TextStyle.Bold = true
+	l.SizeName = theme.SizeNameSubHeadingText
+	return l
+}
+
+// dim is secondary text.
+func dim(text string) *widget.Label {
+	l := widget.NewLabel(text)
+	l.Importance = widget.LowImportance
+	l.Wrapping = fyne.TextWrapWord
+	return l
+}
+
+// errorLabel is text for an error, empty until set.
+func errorLabel() *widget.Label {
+	l := widget.NewLabel("")
+	l.Importance = widget.DangerImportance
+	l.Wrapping = fyne.TextWrapWord
+	return l
+}
+
+// primaryButton is the screen's main action, in white; icon may be nil.
+func primaryButton(label string, icon fyne.Resource, onClick func()) fyne.CanvasObject {
+	b := widget.NewButtonWithIcon(label, icon, onClick)
+	b.Importance = widget.HighImportance
+	return primary(b)
+}
+
 // buildSetup returns a setup screen: the checkboxes, a confirm button that hands the
 // final states to onConfirm, a Back button if onCancel isn't nil, and setup.Extra.
-// They all run in the click handler, on the UI thread, so they may switch screens.
-func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked []bool), onCancel func()) widget.Widget {
-	checked := make([]bool, len(setup.Options))
-	subtitle := make([]widget.Widget, len(setup.Subtitle))
-	for i, line := range setup.Subtitle {
-		subtitle[i] = primitives.Text(line).FontSize(13).Color(dimColor)
+// They all run in the click handler, on the UI thread; onConfirm must switch screens.
+func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked []bool), onCancel func()) fyne.CanvasObject {
+	content := container.NewVBox(heading(setup.Title))
+	for _, line := range setup.Subtitle {
+		content.Add(dim(line))
 	}
-	children := []widget.Widget{
-		primitives.Text(setup.Title).FontSize(18).Bold().Color(textColor),
-		primitives.VBox(subtitle...).Gap(4),
-	}
+	checks := make([]*widget.Check, len(setup.Options))
 	for i, opt := range setup.Options {
-		i := i
-		checked[i] = opt.Checked
-		children = append(children, checkbox.New(
-			checkbox.LabelOpt(opt.Label),
-			checkbox.Checked(opt.Checked),
-			checkbox.OnToggle(func(on bool) { checked[i] = on }),
-			checkbox.PainterOpt(themedCheckbox{}),
-		))
+		checks[i] = widget.NewCheck(opt.Label, nil)
+		checks[i].SetChecked(opt.Checked)
+		content.Add(noFocusRing(checks[i]))
 	}
 
-	sent := false
-	buttons := []widget.Widget{primaryButton(confirm, func() {
+	sent := false // a quick double click can arrive before the screen has switched
+	buttons := container.NewHBox(primaryButton(confirm, nil, func() {
 		if sent {
 			return
 		}
 		sent = true
-		onConfirm(append([]bool(nil), checked...))
-	})}
+		checked := make([]bool, len(checks))
+		for i, c := range checks {
+			checked[i] = c.Checked
+		}
+		onConfirm(checked)
+	}))
 	if onCancel != nil {
-		buttons = append(buttons, button.New(button.TextOpt("Back"), button.OnClick(onCancel)))
+		buttons.Add(widget.NewButton("Back", onCancel))
 	}
 	for _, extra := range setup.Extra {
-		extra := extra
-		buttons = append(buttons, button.New(button.TextOpt(extra.Label), button.OnClick(func() {
+		var b *widget.Button
+		b = widget.NewButton(extra.Label, func() {
+			if extra.CloseWindow {
+				b.Disable() // once: e.g. Uninstall… starts another process
+			}
 			if extra.OnClick != nil {
 				extra.OnClick()
 			}
 			if extra.CloseWindow {
-				w.gogpuApp.Quit()
+				w.quit()
 			}
-		})))
+		})
+		buttons.Add(b)
 	}
-	children = append(children, primitives.HBox(buttons...).Gap(8))
-
-	return primitives.VBox(children...).
-		Gap(14).
-		CrossAlign(primitives.CrossAxisStretch).
-		Padding(24).
-		Background(background)
-}
-
-// primaryButton is the screen's main action: white, since the default painter's
-// label color is already dark (the other buttons keep its grey).
-func primaryButton(label string, onClick func()) widget.Widget {
-	return button.New(
-		button.TextOpt(label),
-		button.BackgroundOpt(widget.Hex(0xFFFFFF)),
-		button.OnClick(onClick),
-	)
-}
-
-// themedCheckbox draws checkboxes in the window's colors. The checkbox widget only
-// gets colors from a theme painter (otherwise it's purple with black labels, which
-// vanish on the dark background), so fill the scheme in and use the default drawing.
-type themedCheckbox struct{ checkbox.DefaultPainter }
-
-func (p themedCheckbox) PaintCheckbox(canvas widget.Canvas, state checkbox.PaintState) {
-	state.ColorScheme = checkbox.CheckboxColorScheme{
-		CheckedBg:       accent,
-		CheckedFg:       textColor,
-		UncheckedBorder: dimColor,
-		LabelColor:      textColor,
-		DisabledBg:      trackColor,
-		DisabledFg:      dimColor,
-		FocusRing:       accent,
-	}
-	p.DefaultPainter.PaintCheckbox(canvas, state)
+	return screen(container.NewBorder(content, buttons, nil, nil))
 }
