@@ -29,6 +29,23 @@ func TestPlistsEscaped(t *testing.T) {
 	}
 }
 
+func TestBundleIDPart(t *testing.T) {
+	seen := map[string]string{}
+	for _, name := range []string{"work", "work one", "work_one", "work-one", "work-20one", "Main"} {
+		id := bundleIDPart(name)
+		if strings.Trim(id, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.") != "" {
+			t.Errorf("bundleIDPart(%q) = %q has characters a bundle identifier can't", name, id)
+		}
+		if other, dup := seen[id]; dup {
+			t.Errorf("%q and %q both map to %q", name, other, id)
+		}
+		seen[id] = name
+	}
+	if got := bundleIDPart("work one"); got != "work-20one" {
+		t.Errorf("bundleIDPart(work one) = %q", got)
+	}
+}
+
 func TestAgentLabels(t *testing.T) {
 	if got := agentLabel("work one"); got != "com.lugia19.claudewebextlauncher.login.work_20one" {
 		t.Errorf("agentLabel = %q", got)

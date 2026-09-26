@@ -24,7 +24,7 @@ const launcherHasMenuEntry = false
 
 const (
 	bundleIDPrefix   = "com.lugia19.claudewebextlauncher" // PACKAGE_NAME in build-all.sh
-	instanceBundleID = bundleIDPrefix + ".instance."      // + escapeEntry(name)
+	instanceBundleID = bundleIDPrefix + ".instance."      // + bundleIDPart(name)
 	loginLabel       = bundleIDPrefix + ".login"          // + "." + escapeEntry(name) for an instance
 	minMacOS         = "12.0"                             // MIN_MACOS in build-all.sh
 	shimExecutable   = "launch"
@@ -188,6 +188,22 @@ func shimScript(entry string) string {
 	return "#!/bin/sh\nexec " + strings.Join(quoted, " ") + "\n"
 }
 
+// bundleIDPart makes an instance name fit a bundle identifier, which allows only
+// letters, digits, - and .: anything else, and - itself, becomes -xx, so distinct
+// names never share an identifier.
+func bundleIDPart(entry string) string {
+	var b strings.Builder
+	for i := 0; i < len(entry); i++ {
+		c := entry[i]
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' {
+			b.WriteByte(c)
+		} else {
+			fmt.Fprintf(&b, "-%02x", c)
+		}
+	}
+	return b.String()
+}
+
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
@@ -197,7 +213,7 @@ func shellQuote(s string) string {
 func shimInfoPlist(entry string) string {
 	return plistDoc(
 		plistKey("CFBundleExecutable", shimExecutable),
-		plistKey("CFBundleIdentifier", instanceBundleID+escapeEntry(entry)),
+		plistKey("CFBundleIdentifier", instanceBundleID+bundleIDPart(entry)),
 		plistKey("CFBundleName", entryName(entry)),
 		plistKey("CFBundleDisplayName", entryName(entry)),
 		plistKey("CFBundleIconFile", "app.icns"),
