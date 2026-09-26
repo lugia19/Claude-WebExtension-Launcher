@@ -18,7 +18,7 @@ import (
 )
 
 // Version is the current version of the application
-const Version = "3.3.3"
+const Version = "4.0.0"
 
 // The main instance is the one used when --instance is not given. Only it shares
 // Cowork/Code sessions with the official install; other instances stay isolated (see
