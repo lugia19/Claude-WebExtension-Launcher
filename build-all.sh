@@ -62,7 +62,7 @@ create_macos_bundle() {
     <key>CFBundleShortVersionString</key>
     <string>$VERSION</string>
     <key>LSMinimumSystemVersion</key>
-    <string>11.0</string>
+    <string>12.0</string>
     <key>LSArchitecturePriority</key>
     <array>
         <string>arm64</string>
@@ -91,7 +91,7 @@ EOF
     <key>CFBundleShortVersionString</key>
     <string>$VERSION</string>
     <key>LSMinimumSystemVersion</key>
-    <string>10.12</string>
+    <string>12.0</string>
     <key>LSArchitecturePriority</key>
     <array>
         <string>x86_64</string>
@@ -136,7 +136,7 @@ EOF
 # Build 1: macOS Apple Silicon (ARM64)
 echo ""
 echo "1. Building macOS Apple Silicon (ARM64)..."
-GOOS=darwin GOARCH=arm64 go build -o "$APP_NAME-mac-arm64"
+CC="clang -arch arm64" GOOS=darwin GOARCH=arm64 go build -o "$APP_NAME-mac-arm64"
 
 if [ -f "$APP_NAME-mac-arm64" ]; then
     create_macos_bundle "$APP_NAME-mac-arm64" "arm64"
@@ -147,7 +147,7 @@ fi
 # Build 2: macOS Intel (AMD64)
 echo ""
 echo "2. Building macOS Intel (AMD64)..."
-GOOS=darwin GOARCH=amd64 go build -o "$APP_NAME-mac-amd64"
+CC="clang -arch x86_64" GOOS=darwin GOARCH=amd64 go build -o "$APP_NAME-mac-amd64"
 
 if [ -f "$APP_NAME-mac-amd64" ]; then
     create_macos_bundle "$APP_NAME-mac-amd64" "amd64"
@@ -168,6 +168,13 @@ fi
 if [ -f "builds/$APP_NAME-$VERSION-macos-amd64.zip" ]; then
     echo "✅ macOS Intel: builds/$APP_NAME-$VERSION-macos-amd64.zip"
 fi
+
+for arch in arm64 amd64; do
+    if [ ! -f "builds/$APP_NAME-$VERSION-macos-$arch.zip" ]; then
+        echo "The macOS $arch build is missing!"
+        exit 1
+    fi
+done
 
 echo ""
 echo "All builds complete! 🎉"

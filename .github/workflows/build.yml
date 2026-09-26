@@ -1,0 +1,106 @@
+# Builds the launcher for every platform on each push and pull request. The window
+# (Fyne) needs cgo, so each platform builds on its own runner. The zips are kept as
+# the run's artifacts, named as the self-updater expects.
+#
+# Pushing a version tag (git tag v3.4.0 && git push origin v3.4.0) also creates a
+# draft release with the zips attached; it stays invisible to users and to the
+# self-updater until it's published.
+name: Build
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        shell: pwsh
+        run: ./build-windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: builds/*.zip
+          if-no-files-found: error
+
+  linux:
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    # The oldest supported Ubuntu: the binary needs at least the glibc it's built with.
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev libwayland-dev libxkbcommon-dev
+      - name: Build
+        run: |
+          VERSION=$(grep 'const Version = ' main.go | sed 's/.*"\(.*\)".*/\1/')
+          mkdir -p builds/linux
+          CGO_ENABLED=1 go build -o builds/linux/Claude_WebExtension_Launcher
+          chmod +x builds/linux/Claude_WebExtension_Launcher
+          (cd builds/linux && zip "../Claude_WebExtension_Launcher-$VERSION-linux-${{ matrix.arch }}.zip" Claude_WebExtension_Launcher)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: builds/*.zip
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: bash build-all.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: builds/*.zip
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag matches the version
+        run: |
+          VERSION=$(grep 'const Version = ' main.go | sed 's/.*"\(.*\)".*/\1/')
+          if [ "${GITHUB_REF_NAME#v}" != "$VERSION" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match Version $VERSION in main.go"
+            exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/*.zip --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/*.zip --draft --title "$GITHUB_REF_NAME" --generate-notes
+          fi

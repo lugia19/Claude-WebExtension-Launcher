@@ -60,7 +60,7 @@ cat > "builds/$APP_NAME.app/Contents/Info.plist" << EOF
     <key>CFBundleShortVersionString</key>
     <string>$VERSION</string>
     <key>LSMinimumSystemVersion</key>
-    <string>11.0</string>
+    <string>12.0</string>
     <key>LSArchitecturePriority</key>
     <array>
         <string>arm64</string>
