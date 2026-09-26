@@ -444,11 +444,16 @@ func claudeInstalled() bool {
 	return err == nil
 }
 
-// firstRunSetup returns the setup screen for the first launch (or when asked for with
-// --show-setup), or nil once it has been shown.
+// firstRunSetup returns the setup screen for the first launch, or nil once it has been
+// shown. With --show-setup after that, it's the launcher's settings instead.
 func firstRunSetup(force bool) *gui.Setup {
-	if utils.LoadSettings().SetupDone && !force {
-		return nil
+	if utils.LoadSettings().SetupDone {
+		if !force {
+			return nil
+		}
+		return launcherSettings("Launcher settings", []string{
+			"The launcher's own shortcuts, and whether it manages multiple instances.",
+		})
 	}
 	return launcherSettings("Welcome to the WebExtension Launcher", []string{
 		"A couple of choices before the first launch.",
