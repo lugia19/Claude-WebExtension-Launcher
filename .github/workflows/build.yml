@@ -1,0 +1,125 @@
+# Builds the launcher for every platform on each push and pull request. The window
+# (Fyne) needs cgo, so each platform builds on its own runner, through the same
+# scripts used locally. The zips are kept as the run's artifacts, named as the
+# self-updater expects.
+#
+# Pushing a version tag (git tag v3.4.0 && git push origin v3.4.0) also creates a
+# draft release with the zips attached; it stays invisible to users and to the
+# self-updater until it's published.
+name: Build
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to a pull request supersedes its running build.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Release builds are kept with the release; other runs' zips only for a while.
+  ARTIFACT_DAYS: ${{ startsWith(github.ref, 'refs/tags/v') && 90 || 14 }}
+
+jobs:
+  # On a tag, check it matches Version in main.go before building anything.
+  check-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION=$(grep 'const Version = ' main.go | sed 's/.*"\(.*\)".*/\1/')
+          if [ "${GITHUB_REF_NAME#v}" != "$VERSION" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match Version $VERSION in main.go"
+            exit 1
+          fi
+
+  windows:
+    needs: check-tag
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        shell: pwsh
+        run: ./build-windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: builds/*.zip
+          if-no-files-found: error
+          compression-level: 0 # already zipped
+          retention-days: ${{ env.ARTIFACT_DAYS }}
+
+  linux:
+    needs: check-tag
+    strategy:
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+    # The oldest supported Ubuntu: the binary needs at least the glibc it's built with.
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc libgl1-mesa-dev libwayland-dev libxkbcommon-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libxxf86vm-dev
+      - name: Build
+        run: bash build-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.runner }}
+          path: builds/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ env.ARTIFACT_DAYS }}
+
+  macos:
+    needs: check-tag
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: bash build-all.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: builds/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: ${{ env.ARTIFACT_DAYS }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/*.zip --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/*.zip --draft --title "$GITHUB_REF_NAME" --generate-notes
+          fi

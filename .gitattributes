@@ -1,0 +1,2 @@
+# Shell scripts run in WSL and on macOS/Linux: keep them LF even in a Windows checkout.
+*.sh text eol=lf
