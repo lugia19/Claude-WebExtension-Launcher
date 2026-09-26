@@ -7,11 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"strings"
 )
 
-func menuEntrySupported() bool { return true }
+// launcherHasMenuEntry: the launcher gets an applications-menu entry, like instances.
+const launcherHasMenuEntry = true
 
 func xdgDir(env string, fallback ...string) string {
 	if dir := os.Getenv(env); dir != "" {
@@ -26,10 +25,6 @@ func applicationsDir() string {
 }
 func autostartDir() string { return filepath.Join(xdgDir("XDG_CONFIG_HOME", ".config"), "autostart") }
 
-// escapedFileChars are escaped in entry file names: anything outside [A-Za-z0-9.-],
-// including the escape character _ itself, so distinct instances never share a file.
-var escapedFileChars = regexp.MustCompile(`[^A-Za-z0-9.-]`)
-
 // desktopFilePrefix starts every entry's .desktop file name.
 const desktopFilePrefix = "claude-webext-launcher"
 
@@ -38,14 +33,7 @@ func entryFile(entry string) string {
 	if entry == launcherEntry {
 		return desktopFilePrefix + ".desktop"
 	}
-	escaped := escapedFileChars.ReplaceAllStringFunc(entry, func(c string) string {
-		var b strings.Builder
-		for i := 0; i < len(c); i++ {
-			fmt.Fprintf(&b, "_%02x", c[i]) // every byte as _xx, so decoding is unambiguous
-		}
-		return b.String()
-	})
-	return desktopFilePrefix + "-" + escaped + ".desktop"
+	return desktopFilePrefix + "-" + escapeEntry(entry) + ".desktop"
 }
 
 func hasMenuEntry(instance string) bool {
@@ -153,16 +141,6 @@ func iconPath() (string, error) {
 	}
 	path := utils.ResolvePath("app.png")
 	return path, writeIfChanged(path, string(data))
-}
-
-func writeIfChanged(path, content string) error {
-	if existing, err := os.ReadFile(path); err == nil && string(existing) == content {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(content), 0644)
 }
 
 // refreshDesktopDatabase updates the MIME cache for the applications folder, if the

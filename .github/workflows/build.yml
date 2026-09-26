@@ -46,6 +46,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Vet and test
+        run: go vet ./... && go test ./...
+        env:
+          CGO_ENABLED: "1"
       - name: Build
         shell: pwsh
         run: ./build-windows.ps1
@@ -74,6 +78,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc libgl1-mesa-dev libwayland-dev libxkbcommon-dev \
             libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libxxf86vm-dev
+      - name: Vet and test
+        run: go vet ./... && go test ./...
+        env:
+          CGO_ENABLED: "1"
       - name: Build
         run: bash build-linux.sh
       - uses: actions/upload-artifact@v4
@@ -92,6 +100,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: Vet and test
+        run: go vet ./... && go test ./...
+        env:
+          CGO_ENABLED: "1"
+          # As build-all.sh builds arm64, so the cgo cache is shared with the build.
+          CC: clang -arch arm64
+          MACOSX_DEPLOYMENT_TARGET: "12.0"
       - name: Build
         run: bash build-all.sh
       - uses: actions/upload-artifact@v4

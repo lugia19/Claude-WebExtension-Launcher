@@ -13,9 +13,26 @@ import (
 // removeSandbox: there's no AppArmor on macOS.
 func removeSandbox() error { return nil }
 
-// removeRegistrations: the launcher makes no shortcuts on macOS. (claude:// is
-// registered by the app bundle itself, and goes with it.)
-func removeRegistrations() error { return nil }
+// removeRegistrations removes the instances' apps in ~/Applications and the login
+// entries (see shortcuts_darwin.go). claude:// is registered by the patched Claude's
+// app bundle itself, and goes with it.
+func removeRegistrations() error {
+	var problems []string
+	for _, app := range menuApps() {
+		if err := os.RemoveAll(app); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+	for _, label := range agentLabels() {
+		if err := removeAgent(label); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("some couldn't be removed: %s", strings.Join(problems, "; "))
+	}
+	return nil
+}
 
 // removeLauncherFiles removes the installed launcher app and the launcher's data
 // folder (a running app can be deleted on macOS).
