@@ -108,9 +108,9 @@ It removes the launcher, the patched Claude, the shortcuts and everything else t
 On Linux, pick the `linux-amd64` or `linux-arm64` zip, extract it and run `Claude_WebExtension_Launcher`. The modified Claude and its extensions are kept in `~/.local/share/claude-webext-launcher` too.
 
 ### Applications menu and startup
-On first launch (Windows and Linux) the launcher asks whether to add itself to the applications menu (the Start Menu on Windows) and whether to start when you log in. To change your mind later, run it with `--show-setup` to get the same screen again. Instances can have their own entries too, from the cog in the instance list (see [Multi-instance](#multi-instance)).
+On first launch the launcher asks whether to add itself to the applications menu (the Start Menu on Windows) and whether to start when you log in. To change your mind later, run it with `--show-setup` to get the same screen again. Instances can have their own entries too, from the cog in the instance list (see [Multi-instance](#multi-instance)).
 
-On macOS the launcher is in your Applications folder (`~/Applications`) once it has run; for starting at login, use System Settings → General → Login Items.
+On macOS the launcher itself is in your Applications folder (`~/Applications`) once it has run, so it only asks about starting at login. An instance's applications-menu entry is a small "Claude (name)" app next to it, which shows up in Launchpad and Spotlight and can go in the Dock.
 
 On Linux, the launcher also registers itself for `claude://` links, so magic-link login opens in the modified app.
 

@@ -464,24 +464,21 @@ func firstRunSetup(force bool) *gui.Setup {
 // launcherSettings is the setup screen: the launcher's own menu and startup entries,
 // and whether it shows the instance list. The shortcut checkboxes start from what's
 // already on disk, so shortcuts made with the old Toggle-*.bat scripts are reflected;
-// unchecking one removes it. They're left out where there are no such shortcuts to
-// make (macOS). Instances' own entries are set from the list.
+// unchecking one removes it. On macOS there's no menu entry to make (the installed
+// app is one). Instances' own entries are set from the list.
 func launcherSettings(title string, subtitle []string) *gui.Setup {
 	settings := utils.LoadSettings()
-	shortcuts := menuEntrySupported()
+	menu := menuEntrySupported(launcherEntry)
 	var options []gui.SetupOption
-	if shortcuts {
-		options = append(options,
-			// Suggested on the first run; reopened, it shows what's there, so Continue
-			// doesn't recreate an entry the user removed.
-			gui.SetupOption{Label: "Add to the applications menu", Checked: !settings.SetupDone || hasMenuEntry(launcherEntry)},
-			gui.SetupOption{Label: "Start when I log in", Checked: hasStartup(launcherEntry)},
-		)
+	if menu {
+		// Suggested on the first run; reopened, it shows what's there, so Continue
+		// doesn't recreate an entry the user removed.
+		options = append(options, gui.SetupOption{Label: "Add to the applications menu", Checked: !settings.SetupDone || hasMenuEntry(launcherEntry)})
 	}
-	options = append(options, gui.SetupOption{
-		Label:   "Manage multiple instances (separate logins and data)",
-		Checked: settings.ManageInstances,
-	})
+	options = append(options,
+		gui.SetupOption{Label: "Start when I log in", Checked: hasStartup(launcherEntry)},
+		gui.SetupOption{Label: "Manage multiple instances (separate logins and data)", Checked: settings.ManageInstances},
+	)
 	var extra []gui.SetupButton
 	if settings.SetupDone { // not on the very first run: there's nothing to uninstall yet
 		extra = append(extra, gui.SetupButton{Label: "Uninstall…", OnClick: startUninstall, CloseWindow: true})
@@ -492,10 +489,9 @@ func launcherSettings(title string, subtitle []string) *gui.Setup {
 		Options:  options,
 		Extra:    extra,
 		Apply: func(checked []bool) {
-			if shortcuts {
-				applyShortcuts(launcherEntry, checked[0], checked[1])
-			}
-			manage := checked[len(checked)-1]
+			n := len(checked) // [menu,] startup, manage
+			applyShortcuts(launcherEntry, menu && checked[0], checked[n-2])
+			manage := checked[n-1]
 			err := utils.UpdateSettings(func(s *utils.Settings) {
 				s.SetupDone = true
 				s.ManageInstances = manage

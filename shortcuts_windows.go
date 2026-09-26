@@ -11,7 +11,7 @@ import (
 	"syscall"
 )
 
-func menuEntrySupported() bool { return true }
+func menuEntrySupported(entry string) bool { return true }
 
 func startMenuDir() string {
 	return filepath.Join(os.Getenv("APPDATA"), "Microsoft", "Windows", "Start Menu", "Programs")
