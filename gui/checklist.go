@@ -7,6 +7,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -227,6 +228,12 @@ func (s *Status) setButtons(labels []string, clicked chan int) {
 				default: // already have a click
 				}
 			})
+		}
+		// A row of three long labels is wider than the window: two per row then.
+		if len(objs) > 2 {
+			s.buttons.Layout = layout.NewGridLayoutWithColumns(2)
+		} else {
+			s.buttons.Layout = layout.NewHBoxLayout()
 		}
 		s.buttons.Objects = objs
 		s.buttons.Refresh()
