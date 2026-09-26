@@ -468,17 +468,19 @@ func firstRunSetup(force bool) *gui.Setup {
 // app is one). Instances' own entries are set from the list.
 func launcherSettings(title string, subtitle []string) *gui.Setup {
 	settings := utils.LoadSettings()
-	menu := menuEntrySupported(launcherEntry)
 	var options []gui.SetupOption
-	if menu {
+	add := func(label string, checked bool) int { // returns the option's index in Apply's checked
+		options = append(options, gui.SetupOption{Label: label, Checked: checked})
+		return len(options) - 1
+	}
+	menu := -1
+	if launcherHasMenuEntry {
 		// Suggested on the first run; reopened, it shows what's there, so Continue
 		// doesn't recreate an entry the user removed.
-		options = append(options, gui.SetupOption{Label: "Add to the applications menu", Checked: !settings.SetupDone || hasMenuEntry(launcherEntry)})
+		menu = add("Add to the applications menu", !settings.SetupDone || hasMenuEntry(launcherEntry))
 	}
-	options = append(options,
-		gui.SetupOption{Label: "Start when I log in", Checked: hasStartup(launcherEntry)},
-		gui.SetupOption{Label: "Manage multiple instances (separate logins and data)", Checked: settings.ManageInstances},
-	)
+	startup := add("Start when I log in", hasStartup(launcherEntry))
+	manage := add("Manage multiple instances (separate logins and data)", settings.ManageInstances)
 	var extra []gui.SetupButton
 	if settings.SetupDone { // not on the very first run: there's nothing to uninstall yet
 		extra = append(extra, gui.SetupButton{Label: "Uninstall…", OnClick: startUninstall, CloseWindow: true})
@@ -489,12 +491,10 @@ func launcherSettings(title string, subtitle []string) *gui.Setup {
 		Options:  options,
 		Extra:    extra,
 		Apply: func(checked []bool) {
-			n := len(checked) // [menu,] startup, manage
-			applyShortcuts(launcherEntry, menu && checked[0], checked[n-2])
-			manage := checked[n-1]
+			applyShortcuts(launcherEntry, menu >= 0 && checked[menu], checked[startup])
 			err := utils.UpdateSettings(func(s *utils.Settings) {
 				s.SetupDone = true
-				s.ManageInstances = manage
+				s.ManageInstances = checked[manage]
 			})
 			if err != nil {
 				fmt.Printf("Warning: could not save settings: %v\n", err)

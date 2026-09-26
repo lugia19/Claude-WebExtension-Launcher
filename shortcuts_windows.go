@@ -11,7 +11,8 @@ import (
 	"syscall"
 )
 
-func menuEntrySupported(entry string) bool { return true }
+// launcherHasMenuEntry: the launcher gets an applications-menu entry, like instances.
+const launcherHasMenuEntry = true
 
 func startMenuDir() string {
 	return filepath.Join(os.Getenv("APPDATA"), "Microsoft", "Windows", "Start Menu", "Programs")

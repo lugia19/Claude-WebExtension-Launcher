@@ -193,11 +193,8 @@ func launchable(name string) string {
 }
 
 // instanceSettings is an instance's settings screen: its own menu and startup entries,
-// which launch it directly. There's nothing to set where those aren't supported.
+// which launch it directly.
 func instanceSettings(name string) *gui.Setup {
-	if !menuEntrySupported(name) {
-		return nil
-	}
 	return &gui.Setup{
 		Title:    "Settings for " + name,
 		Subtitle: []string{"Shortcuts that launch this instance directly, without the list."},

@@ -8,34 +8,49 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"claude-webext-patcher/utils"
 )
 
 // On macOS (see shortcuts.go):
-//   - An instance's menu entry is a small app in ~/Applications, "Claude (<name>).app",
-//     whose only content is a script that opens the launcher for that instance. The
-//     launcher makes it on this Mac, so it's never quarantined. The launcher's own
-//     menu entry is its installed app, so there's none to manage for it.
+//   - An instance's menu entry is a small app next to the installed launcher,
+//     "Claude (<name>).app", whose only content is a script that opens the launcher for
+//     that instance. The launcher makes it on this Mac, so it's never quarantined.
 //   - A login entry is a LaunchAgent in ~/Library/LaunchAgents that opens the launcher
 //     (for the instance) at login.
 
+// launcherHasMenuEntry: the launcher's installed app already is its menu entry.
+const launcherHasMenuEntry = false
+
 const (
-	bundleIDPrefix   = "com.lugia19.claudewebextlauncher"
-	instanceBundleID = bundleIDPrefix + ".instance." // + escapeEntry(name)
-	loginLabel       = bundleIDPrefix + ".login"     // + "." + escapeEntry(name) for an instance
+	bundleIDPrefix   = "com.lugia19.claudewebextlauncher" // PACKAGE_NAME in build-all.sh
+	instanceBundleID = bundleIDPrefix + ".instance."      // + escapeEntry(name)
+	loginLabel       = bundleIDPrefix + ".login"          // + "." + escapeEntry(name) for an instance
+	minMacOS         = "12.0"                             // MIN_MACOS in build-all.sh
 	shimExecutable   = "launch"
 	lsregister       = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 )
-
-func menuEntrySupported(entry string) bool { return entry != launcherEntry }
 
 func userDir(parts ...string) string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(append([]string{home}, parts...)...)
 }
 
-// menuApp is an instance's app in ~/Applications.
+// menuApp is an instance's app, in the installed launcher's Applications folder.
 func menuApp(entry string) string {
-	return userDir("Applications", entryName(entry)+".app")
+	return filepath.Join(filepath.Dir(installedLauncher()), entryName(entry)+".app")
+}
+
+// menuApps lists the instances' apps the launcher made.
+func menuApps() []string {
+	apps, _ := filepath.Glob(menuApp("*"))
+	var ours []string
+	for _, app := range apps {
+		if isOurApp(app) {
+			ours = append(ours, app)
+		}
+	}
+	return ours
 }
 
 // isOurApp reports whether app is one the launcher made, so an unrelated app that
@@ -48,14 +63,9 @@ func isOurApp(app string) bool {
 	return err == nil && bytes.Contains(plist, []byte("<string>"+instanceBundleID))
 }
 
-func hasMenuEntry(entry string) bool {
-	return menuEntrySupported(entry) && isOurApp(menuApp(entry))
-}
+func hasMenuEntry(entry string) bool { return isOurApp(menuApp(entry)) }
 
 func addMenuEntry(entry string) error {
-	if !menuEntrySupported(entry) {
-		return nil
-	}
 	app := menuApp(entry)
 	if fileExists(app) && !isOurApp(app) {
 		return fmt.Errorf("%s already exists and isn't the launcher's", app)
@@ -64,43 +74,53 @@ func addMenuEntry(entry string) error {
 	if err != nil {
 		return err
 	}
-
-	// Built next to it, then swapped in, so a failure leaves the old one working.
-	tmp := app + ".new"
-	os.RemoveAll(tmp)
-	files := []struct {
-		path string
-		data []byte
-		mode os.FileMode
-	}{
-		{"Contents/Info.plist", []byte(shimInfoPlist(entry)), 0644},
-		{"Contents/MacOS/" + shimExecutable, []byte(shimScript(entry)), 0755},
-		{"Contents/Resources/app.icns", icon, 0644},
+	files := map[string][]byte{
+		"Contents/Info.plist":              []byte(shimInfoPlist(entry)),
+		"Contents/MacOS/" + shimExecutable: []byte(shimScript(entry)),
+		"Contents/Resources/app.icns":      icon,
 	}
-	for _, f := range files {
-		path := filepath.Join(tmp, filepath.FromSlash(f.path))
+	if bundleMatches(app, files) {
+		return nil // already up to date: skip rebuilding and re-signing it
+	}
+
+	tmp, err := os.MkdirTemp("", "claude-webext-shim")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	built := filepath.Join(tmp, filepath.Base(app))
+	for rel, data := range files {
+		path := filepath.Join(built, filepath.FromSlash(rel))
+		mode := os.FileMode(0644)
+		if rel == "Contents/MacOS/"+shimExecutable {
+			mode = 0755
+		}
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(path, f.data, f.mode); err != nil {
-			os.RemoveAll(tmp)
+		if err := os.WriteFile(path, data, mode); err != nil {
 			return err
 		}
 	}
-	if err := os.RemoveAll(app); err != nil {
-		os.RemoveAll(tmp)
+	if err := utils.InstallAppBundle(built, app); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, app); err != nil {
-		os.RemoveAll(tmp)
-		return err
-	}
-
-	// Best effort: an ad-hoc signature, and telling Launchpad/Spotlight about it now
-	// rather than whenever they next look.
+	// Best effort, after the swap (which drops extended attributes, where a script's
+	// signature lives): an ad-hoc signature, and Launchpad/Spotlight seeing it now.
 	exec.Command("codesign", "--force", "--sign", "-", app).Run()
 	exec.Command(lsregister, "-f", app).Run()
 	return nil
+}
+
+// bundleMatches reports whether the bundle at app already holds exactly these files.
+func bundleMatches(app string, files map[string][]byte) bool {
+	for rel, data := range files {
+		existing, err := os.ReadFile(filepath.Join(app, filepath.FromSlash(rel)))
+		if err != nil || !bytes.Equal(existing, data) {
+			return false
+		}
+	}
+	return true
 }
 
 func removeMenuEntry(entry string) error {
@@ -122,6 +142,16 @@ func agentPath(label string) string {
 	return userDir("Library", "LaunchAgents", label+".plist")
 }
 
+// agentLabels lists the labels of the login entries the launcher made.
+func agentLabels() []string {
+	paths, _ := filepath.Glob(agentPath(loginLabel + "*"))
+	labels := make([]string, len(paths))
+	for i, p := range paths {
+		labels[i] = strings.TrimSuffix(filepath.Base(p), ".plist")
+	}
+	return labels
+}
+
 func hasStartup(entry string) bool { return fileExists(agentPath(agentLabel(entry))) }
 
 func setStartup(entry string, on bool) error {
@@ -129,12 +159,8 @@ func setStartup(entry string, on bool) error {
 	if !on {
 		return removeAgent(label)
 	}
-	path := agentPath(label)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
 	// Not loaded now: it runs at the next login.
-	return os.WriteFile(path, []byte(agentPlist(label, entry)), 0644)
+	return writeIfChanged(agentPath(label), agentPlist(label, entry))
 }
 
 // removeAgent deletes a LaunchAgent, and unloads it if this login loaded it.
@@ -155,7 +181,7 @@ func openCommand(entry string) []string {
 }
 
 func shimScript(entry string) string {
-	quoted := make([]string, 0, len(openCommand(entry)))
+	var quoted []string
 	for _, a := range openCommand(entry) {
 		quoted = append(quoted, shellQuote(a))
 	}
@@ -176,7 +202,7 @@ func shimInfoPlist(entry string) string {
 		plistKey("CFBundleDisplayName", entryName(entry)),
 		plistKey("CFBundleIconFile", "app.icns"),
 		plistKey("CFBundlePackageType", "APPL"),
-		plistKey("LSMinimumSystemVersion", "12.0"),
+		plistKey("LSMinimumSystemVersion", minMacOS),
 		"\t<key>LSUIElement</key>\n\t<true/>\n",
 	)
 }

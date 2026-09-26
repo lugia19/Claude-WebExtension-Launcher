@@ -104,6 +104,9 @@ jobs:
         run: go vet ./... && go test ./...
         env:
           CGO_ENABLED: "1"
+          # As build-all.sh builds arm64, so the cgo cache is shared with the build.
+          CC: clang -arch arm64
+          MACOSX_DEPLOYMENT_TARGET: "12.0"
       - name: Build
         run: bash build-all.sh
       - uses: actions/upload-artifact@v4

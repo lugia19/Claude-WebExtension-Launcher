@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -19,17 +18,13 @@ func removeSandbox() error { return nil }
 // app bundle itself, and goes with it.
 func removeRegistrations() error {
 	var problems []string
-	apps, _ := filepath.Glob(userDir("Applications", entryName("*")+".app"))
-	for _, app := range apps {
-		if isOurApp(app) {
-			if err := os.RemoveAll(app); err != nil {
-				problems = append(problems, err.Error())
-			}
+	for _, app := range menuApps() {
+		if err := os.RemoveAll(app); err != nil {
+			problems = append(problems, err.Error())
 		}
 	}
-	agents, _ := filepath.Glob(agentPath(loginLabel + "*"))
-	for _, agent := range agents {
-		if err := removeAgent(strings.TrimSuffix(filepath.Base(agent), ".plist")); err != nil {
+	for _, label := range agentLabels() {
+		if err := removeAgent(label); err != nil {
 			problems = append(problems, err.Error())
 		}
 	}

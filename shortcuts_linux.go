@@ -9,7 +9,8 @@ import (
 	"path/filepath"
 )
 
-func menuEntrySupported(entry string) bool { return true }
+// launcherHasMenuEntry: the launcher gets an applications-menu entry, like instances.
+const launcherHasMenuEntry = true
 
 func xdgDir(env string, fallback ...string) string {
 	if dir := os.Getenv(env); dir != "" {
@@ -140,16 +141,6 @@ func iconPath() (string, error) {
 	}
 	path := utils.ResolvePath("app.png")
 	return path, writeIfChanged(path, string(data))
-}
-
-func writeIfChanged(path, content string) error {
-	if existing, err := os.ReadFile(path); err == nil && string(existing) == content {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(content), 0644)
 }
 
 // refreshDesktopDatabase updates the MIME cache for the applications folder, if the

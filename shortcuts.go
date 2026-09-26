@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -10,7 +11,7 @@ import (
 // App-menu and startup entries: the Start Menu / Startup folder shortcuts on Windows,
 // .desktop files on Linux, and on macOS a small app per instance in ~/Applications
 // plus LaunchAgents for login (the launcher's own app is its menu entry there, see
-// menuEntrySupported). The platform parts are in shortcuts_<os>.go; they take an entry
+// launcherHasMenuEntry). The platform parts are in shortcuts_<os>.go; they take an entry
 // key: launcherEntry, or an instance name.
 //
 // There are two kinds of entries. The launcher's runs it with no arguments: it
@@ -61,6 +62,17 @@ func escapeEntry(entry string) string {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// writeIfChanged writes content to path (making its folder), unless it's already there.
+func writeIfChanged(path, content string) error {
+	if existing, err := os.ReadFile(path); err == nil && string(existing) == content {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(content), 0644)
 }
 
 func removeIfExists(path string) error {

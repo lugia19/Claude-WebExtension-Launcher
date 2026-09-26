@@ -12,11 +12,7 @@ func TestShimScriptQuoting(t *testing.T) {
 	home := t.TempDir() + "/it's a home"
 	t.Setenv("HOME", home)
 	script := shimScript("work one")
-	want := `exec '/usr/bin/open' '-n' '-a' '` + strings.ReplaceAll(home, "'", `'\''`) + `/Applications/Claude_WebExtension_Launcher.app' '--args' '--instance=work one'`
-	if !strings.Contains(script, want) {
-		t.Errorf("script:\n%s\nwant a line:\n%s", script, want)
-	}
-	// The script must run the command it shows: check sh parses it back to the same args.
+	// sh must parse the script back to exactly the command: print its words instead.
 	out, err := exec.Command("sh", "-c", strings.Replace(strings.TrimPrefix(script, "#!/bin/sh\n"), "exec ", `printf '%s\n' `, 1)).Output()
 	if err != nil {
 		t.Fatal(err)
@@ -31,6 +27,9 @@ func TestPlistsEscaped(t *testing.T) {
 	if doc := agentPlist(agentLabel("work"), "work"); strings.Contains(doc, "a&b") || !strings.Contains(doc, "/Users/a&amp;b/Applications/") {
 		t.Errorf("the launcher path isn't escaped:\n%s", doc)
 	}
+}
+
+func TestAgentLabels(t *testing.T) {
 	if got := agentLabel("work one"); got != "com.lugia19.claudewebextlauncher.login.work_20one" {
 		t.Errorf("agentLabel = %q", got)
 	}
@@ -41,7 +40,7 @@ func TestPlistsEscaped(t *testing.T) {
 
 func TestEntriesRoundTrip(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	if menuEntrySupported(launcherEntry) || hasMenuEntry(launcherEntry) {
+	if launcherHasMenuEntry || hasMenuEntry(launcherEntry) {
 		t.Error("the launcher has no menu entry on macOS")
 	}
 
