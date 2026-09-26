@@ -80,7 +80,12 @@ func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked
 		content.Add(noFocusRing(checks[i]))
 	}
 
+	sent := false // a quick double click can arrive before the screen has switched
 	buttons := container.NewHBox(primaryButton(confirm, nil, func() {
+		if sent {
+			return
+		}
+		sent = true
 		checked := make([]bool, len(checks))
 		for i, c := range checks {
 			checked[i] = c.Checked
@@ -91,14 +96,19 @@ func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked
 		buttons.Add(widget.NewButton("Back", onCancel))
 	}
 	for _, extra := range setup.Extra {
-		buttons.Add(widget.NewButton(extra.Label, func() {
+		var b *widget.Button
+		b = widget.NewButton(extra.Label, func() {
+			if extra.CloseWindow {
+				b.Disable() // once: e.g. Uninstall… starts another process
+			}
 			if extra.OnClick != nil {
 				extra.OnClick()
 			}
 			if extra.CloseWindow {
 				w.quit()
 			}
-		}))
+		})
+		buttons.Add(b)
 	}
 	return screen(container.NewBorder(content, buttons, nil, nil))
 }
