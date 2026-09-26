@@ -176,7 +176,6 @@ func instanceList() *gui.Instances {
 		Delete:           deleteInstance,
 		Settings:         instanceSettings,
 		LauncherSettings: func() *gui.Setup { return launcherSettings("Launcher settings", launcherSettingsSubtitle) },
-		Headless:         mainInstanceName,
 	}
 }
 

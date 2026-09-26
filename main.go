@@ -45,6 +45,7 @@ type launcherOptions struct {
 }
 
 func main() {
+	gui.Icon, _ = EmbeddedFS.ReadFile("resources/icons/app.png")
 	forceUpdate := flag.Bool("force-update", false, "Re-download and re-patch Claude even if already up to date")
 	instanceName := flag.String("instance", "", "Instance to launch, each with its own data (default: "+mainInstanceName+")")
 	debug := flag.Bool("debug", false, "No window: show all output in the terminal and run Claude attached to it")

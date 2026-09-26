@@ -3,12 +3,11 @@ package gui
 import (
 	"strings"
 
-	"github.com/gogpu/ui/core/button"
-	"github.com/gogpu/ui/core/scrollview"
-	"github.com/gogpu/ui/core/textfield"
-	"github.com/gogpu/ui/primitives"
-	"github.com/gogpu/ui/state"
-	"github.com/gogpu/ui/widget"
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
+	"fyne.io/fyne/v2/widget"
 )
 
 // Instances is what the instance list needs from the launcher. The callbacks run on
@@ -32,8 +31,6 @@ type Instances struct {
 	// LauncherSettings returns the launcher's own settings screen (Launcher settings,
 	// at the bottom of the list). Its Apply runs on a background goroutine.
 	LauncherSettings func() *Setup
-	// Headless is the instance launched when the window can't open.
-	Headless string
 }
 
 // Instance is one row of the list.
@@ -47,85 +44,74 @@ const maxNameLength = 32
 
 // showList switches to the instance list. UI thread only.
 func (w *window) showList() {
-	rows := []widget.Widget{}
-	w.mu.Lock()
-	w.notes = map[string]*text{}
-	w.mu.Unlock()
+	w.notes = map[string]*widget.Label{}
+	rows := container.NewVBox()
 	for _, inst := range w.inst.List() {
-		rows = append(rows, w.listRow(inst))
+		rows.Add(w.listRow(inst))
 	}
 
-	title := primitives.Text("Instances").FontSize(18).Bold().Color(textColor)
-	list := scrollview.New(primitives.VBox(rows...).Gap(14).CrossAlign(primitives.CrossAxisStretch))
-	settings := button.New(
-		button.TextOpt("Launcher settings"),
-		button.PainterOpt(iconPainter{icon: cogIcon, fg: textColor, bg: &trackColor}),
-		button.OnClick(w.showLauncherSettings),
-	).MinWidth(180)
-	w.setRoot(primitives.VBox(
-		title,
-		primitives.Expanded(list),
-		primitives.HBox(
-			primitives.Expanded(primitives.HBox(button.New(button.TextOpt("Add instance"), button.OnClick(w.showAdd)))),
-			settings,
-		),
-	).
-		CrossAlign(primitives.CrossAxisStretch).
-		Padding(24).
-		Gap(16).
-		Background(background))
+	settings := widget.NewButtonWithIcon("Launcher settings", theme.SettingsIcon(), w.showLauncherSettings)
+	gutter := theme.Size(theme.SizeNameScrollBar) // keeps the rows clear of the scrollbar
+	w.win.SetContent(screen(container.NewBorder(
+		heading("Instances"),
+		container.NewHBox(widget.NewButtonWithIcon("Add instance", theme.ContentAddIcon(), w.showAdd), layout.NewSpacer(), settings),
+		nil, nil,
+		container.NewVScroll(container.New(layout.NewCustomPaddedLayout(0, 0, 0, gutter), rows)),
+	)))
 }
 
-func (w *window) listRow(inst Instance) widget.Widget {
-	name := primitives.Text(inst.Display).FontSize(14).Color(textColor)
+func (w *window) listRow(inst Instance) fyne.CanvasObject {
+	name := widget.NewLabel(inst.Display)
+	name.TextStyle.Bold = true
 	w.mu.Lock()
-	note := w.s.newText(w.note[inst.Name], 12, dimColor)
-	w.notes[inst.Name] = note
+	note := widget.NewLabel(w.note[inst.Name])
 	w.mu.Unlock()
-	note.widget.MaxLines(1).Ellipsis()
+	w.notes[inst.Name] = note
+	note.Importance = widget.LowImportance
+	note.SizeName = theme.SizeNameCaptionText
+	note.Truncation = fyne.TextTruncateEllipsis
+	note.Hidden = note.Text == "" // so the name is centered next to the buttons
 
 	// Launch is always last, so it lines up on the right whatever else a row has.
-	buttons := []widget.Widget{}
+	buttons := container.NewHBox()
 	if w.inst.Settings != nil && w.inst.Settings(inst.Name) != nil {
-		buttons = append(buttons, iconButton(cogIcon, dimColor, func() { w.showSettings(inst) }))
+		b := widget.NewButtonWithIcon("", theme.SettingsIcon(), func() { w.showSettings(inst) })
+		b.Importance = widget.LowImportance
+		buttons.Add(b)
 	}
 	if inst.Deletable {
-		buttons = append(buttons, iconButton(trashIcon, errorColor, func() { w.showDelete(inst) }))
+		b := widget.NewButtonWithIcon("", theme.NewErrorThemedResource(theme.DeleteIcon()), func() { w.showDelete(inst) })
+		b.Importance = widget.LowImportance
+		buttons.Add(b)
 	}
-	white := widget.Hex(0xFFFFFF)
-	buttons = append(buttons, button.New(
-		button.TextOpt("Launch"),
-		button.SizeOpt(button.Small),
-		button.PainterOpt(iconPainter{icon: playIcon, fg: background, bg: &white}),
-		button.OnClick(func() { w.launch(inst.Name) }),
-	).MinWidth(92))
+	buttons.Add(primaryButton("Launch", theme.MediaPlayIcon(), func() { w.launch(inst.Name) }))
 
-	// HBox top-aligns its children, so the name block is only as tall as the buttons.
-	label := primitives.VBox(name, note.widget).Gap(2)
-	return primitives.HBox(append([]widget.Widget{primitives.Expanded(label)}, buttons...)...).Gap(8)
+	// Labels pad their text, which on top of the box's gap would space the name and its
+	// note far apart: overlap that padding instead.
+	label := container.New(layout.NewCustomPaddedVBoxLayout(-theme.Padding()-theme.InnerPadding()), name, note)
+	return container.NewBorder(nil, nil, nil, container.NewCenter(buttons), container.NewVBox(layout.NewSpacer(), label, layout.NewSpacer()))
 }
 
 // setNote sets an instance's note in the list, keeping it across list rebuilds.
 func (w *window) setNote(name, v string) {
 	w.mu.Lock()
-	if w.note == nil {
-		w.note = map[string]string{}
-	}
 	w.note[name] = v
-	t := w.notes[name]
 	w.mu.Unlock()
-	if t != nil {
-		t.Set(v)
-		w.s.redraw()
-	}
+	w.runOnUI(func() {
+		if l := w.notes[name]; l != nil {
+			l.SetText(v)
+			if v == "" {
+				l.Hide()
+			} else {
+				l.Show()
+			}
+		}
+	})
 }
 
 func (w *window) launch(name string) {
 	w.setNote(name, "Starting…")
 	w.mu.Lock()
-	if w.launching == nil {
-		w.launching = map[string]int{}
-	}
 	w.launching[name]++ // counted: Launch can be clicked again before the first finishes
 	w.mu.Unlock()
 	w.background(func() {
@@ -146,104 +132,83 @@ func (w *window) launch(name string) {
 
 // showAdd switches to the add-an-instance screen. UI thread only.
 func (w *window) showAdd() {
-	value := state.NewSignal("")
-	problem := w.s.newText("", 13, errorColor)
-	problem.widget.MaxLines(2).Ellipsis()
-
+	problem := errorLabel()
+	field := widget.NewEntry()
+	field.SetPlaceHolder("Name, e.g. work")
 	submit := func() {
-		name := strings.TrimSpace(value.Get())
+		name := strings.TrimSpace(field.Text)
 		if msg := w.inst.Validate(name); msg != "" {
-			problem.Set(msg)
-			w.s.redraw()
+			problem.SetText(msg)
 			return
 		}
 		if err := w.inst.Add(name); err != nil {
-			problem.Set(err.Error())
-			w.s.redraw()
+			problem.SetText(err.Error())
 			return
 		}
 		w.showList()
 	}
-	field := textfield.New(
-		textfield.ValueSignal(value),
-		textfield.Placeholder("Name, e.g. work"),
-		textfield.MaxLength(maxNameLength),
-		textfield.OnSubmit(func(string) { submit() }),
-		textfield.OnChange(func(string) { problem.Set("") }),
-		textfield.PainterOpt(themedTextField{}),
-	)
+	field.OnSubmitted = func(string) { submit() }
+	field.OnChanged = func(v string) {
+		if r := []rune(v); len(r) > maxNameLength {
+			field.SetText(string(r[:maxNameLength]))
+		}
+		problem.SetText("")
+	}
 
-	w.setRoot(primitives.VBox(
-		primitives.Text("Add an instance").FontSize(18).Bold().Color(textColor),
-		primitives.Text("Each instance has its own login, settings and sessions.").FontSize(13).Color(dimColor),
-		field,
-		problem.widget,
-		primitives.HBox(primaryButton("Add", submit), button.New(button.TextOpt("Cancel"), button.OnClick(w.showList))).Gap(8),
-	).
-		CrossAlign(primitives.CrossAxisStretch).
-		Padding(24).
-		Gap(14).
-		Background(background))
-	w.uiApp.Window().Context().RequestFocus(field)
+	w.win.SetContent(screen(container.NewBorder(
+		container.NewVBox(
+			heading("Add an instance"),
+			dim("Each instance has its own login, settings and sessions."),
+			field,
+			problem,
+		),
+		container.NewHBox(primaryButton("Add", nil, submit), widget.NewButton("Cancel", w.showList)),
+		nil, nil,
+	)))
+	w.win.Canvas().Focus(field)
 }
 
 // showDelete switches to the delete confirmation for inst. UI thread only.
 func (w *window) showDelete(inst Instance) {
-	children := []widget.Widget{
-		primitives.Text("Delete " + inst.Display + "?").FontSize(18).Bold().Color(textColor),
-	}
+	content := container.NewVBox(heading("Delete " + inst.Display + "?"))
+	var buttons *fyne.Container
 	w.mu.Lock()
 	starting := w.launching[inst.Name] > 0 // not holding its lock yet, so Running can't tell
 	w.mu.Unlock()
 	if starting || w.inst.Running(inst.Name) {
-		children = append(children,
-			primitives.Text("It's open right now. Close it first, then try again.").FontSize(13).Color(dimColor),
-			primitives.HBox(button.New(button.TextOpt("Back"), button.OnClick(w.showList))),
-		)
+		content.Add(dim("It's open right now. Close it first, then try again."))
+		buttons = container.NewHBox(widget.NewButton("Back", w.showList))
 	} else {
-		problem := w.s.newText("", 13, errorColor)
-		problem.widget.MaxLines(3).Ellipsis()
+		problem := errorLabel()
+		content.Add(dim("This removes its data folder (its login, settings and local sessions) and its menu and startup shortcuts. It can't be undone."))
+		content.Add(problem)
+
 		// Both buttons lock once the delete starts: going back to the list meanwhile would
 		// allow launching the instance while its folder is being removed.
-		deleting := state.NewSignal(false)
-		children = append(children,
-			primitives.Text("This removes its data folder (its login, settings and local sessions)").FontSize(13).Color(dimColor),
-			primitives.Text("and its menu and startup shortcuts. It can't be undone.").FontSize(13).Color(dimColor),
-			problem.widget,
-			primitives.HBox(
-				button.New(button.TextOpt("Delete"), button.BackgroundOpt(errorColor), button.DisabledSignal(deleting), button.OnClick(func() {
-					if deleting.Get() {
+		var del, cancel *widget.Button
+		del = widget.NewButtonWithIcon("Delete", theme.DeleteIcon(), func() {
+			del.Disable()
+			cancel.Disable()
+			problem.SetText("Deleting…")
+			// A big data folder takes a while to remove: keep the UI thread free.
+			w.background(func() {
+				err := w.inst.Delete(inst.Name)
+				w.runOnUI(func() {
+					if err != nil {
+						del.Enable()
+						cancel.Enable()
+						problem.SetText(err.Error())
 						return
 					}
-					deleting.Set(true)
-					problem.Set("Deleting…")
-					w.s.redraw()
-					// A big data folder takes a while to remove: keep the UI thread free.
-					w.background(func() {
-						err := w.inst.Delete(inst.Name)
-						w.runOnUI(func() {
-							if err != nil {
-								deleting.Set(false)
-								problem.Set(err.Error())
-								return
-							}
-							w.showList()
-						})
-					})
-				})),
-				button.New(button.TextOpt("Cancel"), button.DisabledSignal(deleting), button.OnClick(func() {
-					if !deleting.Get() {
-						w.showList()
-					}
-				})),
-			).Gap(8),
-		)
+					w.showList()
+				})
+			})
+		})
+		del.Importance = widget.DangerImportance
+		cancel = widget.NewButton("Cancel", w.showList)
+		buttons = container.NewHBox(del, cancel)
 	}
-	w.setRoot(primitives.VBox(children...).
-		CrossAlign(primitives.CrossAxisStretch).
-		Padding(24).
-		Gap(14).
-		Background(background))
+	w.win.SetContent(screen(container.NewBorder(content, buttons, nil, nil)))
 }
 
 // showSettings switches to inst's settings. Saving returns to the list right away and
@@ -254,7 +219,7 @@ func (w *window) showSettings(inst Instance) {
 	if setup == nil {
 		return
 	}
-	w.setRoot(w.buildSetup(setup, "Save", func(checked []bool) {
+	w.win.SetContent(w.buildSetup(setup, "Save", func(checked []bool) {
 		w.setNote(inst.Name, "Saving settings…")
 		w.showList()
 		w.background(func() {
@@ -268,28 +233,8 @@ func (w *window) showSettings(inst Instance) {
 // and applies them in the background.
 func (w *window) showLauncherSettings() {
 	setup := w.inst.LauncherSettings()
-	w.setRoot(w.buildSetup(setup, "Save", func(checked []bool) {
+	w.win.SetContent(w.buildSetup(setup, "Save", func(checked []bool) {
 		w.showList()
 		w.background(func() { setup.Apply(checked) })
 	}, w.showList))
-}
-
-// themedTextField draws text fields in the window's colors, like themedCheckbox.
-type themedTextField struct{ textfield.DefaultPainter }
-
-func (p themedTextField) PaintTextField(canvas widget.Canvas, st *textfield.PaintState) {
-	st.ColorScheme = textfield.TextFieldColorScheme{
-		Background:  trackColor,
-		Border:      dimColor,
-		FocusBorder: accent,
-		ErrorBorder: errorColor,
-		TextColor:   textColor,
-		Placeholder: dimColor,
-		CursorColor: textColor,
-		DisabledBg:  trackColor,
-		DisabledFg:  dimColor,
-		SelectionBg: accent,
-		ErrorText:   errorColor,
-	}
-	p.DefaultPainter.PaintTextField(canvas, st)
 }
