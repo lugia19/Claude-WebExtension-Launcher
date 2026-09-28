@@ -103,7 +103,8 @@ func Run(o Options, work func(s *Status) error) error {
 	}
 	win := a.NewWindow(o.Title)
 	win.SetMaster()
-	win.SetFixedSize(true)
+	// Not SetFixedSize: when content outgrows a fixed-size window, Fyne (2.8, Windows)
+	// grows the window but not its canvas, so clicks land away from what's drawn.
 	win.Resize(fyne.NewSize(windowWidth, windowHeight))
 	win.CenterOnScreen()
 	w := &window{app: a, win: win, s: s, inst: o.Instances, note: map[string]string{}, launching: map[string]int{}}
