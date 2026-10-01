@@ -32,15 +32,19 @@ type SetupButton struct {
 type SetupOption struct {
 	Label   string
 	Checked bool // initial state
-	// Entry is an optional short text field after the checkbox, for a value that goes
-	// with it (e.g. a port). It's only editable, and only validated, while checked.
+	Note    string // optional dim text under the checkbox
+	// Entry is an optional text field for a value that goes with the checkbox (e.g. a
+	// port). It's only editable, and only validated, while checked.
 	Entry *SetupEntry
 }
 
-// SetupEntry is a SetupOption's text field.
+// SetupEntry is a SetupOption's text field: a short one after the checkbox, or with
+// Lines, a multi-line one under it.
 type SetupEntry struct {
-	Value string // initial text
-	Width float32
+	Value       string // initial text
+	Width       float32
+	Lines       int    // more than 0: multi-line, this many lines tall, full width
+	Placeholder string
 	// Validate returns why the text isn't acceptable, or "" if it is. It runs on the
 	// UI thread.
 	Validate func(text string) string
@@ -95,9 +99,17 @@ func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked
 		checks[i].SetChecked(opt.Checked)
 		if opt.Entry == nil {
 			options.Add(noFocusRing(checks[i]))
+			if opt.Note != "" {
+				options.Add(dim(opt.Note))
+			}
 			continue
 		}
 		entry := widget.NewEntry()
+		if opt.Entry.Lines > 0 {
+			entry = widget.NewMultiLineEntry()
+			entry.SetMinRowsVisible(opt.Entry.Lines)
+		}
+		entry.SetPlaceHolder(opt.Entry.Placeholder)
 		entry.SetText(opt.Entry.Value)
 		entry.OnChanged = func(string) { errs.SetText("") }
 		if !opt.Checked {
@@ -112,8 +124,19 @@ func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked
 			}
 		}
 		entries[i] = entry
+		if opt.Entry.Lines > 0 {
+			options.Add(noFocusRing(checks[i]))
+			if opt.Note != "" {
+				options.Add(dim(opt.Note))
+			}
+			options.Add(entry)
+			continue
+		}
 		field := container.NewGridWrap(fyne.NewSize(opt.Entry.Width, entry.MinSize().Height), entry)
 		options.Add(container.NewHBox(noFocusRing(checks[i]), field))
+		if opt.Note != "" {
+			options.Add(dim(opt.Note))
+		}
 	}
 	options.Add(errs)
 

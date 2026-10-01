@@ -239,7 +239,17 @@ func addLaunchOptions(options *[]gui.SetupOption, instance string) launchOptions
 				Validate: func(text string) string { _, problem := parseDebugPort(text); return problem },
 			},
 		},
-		gui.SetupOption{Label: "Developer mode (Claude's internal test features)", Checked: current.DevMode},
+		gui.SetupOption{
+			Label:   "Developer mode (Claude's internal test features)",
+			Checked: current.DevMode,
+			Note:    "Its features are set up through environment variables, given here. It also stops Claude reinstalling the Cowork VM when that fails to start.",
+			Entry: &gui.SetupEntry{
+				Value:       strings.Join(current.Env, "\n"),
+				Lines:       3,
+				Placeholder: "KEY=value, one per line (e.g. SSLKEYLOGFILE=C:\\keys.log)",
+				Validate:    func(text string) string { _, problem := parseEnv(text); return problem },
+			},
+		},
 	)
 	return l
 }
@@ -253,8 +263,11 @@ func (l launchOptions) save(checked []bool, values []string) {
 	if port, problem := parseDebugPort(values[l.remoteDebugging]); problem == "" && port != utils.DefaultDebugPort {
 		opts.DebugPort = port
 	}
+	if env, problem := parseEnv(values[l.devMode]); problem == "" { // kept while dev mode is off
+		opts.Env = env
+	}
 	err := utils.UpdateSettings(func(s *utils.Settings) {
-		if opts == (utils.InstanceOptions{}) {
+		if !opts.RemoteDebugging && opts.DebugPort == 0 && !opts.DevMode && len(opts.Env) == 0 {
 			delete(s.InstanceOptions, l.instance)
 			return
 		}
@@ -275,4 +288,22 @@ func parseDebugPort(text string) (int, string) {
 		return 0, "The debugging port must be a number from 1024 to 65535."
 	}
 	return port, ""
+}
+
+// parseEnv reads environment variables, one KEY=value per line (blank lines are
+// skipped), or says why they can't be.
+func parseEnv(text string) ([]string, string) {
+	var env []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		key, _, ok := strings.Cut(line, "=")
+		if !ok || key == "" || strings.ContainsAny(key, " \t") {
+			return nil, fmt.Sprintf("%q isn't KEY=value.", line)
+		}
+		env = append(env, line)
+	}
+	return env, ""
 }

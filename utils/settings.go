@@ -37,6 +37,9 @@ type InstanceOptions struct {
 	// DevMode makes Claude's checks for Anthropic's test harness pass, which turns on
 	// its internal test features.
 	DevMode bool `json:"devMode,omitempty"`
+	// Env are KEY=value environment variables for Claude, set in developer mode (most
+	// of its features are configured through them).
+	Env []string `json:"env,omitempty"`
 }
 
 // Port is the remote debugging port to use.

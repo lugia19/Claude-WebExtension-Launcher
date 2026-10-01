@@ -439,6 +439,10 @@ func launchClaude(instance string, debug bool) error {
 	cmd := exec.Command(claudePath, args...)
 	cmd.Dir = filepath.Dir(claudePath)
 	fmt.Printf("Launching Claude: %s\n", strings.Join(args, " "))
+	if opts.DevMode && len(opts.Env) > 0 {
+		cmd.Env = append(os.Environ(), opts.Env...) // later entries win
+		fmt.Printf("With environment: %s\n", strings.Join(opts.Env, " "))
+	}
 
 	if debug {
 		// Run Claude in this terminal to see its output.
