@@ -79,6 +79,14 @@ func (l *launchOptions) validate(checked []bool, values []string) string {
 	if checked[l.inspector] && !checked[l.devMode] {
 		return "The Node inspector needs advanced debug mode."
 	}
+	if checked[l.remoteDebugging] && checked[l.inspector] {
+		// Both entries are valid ports by now.
+		debug, _ := parsePort(values[l.remoteDebugging], "remote debugging")
+		inspector, _ := parsePort(values[l.inspector], "Node inspector")
+		if debug == inspector {
+			return "Remote debugging and the Node inspector need different ports."
+		}
+	}
 	return ""
 }
 

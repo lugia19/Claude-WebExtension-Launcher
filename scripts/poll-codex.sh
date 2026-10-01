@@ -126,8 +126,8 @@ current_review_running() {
     | (last // {body: ""}).body
     | split("\n")[]
     | select(contains("**Code Review**") and contains("🔄 **Running**"))
-    | (capture("`(?<sha>[0-9a-f]{7,40})`") // {sha: ""}).sha
-    | select(. != "" and ($head | startswith(.)))' 2>/dev/null) || return 1
+    | (capture("`(?<sha>[0-9a-f]{7,40})`") // {sha: ""}).sha as $sha
+    | select($sha != "" and ($head | startswith($sha)))' 2>/dev/null) || return 1
   [ -n "$running" ]
 }
 

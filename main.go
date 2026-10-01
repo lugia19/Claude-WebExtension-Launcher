@@ -450,7 +450,12 @@ func launchClaude(instance string, debug bool) error {
 	fmt.Printf("Launching Claude: %s\n", strings.Join(args, " "))
 	if opts.DevMode && len(opts.Env) > 0 {
 		cmd.Env = append(os.Environ(), opts.Env...) // later entries win
-		fmt.Printf("With environment: %s\n", strings.Join(opts.Env, " "))
+		// Names only: values can be secrets, and the log is kept.
+		names := make([]string, len(opts.Env))
+		for i, kv := range opts.Env {
+			names[i], _, _ = strings.Cut(kv, "=")
+		}
+		fmt.Printf("With environment variables: %s\n", strings.Join(names, ", "))
 	}
 
 	if debug {
