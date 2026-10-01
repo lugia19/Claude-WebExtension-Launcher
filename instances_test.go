@@ -91,3 +91,11 @@ func TestParseEnv(t *testing.T) {
 		}
 	}
 }
+
+func TestLaunchOptionsKey(t *testing.T) {
+	for in, want := range map[string]string{"Main": "Main", "modified": "Main", "work": "work"} {
+		if got := launchOptionsKey(in); got != want {
+			t.Errorf("launchOptionsKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

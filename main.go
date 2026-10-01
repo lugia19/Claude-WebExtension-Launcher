@@ -432,7 +432,7 @@ func launchClaude(instance string, debug bool) error {
 	claudePath := claudeExecutablePath()
 	args := []string{"--instance=" + instance}
 	// The --webext-* markers tell wrapper.js these came from us (see its comments).
-	opts := utils.LoadSettings().InstanceOptions[instance]
+	opts := utils.LoadSettings().InstanceOptions[launchOptionsKey(instance)]
 	if opts.RemoteDebugging {
 		args = append(args, "--webext-remote-debugging", fmt.Sprintf("--remote-debugging-port=%d", opts.Port()))
 	}

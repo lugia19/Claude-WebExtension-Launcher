@@ -13,23 +13,35 @@ import (
 // instance's launch options.
 const launchOptionsWarning = "Don't turn these on unless you know what you're doing. They take effect the next time Claude starts."
 
+// launchOptionsKey is the key of an instance's options in Settings.InstanceOptions,
+// from the name it's launched with. The main instance's are always under "Main", also
+// while it still launches as "modified" (its folder not renamed yet; see
+// instances_migrate.go), so they survive the rename.
+func launchOptionsKey(instance string) string {
+	if instance == legacyMainInstanceName {
+		return mainInstanceName
+	}
+	return instance
+}
+
 // launchOptions are an instance's launch options (utils.InstanceOptions) on a settings
 // screen: their indexes in its Options.
 type launchOptions struct {
-	instance                                         string // as launched
+	key                                              string // see launchOptionsKey
 	remoteDebugging, inspector, disableQUIC, devMode int
 }
 
 // addLaunchOptions adds instance's launch options to a settings screen's options, in
-// its Advanced section.
+// its Advanced section. instance is the name it's launched with.
 func addLaunchOptions(options *[]gui.SetupOption, instance string) *launchOptions {
-	current := utils.LoadSettings().InstanceOptions[instance]
+	key := launchOptionsKey(instance)
+	current := utils.LoadSettings().InstanceOptions[key]
 	add := func(opt gui.SetupOption) int { // returns the option's index in Apply's checked
 		opt.Advanced = true
 		*options = append(*options, opt)
 		return len(*options) - 1
 	}
-	l := &launchOptions{instance: instance}
+	l := &launchOptions{key: key}
 	l.remoteDebugging = add(gui.SetupOption{
 		Label:   "Allow remote debugging on port",
 		Checked: current.RemoteDebugging,
@@ -110,13 +122,13 @@ func (l *launchOptions) save(checked []bool, values []string) {
 	}
 	err := utils.UpdateSettings(func(s *utils.Settings) {
 		if opts.IsZero() {
-			delete(s.InstanceOptions, l.instance)
+			delete(s.InstanceOptions, l.key)
 			return
 		}
 		if s.InstanceOptions == nil {
 			s.InstanceOptions = map[string]utils.InstanceOptions{}
 		}
-		s.InstanceOptions[l.instance] = opts
+		s.InstanceOptions[l.key] = opts
 	})
 	if err != nil {
 		fmt.Printf("Warning: could not save the launch options: %v\n", err)
