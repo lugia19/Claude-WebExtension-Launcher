@@ -355,15 +355,18 @@ app.on("web-contents-created", (event, contents) => {
     }
     const usageURL = /\/api\/organizations\/[^/?]+\/usage(?:\?|$)/;
     const usage = { fiveHour: null, weekly: null };
+    let lastRequest = 0; // only the newest request's answer counts (e.g. after an org switch)
 
     const fetch = net.fetch;
     net.fetch = function (input, ...rest) {
         const result = fetch.call(this, input, ...rest);
         const url = typeof input === "string" ? input : input?.url;
         if (typeof url === "string" && usageURL.test(url)) {
+            const request = ++lastRequest;
             result.then(response => {
                 if (!response.ok) return;
                 return response.clone().json().then(data => {
+                    if (request !== lastRequest) return;
                     usage.fiveHour = data?.five_hour?.utilization ?? null;
                     usage.weekly = data?.seven_day?.utilization ?? null;
                     refresh(); // Claude may have rebuilt its menu before this was read
@@ -388,6 +391,16 @@ app.on("web-contents-created", (event, contents) => {
         return template;
     }
 
+    // The native tray doesn't keep its menu from being garbage collected, so a menu on
+    // screen (a popup runs its own message loop) could be freed under it. Claude keeps its
+    // last 32 menus for that reason; the rebuilt ones are kept the same way.
+    const kept = [];
+    function keep(menu) {
+        kept.push(menu);
+        if (kept.length > 32) kept.shift();
+        return menu;
+    }
+
     // rebuild returns Claude's menu with its usage rows replaced, or it unchanged.
     function rebuild(menu) {
         try {
@@ -409,7 +422,7 @@ app.on("web-contents-created", (event, contents) => {
                 { type: "separator" },
                 ...items.slice((hadUsage ? last : first) + 1).map(copyItem),
             ];
-            return Menu.buildFromTemplate(template);
+            return keep(Menu.buildFromTemplate(template));
         } catch (e) {
             console.error("[webext] Couldn't rebuild the tray menu:", e);
             return menu;
