@@ -17,6 +17,9 @@ type Setup struct {
 	// "" for an option without an entry) once the screen is confirmed. It runs on a
 	// background goroutine: for the first-run setup, before the launcher's work starts.
 	Apply func(checked []bool, values []string)
+	// Validate, if set, checks the options together once each entry is valid, and
+	// returns why they can't be saved, or "". It runs on the UI thread.
+	Validate func(checked []bool) string
 	// Extra are more buttons, after the others.
 	Extra []SetupButton
 }
@@ -36,6 +39,9 @@ type SetupOption struct {
 	// Entry is an optional text field for a value that goes with the checkbox (e.g. a
 	// port). It's only editable, and only validated, while checked.
 	Entry *SetupEntry
+	// Advanced options are grouped at the end, in a section that starts collapsed
+	// unless one of them is checked.
+	Advanced bool
 }
 
 // SetupEntry is a SetupOption's text field: a short one after the checkbox, or with
@@ -84,7 +90,8 @@ func primaryButton(label string, icon fyne.Resource, onClick func()) fyne.Canvas
 // buildSetup returns a setup screen: the checkboxes, a confirm button that hands the
 // final states and entry values to onConfirm, a Back button if onCancel isn't nil, and
 // setup.Extra. They all run in the click handler, on the UI thread; onConfirm must
-// switch screens. The options scroll if they don't fit.
+// switch screens. The options scroll if they don't fit; Advanced ones are in their own
+// collapsible section, under a warning.
 func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked []bool, values []string), onCancel func()) fyne.CanvasObject {
 	content := container.NewVBox(heading(setup.Title))
 	for _, line := range setup.Subtitle {
@@ -94,13 +101,21 @@ func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked
 	checks := make([]*widget.Check, len(setup.Options))
 	entries := make([]*widget.Entry, len(setup.Options))
 	errs := errorLabel()
+	warning := errorLabel()
+	warning.SetText("Don't turn these on unless you know what you're doing.")
+	advanced, openAdvanced := container.NewVBox(warning), false
 	for i, opt := range setup.Options {
+		box := options
+		if opt.Advanced {
+			box = advanced
+			openAdvanced = openAdvanced || opt.Checked
+		}
 		checks[i] = widget.NewCheck(opt.Label, nil)
 		checks[i].SetChecked(opt.Checked)
 		if opt.Entry == nil {
-			options.Add(noFocusRing(checks[i]))
+			box.Add(noFocusRing(checks[i]))
 			if opt.Note != "" {
-				options.Add(dim(opt.Note))
+				box.Add(dim(opt.Note))
 			}
 			continue
 		}
@@ -125,18 +140,25 @@ func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked
 		}
 		entries[i] = entry
 		if opt.Entry.Lines > 0 {
-			options.Add(noFocusRing(checks[i]))
+			box.Add(noFocusRing(checks[i]))
 			if opt.Note != "" {
-				options.Add(dim(opt.Note))
+				box.Add(dim(opt.Note))
 			}
-			options.Add(entry)
+			box.Add(entry)
 			continue
 		}
 		field := container.NewGridWrap(fyne.NewSize(opt.Entry.Width, entry.MinSize().Height), entry)
-		options.Add(container.NewHBox(noFocusRing(checks[i]), field))
+		box.Add(container.NewHBox(noFocusRing(checks[i]), field))
 		if opt.Note != "" {
-			options.Add(dim(opt.Note))
+			box.Add(dim(opt.Note))
 		}
+	}
+	if len(advanced.Objects) > 1 { // more than the warning
+		section := widget.NewAccordion(widget.NewAccordionItem("Advanced", advanced))
+		if openAdvanced {
+			section.Open(0)
+		}
+		options.Add(section)
 	}
 	options.Add(errs)
 
@@ -158,6 +180,12 @@ func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked
 					errs.SetText(problem)
 					return
 				}
+			}
+		}
+		if setup.Validate != nil {
+			if problem := setup.Validate(checked); problem != "" {
+				errs.SetText(problem)
+				return
 			}
 		}
 		sent = true

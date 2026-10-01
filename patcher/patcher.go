@@ -34,7 +34,7 @@ const (
 	// emulated amd64 launcher on ARM64 still provisions native arm64 Claude.
 	windowsMSIXRedirectURLFmt = "https://claude.ai/api/desktop/win32/%s/msix/latest/redirect"
 	appFolderName             = "app-latest"
-	PatchVersion              = "13"
+	PatchVersion              = "14"
 )
 
 type Patch struct {

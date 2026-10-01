@@ -26,20 +26,27 @@ type Settings struct {
 	InstanceOptions map[string]InstanceOptions `json:"instanceOptions,omitempty"`
 }
 
-// DefaultDebugPort is the remote debugging port when none was chosen.
-const DefaultDebugPort = 9222
+// The remote debugging and Node inspector ports when none was chosen.
+const (
+	DefaultDebugPort     = 9222
+	DefaultInspectorPort = 9229
+)
 
 // InstanceOptions are an instance's launch options.
 type InstanceOptions struct {
 	// RemoteDebugging opens Chromium's remote debugging port (DebugPort).
 	RemoteDebugging bool `json:"remoteDebugging,omitempty"`
 	DebugPort       int  `json:"debugPort,omitempty"` // 0: DefaultDebugPort
-	// DevMode makes Claude's checks for Anthropic's test harness pass, which turns on
-	// its internal test features.
+	// DevMode (advanced debug mode) makes Claude's checks for Anthropic's test harness
+	// pass, which turns on its internal test features.
 	DevMode bool `json:"devMode,omitempty"`
-	// Env are KEY=value environment variables for Claude, set in developer mode (most
-	// of its features are configured through them).
+	// Env are KEY=value environment variables for Claude, set in advanced debug mode
+	// (most of its features are configured through them).
 	Env []string `json:"env,omitempty"`
+	// Inspector starts Node's inspector in Claude's main process, on InspectorPort. It
+	// needs advanced debug mode (version.dll turns on the --inspect fuse only then).
+	Inspector     bool `json:"inspector,omitempty"`
+	InspectorPort int  `json:"inspectorPort,omitempty"` // 0: DefaultInspectorPort
 }
 
 // Port is the remote debugging port to use.
@@ -48,6 +55,14 @@ func (o InstanceOptions) Port() int {
 		return DefaultDebugPort
 	}
 	return o.DebugPort
+}
+
+// NodeInspectorPort is the Node inspector port to use.
+func (o InstanceOptions) NodeInspectorPort() int {
+	if o.InspectorPort == 0 {
+		return DefaultInspectorPort
+	}
+	return o.InspectorPort
 }
 
 // settingsMu serializes UpdateSettings within this process (the setup screen and the

@@ -184,9 +184,75 @@ static void PatchHash(HMODULE hDll) {
     Log("Patch applied successfully");
 }
 
+// EnableNodeCliInspectArguments's index in Electron's fuse wire (see @electron/fuses).
+#define FUSE_NODE_CLI_INSPECT 3
+
+// EnableInspectFuse turns on the fuse that lets --inspect start Node's inspector in the
+// main process, in this process's copy of the exe, for the launcher's advanced debug
+// mode (the --webext-dev-mode marker; see wrapper.js). The file isn't changed. Other
+// processes, which don't have the marker, keep the fuse as shipped. (NODE_OPTIONS stays
+// off: Electron ignores most of it in a packaged app anyway.)
+static void EnableInspectFuse() {
+    if (!wcsstr(GetCommandLineW(), L" --webext-dev-mode")) {
+        return;
+    }
+    Log("Advanced debug mode: enabling the --inspect fuse");
+
+    HMODULE hExe = GetModuleHandle(NULL);
+    MODULEINFO modInfo;
+    if (!GetModuleInformation(GetCurrentProcess(), hExe, &modInfo, sizeof(modInfo))) {
+        Log("Failed to get module info");
+        return;
+    }
+    BYTE* base = (BYTE*)modInfo.lpBaseOfDll;
+    DWORD size = modInfo.SizeOfImage;
+
+    // The wire: the sentinel, a version byte, a length byte, then one byte per fuse:
+    // '0' disabled, '1' enabled, 'r' removed.
+    const char* sentinel = "dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX";
+    size_t sentinelLen = strlen(sentinel);
+    BYTE* wire = NULL;
+    for (DWORD i = 0; i + sentinelLen + 2 < size; i++) {
+        if (memcmp(base + i, sentinel, sentinelLen) == 0) {
+            wire = base + i + sentinelLen;
+            break;
+        }
+    }
+    if (!wire) {
+        Log("Could not find the fuse wire in exe memory");
+        return;
+    }
+
+    BYTE version = wire[0], length = wire[1];
+    BYTE* fuses = wire + 2;
+    char buf[128];
+    sprintf(buf, "Fuse wire version %u, %u fuses: %.*s", version, length, (int)length, (const char*)fuses);
+    Log(buf);
+    if (version != 1 || length <= FUSE_NODE_CLI_INSPECT) {
+        Log("Unknown fuse wire layout, leaving it alone");
+        return;
+    }
+
+    if (fuses[FUSE_NODE_CLI_INSPECT] != '0') {
+        Log("The --inspect fuse isn't off, leaving it alone");
+        return;
+    }
+    // Execute too, in case the wire shares a page with code.
+    DWORD oldProtect;
+    if (!VirtualProtect(fuses + FUSE_NODE_CLI_INSPECT, 1, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+        Log("VirtualProtect failed");
+        return;
+    }
+    fuses[FUSE_NODE_CLI_INSPECT] = '1';
+    VirtualProtect(fuses + FUSE_NODE_CLI_INSPECT, 1, oldProtect, &oldProtect);
+    sprintf(buf, "Fuses now: %.*s", (int)length, (const char*)fuses);
+    Log(buf);
+}
+
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
     if (ul_reason_for_call == DLL_PROCESS_ATTACH) {
         PatchHash(hModule);
+        EnableInspectFuse();
     }
     return TRUE;
 }

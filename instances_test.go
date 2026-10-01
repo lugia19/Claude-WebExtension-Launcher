@@ -63,15 +63,15 @@ func TestFindInstanceFolders(t *testing.T) {
 	}
 }
 
-func TestParseDebugPort(t *testing.T) {
+func TestParsePort(t *testing.T) {
 	for text, want := range map[string]int{"9222": 9222, " 1024 ": 1024, "65535": 65535} {
-		if got, problem := parseDebugPort(text); problem != "" || got != want {
-			t.Errorf("parseDebugPort(%q) = %d, %q; want %d", text, got, problem, want)
+		if got, problem := parsePort(text, "test"); problem != "" || got != want {
+			t.Errorf("parsePort(%q) = %d, %q; want %d", text, got, problem, want)
 		}
 	}
 	for _, text := range []string{"", "80", "1023", "65536", "92a2", "-1"} {
-		if _, problem := parseDebugPort(text); problem == "" {
-			t.Errorf("parseDebugPort(%q) accepted", text)
+		if _, problem := parsePort(text, "test"); problem == "" {
+			t.Errorf("parsePort(%q) accepted", text)
 		}
 	}
 }

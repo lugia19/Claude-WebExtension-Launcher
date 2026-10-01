@@ -435,6 +435,9 @@ func launchClaude(instance string, debug bool) error {
 	}
 	if opts.DevMode {
 		args = append(args, "--webext-dev-mode")
+		if opts.Inspector {
+			args = append(args, fmt.Sprintf("--inspect=%d", opts.NodeInspectorPort()))
+		}
 	}
 	cmd := exec.Command(claudePath, args...)
 	cmd.Dir = filepath.Dir(claudePath)
@@ -514,6 +517,7 @@ func launcherSettings(title string, subtitle []string) *gui.Setup {
 		Title:    title,
 		Subtitle: subtitle,
 		Options:  options,
+		Validate: launch.validate, // nil-safe: no launch options here then
 		Extra:    extra,
 		Apply: func(checked []bool, values []string) {
 			applyShortcuts(launcherEntry, menu >= 0 && checked[menu], checked[startup])

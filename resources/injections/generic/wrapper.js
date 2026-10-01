@@ -54,13 +54,33 @@ app.requestSingleInstanceLock = function(...args) {
 // E2E token check passes. The launcher adds a marker flag next to the switches it adds,
 // so only a launch from the launcher gets through; the same switches without it are
 // still refused, as in the official app.
-// - --webext-dev-mode: the patched token checks (patchDevModeGate in patcher.go) pass,
-//   which also lets the debugging switches through and turns on Claude's test features.
+// - --webext-dev-mode (advanced debug mode): the patched token checks (patchDevModeGate
+//   in patcher.go) pass, which also lets the debugging switches through and turns on
+//   Claude's test features. version.dll turns on the --inspect fuse for it too.
 // - --webext-remote-debugging: the debugging switches are hidden from Claude's check.
 //   Chromium has already read them from the real command line, so the port still opens.
 if (process.argv.includes("--webext-dev-mode")) {
     globalThis.__webextDevMode = true;
-    console.log("[webext] Developer mode on");
+    console.log("[webext] Advanced debug mode on");
+    // SSLKEYLOGFILE only covers Chromium's networking. Node's own TLS in this process
+    // (https, fetch, WebSockets; all through tls.connect) gets its session keys
+    // appended to the same file, from each socket's keylog event: Electron ignores
+    // Node's --tls-keylog in a packaged app.
+    const keyLog = process.env.SSLKEYLOGFILE;
+    if (keyLog) {
+        const tls = require("tls");
+        const connect = tls.connect;
+        tls.connect = function (...args) {
+            const socket = connect.apply(this, args);
+            socket.on("keylog", line => {
+                try {
+                    fs.appendFileSync(keyLog, line);
+                } catch {}
+            });
+            return socket;
+        };
+        console.log("[webext] Logging Node TLS keys to " + keyLog);
+    }
 } else if (process.argv.includes("--webext-remote-debugging")) {
     // Normalized like Claude's own check: no leading -, -- or /, lowercase, no =value.
     const switchName = a => a.replace(/^(?:--|-|\/)/, "").toLowerCase().split("=", 1)[0];

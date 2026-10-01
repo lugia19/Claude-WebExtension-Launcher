@@ -208,7 +208,8 @@ func instanceSettings(name string) *gui.Setup {
 			"Shortcuts that launch this instance directly, without the list.",
 			launchOptionsNote,
 		},
-		Options: options,
+		Options:  options,
+		Validate: launch.validate,
 		Apply: func(checked []bool, values []string) {
 			applyShortcuts(name, checked[0], checked[1])
 			launch.save(checked, values)
@@ -219,30 +220,33 @@ func instanceSettings(name string) *gui.Setup {
 const launchOptionsNote = "Debugging options take effect the next time Claude starts."
 
 // launchOptions are an instance's launch options on a settings screen (see
-// utils.InstanceOptions), as indexes into its Options.
+// utils.InstanceOptions), as indexes into its Options. They're in its Advanced section.
 type launchOptions struct {
-	instance                 string // as launched
-	remoteDebugging, devMode int
+	instance                            string // as launched
+	remoteDebugging, devMode, inspector int
 }
 
 // addLaunchOptions adds instance's launch options to a settings screen's options.
 func addLaunchOptions(options *[]gui.SetupOption, instance string) launchOptions {
 	current := utils.LoadSettings().InstanceOptions[instance]
-	l := launchOptions{instance: instance, remoteDebugging: len(*options), devMode: len(*options) + 1}
+	n := len(*options)
+	l := launchOptions{instance: instance, remoteDebugging: n, devMode: n + 1, inspector: n + 2}
 	*options = append(*options,
 		gui.SetupOption{
-			Label:   "Allow remote debugging on port",
-			Checked: current.RemoteDebugging,
+			Label:    "Allow remote debugging on port",
+			Checked:  current.RemoteDebugging,
+			Advanced: true,
 			Entry: &gui.SetupEntry{
 				Value:    strconv.Itoa(current.Port()),
 				Width:    80,
-				Validate: func(text string) string { _, problem := parseDebugPort(text); return problem },
+				Validate: func(text string) string { _, problem := parsePort(text, "remote debugging"); return problem },
 			},
 		},
 		gui.SetupOption{
-			Label:   "Developer mode (Claude's internal test features)",
-			Checked: current.DevMode,
-			Note:    "Its features are set up through environment variables, given here.",
+			Label:    "Advanced debug mode",
+			Checked:  current.DevMode,
+			Advanced: true,
+			Note:     "Turns on Claude's internal test features, set up through the environment variables given here. SSLKEYLOGFILE also covers Node's TLS in the main process.",
 			Entry: &gui.SetupEntry{
 				Value:       strings.Join(current.Env, "\n"),
 				Lines:       3,
@@ -250,8 +254,30 @@ func addLaunchOptions(options *[]gui.SetupOption, instance string) launchOptions
 				Validate:    func(text string) string { _, problem := parseEnv(text); return problem },
 			},
 		},
+		gui.SetupOption{
+			Label:    "Node inspector on port",
+			Checked:  current.Inspector,
+			Advanced: true,
+			Note:     "Debugs Claude's main process (e.g. from chrome://inspect). Needs advanced debug mode.",
+			Entry: &gui.SetupEntry{
+				Value:    strconv.Itoa(current.NodeInspectorPort()),
+				Width:    80,
+				Validate: func(text string) string { _, problem := parsePort(text, "Node inspector"); return problem },
+			},
+		},
 	)
 	return l
+}
+
+// validate checks the launch options together on a settings screen.
+func (l *launchOptions) validate(checked []bool) string {
+	if l == nil {
+		return ""
+	}
+	if checked[l.inspector] && !checked[l.devMode] {
+		return "The Node inspector needs advanced debug mode."
+	}
+	return ""
 }
 
 // save stores the launch options from a confirmed settings screen.
@@ -260,14 +286,20 @@ func (l launchOptions) save(checked []bool, values []string) {
 		RemoteDebugging: checked[l.remoteDebugging],
 		DevMode:         checked[l.devMode],
 	}
-	if port, problem := parseDebugPort(values[l.remoteDebugging]); problem == "" && port != utils.DefaultDebugPort {
+	// The values are kept while their option is off.
+	if port, problem := parsePort(values[l.remoteDebugging], "remote debugging"); problem == "" && port != utils.DefaultDebugPort {
 		opts.DebugPort = port
 	}
-	if env, problem := parseEnv(values[l.devMode]); problem == "" { // kept while dev mode is off
+	if env, problem := parseEnv(values[l.devMode]); problem == "" {
 		opts.Env = env
 	}
+	opts.Inspector = checked[l.inspector]
+	if port, problem := parsePort(values[l.inspector], "Node inspector"); problem == "" && port != utils.DefaultInspectorPort {
+		opts.InspectorPort = port
+	}
 	err := utils.UpdateSettings(func(s *utils.Settings) {
-		if !opts.RemoteDebugging && opts.DebugPort == 0 && !opts.DevMode && len(opts.Env) == 0 {
+		if !opts.RemoteDebugging && opts.DebugPort == 0 && !opts.DevMode && len(opts.Env) == 0 &&
+			!opts.Inspector && opts.InspectorPort == 0 {
 			delete(s.InstanceOptions, l.instance)
 			return
 		}
@@ -281,11 +313,11 @@ func (l launchOptions) save(checked []bool, values []string) {
 	}
 }
 
-// parseDebugPort reads a remote debugging port, or says why it isn't one.
-func parseDebugPort(text string) (int, string) {
+// parsePort reads a port for what (e.g. "remote debugging"), or says why it isn't one.
+func parsePort(text, what string) (int, string) {
 	port, err := strconv.Atoi(strings.TrimSpace(text))
 	if err != nil || port < 1024 || port > 65535 {
-		return 0, "The debugging port must be a number from 1024 to 65535."
+		return 0, fmt.Sprintf("The %s port must be a number from 1024 to 65535.", what)
 	}
 	return port, ""
 }
