@@ -439,6 +439,9 @@ func launchClaude(instance string, debug bool) error {
 			args = append(args, fmt.Sprintf("--inspect=%d", opts.NodeInspectorPort()))
 		}
 	}
+	if opts.DisableQUIC {
+		args = append(args, "--disable-quic")
+	}
 	cmd := exec.Command(claudePath, args...)
 	cmd.Dir = filepath.Dir(claudePath)
 	fmt.Printf("Launching Claude: %s\n", strings.Join(args, " "))

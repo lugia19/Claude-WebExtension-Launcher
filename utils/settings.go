@@ -47,6 +47,9 @@ type InstanceOptions struct {
 	// needs advanced debug mode (version.dll turns on the --inspect fuse only then).
 	Inspector     bool `json:"inspector,omitempty"`
 	InspectorPort int  `json:"inspectorPort,omitempty"` // 0: DefaultInspectorPort
+	// DisableQUIC keeps Chromium on HTTP/2 over TLS, which packet captures decode
+	// better than HTTP/3 over QUIC.
+	DisableQUIC bool `json:"disableQuic,omitempty"`
 }
 
 // Port is the remote debugging port to use.

@@ -222,15 +222,15 @@ const launchOptionsNote = "Debugging options take effect the next time Claude st
 // launchOptions are an instance's launch options on a settings screen (see
 // utils.InstanceOptions), as indexes into its Options. They're in its Advanced section.
 type launchOptions struct {
-	instance                            string // as launched
-	remoteDebugging, devMode, inspector int
+	instance                                         string // as launched
+	remoteDebugging, devMode, inspector, disableQUIC int
 }
 
 // addLaunchOptions adds instance's launch options to a settings screen's options.
 func addLaunchOptions(options *[]gui.SetupOption, instance string) launchOptions {
 	current := utils.LoadSettings().InstanceOptions[instance]
 	n := len(*options)
-	l := launchOptions{instance: instance, remoteDebugging: n, devMode: n + 1, inspector: n + 2}
+	l := launchOptions{instance: instance, remoteDebugging: n, devMode: n + 1, inspector: n + 2, disableQUIC: n + 3}
 	*options = append(*options,
 		gui.SetupOption{
 			Label:    "Allow remote debugging on port",
@@ -265,6 +265,12 @@ func addLaunchOptions(options *[]gui.SetupOption, instance string) launchOptions
 				Validate: func(text string) string { _, problem := parsePort(text, "Node inspector"); return problem },
 			},
 		},
+		gui.SetupOption{
+			Label:    "Disable QUIC",
+			Checked:  current.DisableQUIC,
+			Advanced: true,
+			Note:     "Uses HTTP/2 over TLS instead of HTTP/3, which Wireshark decodes and decompresses better.",
+		},
 	)
 	return l
 }
@@ -294,12 +300,13 @@ func (l launchOptions) save(checked []bool, values []string) {
 		opts.Env = env
 	}
 	opts.Inspector = checked[l.inspector]
+	opts.DisableQUIC = checked[l.disableQUIC]
 	if port, problem := parsePort(values[l.inspector], "Node inspector"); problem == "" && port != utils.DefaultInspectorPort {
 		opts.InspectorPort = port
 	}
 	err := utils.UpdateSettings(func(s *utils.Settings) {
 		if !opts.RemoteDebugging && opts.DebugPort == 0 && !opts.DevMode && len(opts.Env) == 0 &&
-			!opts.Inspector && opts.InspectorPort == 0 {
+			!opts.Inspector && opts.InspectorPort == 0 && !opts.DisableQUIC {
 			delete(s.InstanceOptions, l.instance)
 			return
 		}
