@@ -1,6 +1,7 @@
 package patcher
 
 import (
+	"bytes"
 	"claude-webext-patcher/asar"
 	"claude-webext-patcher/utils"
 	"embed"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -33,12 +35,15 @@ const (
 	// emulated amd64 launcher on ARM64 still provisions native arm64 Claude.
 	windowsMSIXRedirectURLFmt = "https://claude.ai/api/desktop/win32/%s/msix/latest/redirect"
 	appFolderName             = "app-latest"
-	PatchVersion              = "12"
+	PatchVersion              = "14"
 )
 
 type Patch struct {
 	Files   []string
 	Exclude []string
+	// All applies the patch to every matching file; otherwise it stops at the first
+	// file it changes.
+	All bool
 	// Func returns the (possibly modified) content and whether it actually
 	// changed anything. A false modified return means "not applicable to this
 	// file" — the caller keeps looking through the remaining matched files.
@@ -55,6 +60,13 @@ var supportedVersions = map[string][]Patch{
 			Files:   []string{".vite/build/index*.js"},
 			Exclude: []string{"index.pre", "wrapper"},
 			Func:    patchProtocolArray,
+		},
+		{
+			// index.pre.js holds the startup check, a chunk the runtime copy.
+			Files:   []string{".vite/build/*.js"},
+			Exclude: []string{"wrapper"},
+			All:     true,
+			Func:    patchDevModeGate,
 		},
 	},
 	// Add version-specific overrides here when needed
@@ -136,6 +148,62 @@ func patchProtocolArray(content []byte) ([]byte, bool) {
 	}
 
 	return content, false
+}
+
+// devModeGate is what patchDevModeGate inserts: the check passes when wrapper.js has
+// seen the launcher's --webext-dev-mode.
+const devModeGate = "if(globalThis.__webextDevMode)return!0;"
+
+// functionStart matches the start of a minified function with no parameters, up to its
+// opening brace.
+var functionStart = regexp.MustCompile(`function\s*[\w$]+\(\)\{`)
+
+// patchDevModeGate makes Claude's E2E token checks pass in developer mode. Each one is
+// a function that starts by reading process.env.CLAUDE_CDP_AUTH (a signed, short-lived
+// token for Anthropic's test harness), so it's found by that read rather than by its
+// minified name: the closest function start before the read, with nothing between
+// them but a variable declaration. Other uses of the variable (inline in a larger
+// function) aren't preceded by one and are left alone. All matches are patched, as the
+// check is duplicated across bundle files.
+func patchDevModeGate(content []byte) ([]byte, bool) {
+	const read = "process.env.CLAUDE_CDP_AUTH"
+	if !bytes.Contains(content, []byte(read)) {
+		return content, false // most bundle files: skip copying them to a string
+	}
+	s := string(content)
+	var out strings.Builder
+	last, count := 0, 0
+	for searchFrom := 0; ; {
+		idx := strings.Index(s[searchFrom:], read)
+		if idx == -1 {
+			break
+		}
+		idx += searchFrom
+		searchFrom = idx + len(read)
+
+		// Only the text shortly before the read can hold its function's start.
+		windowStart := max(last, idx-200)
+		starts := functionStart.FindAllStringIndex(s[windowStart:idx], -1)
+		if len(starts) == 0 {
+			continue
+		}
+		bodyStart := windowStart + starts[len(starts)-1][1]
+		// Also skips an already patched function: the gate has parentheses.
+		gap := s[bodyStart:idx]
+		if len(gap) > 80 || strings.ContainsAny(gap, "{}();") || strings.Contains(gap, "=>") {
+			continue
+		}
+		out.WriteString(s[last:bodyStart])
+		out.WriteString(devModeGate)
+		last = bodyStart
+		count++
+	}
+	if count == 0 {
+		return content, false
+	}
+	out.WriteString(s[last:])
+	fmt.Printf("Added the developer mode gate to %d function(s)\n", count)
+	return []byte(out.String()), true
 }
 
 // installWrapper copies the wrapper.js into the unpacked asar and redirects
@@ -361,10 +429,12 @@ func applyPatches(version string) error {
 	}
 
 	// Apply content patches (e.g. protocol array)
+	modifiedFiles := map[string]bool{}
 	for i, patch := range patches {
 		fmt.Printf("Applying content patch %d/%d...\n", i+1, len(patches))
 
 		patchApplied := false
+	files:
 		for _, filePattern := range patch.Files {
 			pattern := filepath.Join(tempDir, filePattern)
 			matches, err := filepath.Glob(pattern)
@@ -405,11 +475,10 @@ func applyPatches(version string) error {
 					continue
 				}
 				patchApplied = true
-				break
-			}
-
-			if patchApplied {
-				break
+				modifiedFiles[matchedFile] = true
+				if !patch.All {
+					break files
+				}
 			}
 		}
 
@@ -418,6 +487,8 @@ func applyPatches(version string) error {
 			debugPause()
 		}
 	}
+
+	removeCompileCache(tempDir, modifiedFiles)
 
 	// Backup original and repack
 	os.Rename(asarPath, asarPath+".backup")
@@ -436,6 +507,24 @@ func applyPatches(version string) error {
 
 	fmt.Println("Patches applied successfully!")
 	return nil
+}
+
+// removeCompileCache deletes the precompiled V8 code of the bundle files we changed.
+// Claude ships it as compile-cache/<file>.<arch>.jsc, next to .vite. V8 only checks it
+// against the source's length, so after a patch that kept a file's length it would run
+// the unpatched code; otherwise it's rejected on every start, which only costs time.
+func removeCompileCache(asarRoot string, modified map[string]bool) {
+	for file := range modified {
+		// Bundle file names are hashes of [A-Za-z0-9_-], so nothing to escape.
+		caches, _ := filepath.Glob(filepath.Join(asarRoot, "compile-cache", filepath.Base(file)+".*.jsc"))
+		for _, cache := range caches {
+			if err := os.Remove(cache); err != nil {
+				fmt.Printf("Warning: could not remove %s: %v\n", cache, err)
+				continue
+			}
+			fmt.Printf("Removed compile-cache/%s\n", filepath.Base(cache))
+		}
+	}
 }
 
 func replaceIcons() error {

@@ -13,10 +13,15 @@ type Setup struct {
 	Title    string
 	Subtitle []string // one text line each
 	Options  []SetupOption
-	// Apply receives the final checkbox states (in Options order) once the screen is
-	// confirmed. It runs on a background goroutine: for the first-run setup, before the
-	// launcher's work starts.
-	Apply func(checked []bool)
+	// Apply receives the final checkbox states and entry values (both in Options order;
+	// "" for an option without an entry) once the screen is confirmed. It runs on a
+	// background goroutine: for the first-run setup, before the launcher's work starts.
+	Apply func(checked []bool, values []string)
+	// Validate, if set, checks the options together once each entry is valid, and
+	// returns why they can't be saved, or "". It runs on the UI thread.
+	Validate func(checked []bool, values []string) string
+	// AdvancedWarning heads the Advanced section (see SetupOption.Advanced), in red.
+	AdvancedWarning string
 	// Extra are more buttons, after the others.
 	Extra []SetupButton
 }
@@ -32,6 +37,25 @@ type SetupButton struct {
 type SetupOption struct {
 	Label   string
 	Checked bool // initial state
+	Note    string // optional dim text under the checkbox
+	// Entry is an optional text field for a value that goes with the checkbox (e.g. a
+	// port). It's only editable, and only validated, while checked.
+	Entry *SetupEntry
+	// Advanced options are grouped at the end, in a section that starts collapsed
+	// unless one of them is checked.
+	Advanced bool
+}
+
+// SetupEntry is a SetupOption's text field: a short one after the checkbox, or with
+// Lines, a multi-line one under it.
+type SetupEntry struct {
+	Value       string // initial text
+	Width       float32
+	Lines       int    // more than 0: multi-line, this many lines tall, full width
+	Placeholder string
+	// Validate returns why the text isn't acceptable, or "" if it is. It runs on the
+	// UI thread.
+	Validate func(text string) string
 }
 
 // heading is a screen's title.
@@ -66,31 +90,93 @@ func primaryButton(label string, icon fyne.Resource, onClick func()) fyne.Canvas
 }
 
 // buildSetup returns a setup screen: the checkboxes, a confirm button that hands the
-// final states to onConfirm, a Back button if onCancel isn't nil, and setup.Extra.
-// They all run in the click handler, on the UI thread; onConfirm must switch screens.
-func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked []bool), onCancel func()) fyne.CanvasObject {
+// final states and entry values to onConfirm, a Back button if onCancel isn't nil, and
+// setup.Extra. They all run in the click handler, on the UI thread; onConfirm must
+// switch screens. The options scroll if they don't fit; Advanced ones are in their own
+// collapsible section, under setup.AdvancedWarning.
+func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked []bool, values []string), onCancel func()) fyne.CanvasObject {
 	content := container.NewVBox(heading(setup.Title))
 	for _, line := range setup.Subtitle {
 		content.Add(dim(line))
 	}
+	options := container.NewVBox()
 	checks := make([]*widget.Check, len(setup.Options))
+	entries := make([]*widget.Entry, len(setup.Options))
+	errs := errorLabel()
+	advanced, openAdvanced := container.NewVBox(), false
+	if setup.AdvancedWarning != "" {
+		warning := errorLabel()
+		warning.SetText(setup.AdvancedWarning)
+		advanced.Add(warning)
+	}
+	hasAdvanced := false
 	for i, opt := range setup.Options {
+		box := options
+		if opt.Advanced {
+			box = advanced
+			hasAdvanced = true
+			openAdvanced = openAdvanced || opt.Checked
+		}
 		checks[i] = widget.NewCheck(opt.Label, nil)
 		checks[i].SetChecked(opt.Checked)
-		content.Add(noFocusRing(checks[i]))
+		// The checkbox's row (with a short entry after it), its note, then a multi-line
+		// entry under them.
+		row := noFocusRing(checks[i])
+		var below fyne.CanvasObject
+		if opt.Entry != nil {
+			entries[i] = setupEntry(opt, checks[i], errs)
+			if opt.Entry.Lines > 0 {
+				below = entries[i]
+			} else {
+				field := container.NewGridWrap(fyne.NewSize(opt.Entry.Width, entries[i].MinSize().Height), entries[i])
+				row = container.NewHBox(row, field)
+			}
+		}
+		box.Add(row)
+		if opt.Note != "" {
+			box.Add(dim(opt.Note))
+		}
+		if below != nil {
+			box.Add(below)
+		}
 	}
+	if hasAdvanced {
+		section := widget.NewAccordion(widget.NewAccordionItem("Advanced", advanced))
+		if openAdvanced {
+			section.Open(0)
+		}
+		options.Add(section)
+	}
+	options.Add(errs)
 
 	sent := false // a quick double click can arrive before the screen has switched
 	buttons := container.NewHBox(primaryButton(confirm, nil, func() {
 		if sent {
 			return
 		}
-		sent = true
 		checked := make([]bool, len(checks))
+		values := make([]string, len(checks))
 		for i, c := range checks {
 			checked[i] = c.Checked
+			if entries[i] == nil {
+				continue
+			}
+			values[i] = entries[i].Text
+			if validate := setup.Options[i].Entry.Validate; c.Checked && validate != nil {
+				if problem := validate(values[i]); problem != "" {
+					errs.SetText(problem)
+					return
+				}
+			}
 		}
-		onConfirm(checked)
+		if setup.Validate != nil {
+			if problem := setup.Validate(checked, values); problem != "" {
+				errs.SetText(problem)
+				return
+			}
+		}
+		sent = true
+		onConfirm(checked, values)
 	}))
 	if onCancel != nil {
 		buttons.Add(widget.NewButton("Back", onCancel))
@@ -110,5 +196,30 @@ func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked
 		})
 		buttons.Add(b)
 	}
-	return screen(container.NewBorder(content, buttons, nil, nil))
+	return screen(container.NewBorder(content, buttons, nil, nil, container.NewVScroll(options)))
+}
+
+// setupEntry makes opt's entry, editable while check is checked; errs is the screen's
+// error, cleared when either changes.
+func setupEntry(opt SetupOption, check *widget.Check, errs *widget.Label) *widget.Entry {
+	entry := widget.NewEntry()
+	if opt.Entry.Lines > 0 {
+		entry = widget.NewMultiLineEntry()
+		entry.SetMinRowsVisible(opt.Entry.Lines)
+	}
+	entry.SetPlaceHolder(opt.Entry.Placeholder)
+	entry.SetText(opt.Entry.Value)
+	entry.OnChanged = func(string) { errs.SetText("") }
+	if !opt.Checked {
+		entry.Disable()
+	}
+	check.OnChanged = func(on bool) {
+		if on {
+			entry.Enable()
+		} else {
+			entry.Disable()
+			errs.SetText("")
+		}
+	}
+	return entry
 }

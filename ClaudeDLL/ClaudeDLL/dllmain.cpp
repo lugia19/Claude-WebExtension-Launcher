@@ -106,32 +106,42 @@ static BOOL ComputeAsarHeaderHash(const char* asarPath, char* hexHash) {
     return success;
 }
 
+// FindInExe returns the address just past sentinel in this process's copy of the exe,
+// where at least trailing more bytes follow it, or NULL.
+static BYTE* FindInExe(const char* sentinel, size_t trailing) {
+    MODULEINFO modInfo;
+    if (!GetModuleInformation(GetCurrentProcess(), GetModuleHandle(NULL), &modInfo, sizeof(modInfo))) {
+        Log("Failed to get module info");
+        return NULL;
+    }
+    BYTE* base = (BYTE*)modInfo.lpBaseOfDll;
+    size_t size = modInfo.SizeOfImage, sentinelLen = strlen(sentinel);
+    for (size_t i = 0; i + sentinelLen + trailing <= size; i++) {
+        if (memcmp(base + i, sentinel, sentinelLen) == 0) {
+            return base + i + sentinelLen;
+        }
+    }
+    return NULL;
+}
+
+// WriteExe copies n bytes from src over at, in this process's copy of the exe.
+static BOOL WriteExe(void* at, const void* src, size_t n) {
+    // Execute too, in case the bytes share a page with code.
+    DWORD oldProtect;
+    if (!VirtualProtect(at, n, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+        Log("VirtualProtect failed");
+        return FALSE;
+    }
+    memcpy(at, src, n);
+    VirtualProtect(at, n, oldProtect, &oldProtect);
+    return TRUE;
+}
+
 static void PatchHash(HMODULE hDll) {
     Log("PatchHash started");
 
-    // Get exe module info
-    HMODULE hExe = GetModuleHandle(NULL);
-    MODULEINFO modInfo;
-    if (!GetModuleInformation(GetCurrentProcess(), hExe, &modInfo, sizeof(modInfo))) {
-        Log("Failed to get module info");
-        return;
-    }
-
-    BYTE* base = (BYTE*)modInfo.lpBaseOfDll;
-    DWORD size = modInfo.SizeOfImage;
-
     // Find the expected hash in process memory
-    const char* sentinel = "\"alg\":\"SHA256\",\"value\":\"";
-    size_t sentinelLen = strlen(sentinel);
-    char* hashLocation = NULL;
-
-    for (DWORD i = 0; i < size - sentinelLen - 64; i++) {
-        if (memcmp(base + i, sentinel, sentinelLen) == 0) {
-            hashLocation = (char*)(base + i + sentinelLen);
-            break;
-        }
-    }
-
+    char* hashLocation = (char*)FindInExe("\"alg\":\"SHA256\",\"value\":\"", 64);
     if (!hashLocation) {
         Log("Could not find expected hash in exe memory");
         return;
@@ -177,16 +187,58 @@ static void PatchHash(HMODULE hDll) {
 
     // Patch the expected hash in memory with the actual hash
     Log("Hashes differ, patching...");
-    DWORD oldProtect;
-    VirtualProtect(hashLocation, 64, PAGE_READWRITE, &oldProtect);
-    memcpy(hashLocation, actualHash, 64);
-    VirtualProtect(hashLocation, 64, oldProtect, &oldProtect);
-    Log("Patch applied successfully");
+    if (WriteExe(hashLocation, actualHash, 64)) {
+        Log("Patch applied successfully");
+    }
+}
+
+// EnableNodeCliInspectArguments's index in Electron's fuse wire (see @electron/fuses).
+#define FUSE_NODE_CLI_INSPECT 3
+
+// EnableInspectFuse turns on the fuse that lets --inspect start Node's inspector in the
+// main process, in this process's copy of the exe, for the launcher's advanced debug
+// mode (the --webext-dev-mode marker; see wrapper.js). The file isn't changed. Other
+// processes, which don't have the marker, keep the fuse as shipped. (NODE_OPTIONS stays
+// off: Electron ignores most of it in a packaged app anyway.)
+static void EnableInspectFuse() {
+    if (!wcsstr(GetCommandLineW(), L" --webext-dev-mode")) {
+        return;
+    }
+    Log("Advanced debug mode: enabling the --inspect fuse");
+
+    // The wire: the sentinel, a version byte, a length byte, then one byte per fuse:
+    // '0' disabled, '1' enabled, 'r' removed.
+    BYTE* wire = FindInExe("dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX", 2 + FUSE_NODE_CLI_INSPECT + 1);
+    if (!wire) {
+        Log("Could not find the fuse wire in exe memory");
+        return;
+    }
+
+    BYTE version = wire[0], length = wire[1];
+    BYTE* fuses = wire + 2;
+    char buf[128];
+    sprintf(buf, "Fuse wire version %u, %u fuses: %.*s", version, length, (int)length, (const char*)fuses);
+    Log(buf);
+    if (version != 1 || length <= FUSE_NODE_CLI_INSPECT) {
+        Log("Unknown fuse wire layout, leaving it alone");
+        return;
+    }
+
+    if (fuses[FUSE_NODE_CLI_INSPECT] != '0') {
+        Log("The --inspect fuse isn't off, leaving it alone");
+        return;
+    }
+    if (!WriteExe(fuses + FUSE_NODE_CLI_INSPECT, "1", 1)) {
+        return;
+    }
+    sprintf(buf, "Fuses now: %.*s", (int)length, (const char*)fuses);
+    Log(buf);
 }
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved) {
     if (ul_reason_for_call == DLL_PROCESS_ATTACH) {
         PatchHash(hModule);
+        EnableInspectFuse();
     }
     return TRUE;
 }

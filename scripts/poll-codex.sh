@@ -4,7 +4,7 @@
 # Usage:
 #   scripts/poll-codex.sh <pr-number> [--trigger|--read] [--message=...] [owner/repo]
 #
-# --trigger  Post @codex review, retry if no eyes ack within ACK_TIMEOUT. Then poll.
+# --trigger  Post @codex review, retry if no new eyes/current-head summary ack. Then poll.
 # --read     Snapshot current state (approved? comments?) and exit immediately.
 # (no flag)  Watch for eyes ack; exit after NO_TRIGGER_MAX_POLLS cycles if none seen.
 #
@@ -114,6 +114,23 @@ has_new_reaction() {
   comm -23 <(printf '%s\n' "$current_sorted") <(printf '%s\n' "$baseline_sorted") | grep -q .
 }
 
+# A retained eyes reaction doesn't show that a new pass started, but the bot's review summary
+# comment does: its Code Review row reads Running with the current head's SHA.
+current_review_running() {
+  local running
+  running=$(gh pr view "$PR" --repo "$REPO" --json headRefOid,comments --jq '
+    .headRefOid as $head
+    | [.comments[]
+       | select(.author.login == "chatgpt-codex-connector" or .author.login == "chatgpt-codex-connector[bot]")
+       | select(.body | contains("<!-- codex-pull-request-review-summary -->"))]
+    | (last // {body: ""}).body
+    | split("\n")[]
+    | select(contains("**Code Review**") and contains("🔄 **Running**"))
+    | (capture("`(?<sha>[0-9a-f]{7,40})`") // {sha: ""}).sha as $sha
+    | select($sha != "" and ($head | startswith($sha)))' 2>/dev/null) || return 1
+  [ -n "$running" ]
+}
+
 post_review_comment() {
   local body="@codex review"
   if [ -n "$MESSAGE" ]; then body="@codex review ${MESSAGE}"; fi
@@ -149,6 +166,9 @@ if [ "$TRIGGER" = "true" ]; then
   attempt=0
   acked="false"
   triggered="false"
+  if [ -n "$BASELINE_EYES" ]; then
+    echo "progress=eyes already present; checking current-head review summary"
+  fi
 
   while [ "$attempt" -le "$ACK_MAX_RETRIES" ]; do
     if [ "$attempt" -eq 0 ]; then
@@ -165,6 +185,10 @@ if [ "$TRIGGER" = "true" ]; then
         acked="true"
         echo "ack=eyes after=${waited}s"
         break 2
+      elif current_review_running; then
+        acked="true"
+        echo "ack=current_head_review_running after=${waited}s"
+        break 2
       fi
       sleep 5
       waited=$((waited + 5))
@@ -173,7 +197,7 @@ if [ "$TRIGGER" = "true" ]; then
   done
 
   if [ "$acked" != "true" ]; then
-    echo "warn=no_ack_after_retries proceeding_anyway"
+    echo "warn=no_current_head_ack_after_retries proceeding_anyway"
   fi
 elif [ -n "$BASELINE_EYES" ]; then
   echo "ack=eyes already present, polling"

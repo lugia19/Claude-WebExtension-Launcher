@@ -31,3 +31,14 @@ func TestSettingsRoundTrip(t *testing.T) {
 		t.Fatalf("UpdateSettings result = %+v", got)
 	}
 }
+
+func TestInstanceOptionsIsZero(t *testing.T) {
+	if !(InstanceOptions{}).IsZero() {
+		t.Error("the zero InstanceOptions isn't zero")
+	}
+	for _, o := range []InstanceOptions{{DisableQUIC: true}, {InspectorPort: 9230}, {Env: []string{"A=b"}}} {
+		if o.IsZero() {
+			t.Errorf("%+v is zero", o)
+		}
+	}
+}

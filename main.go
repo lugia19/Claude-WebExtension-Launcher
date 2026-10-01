@@ -18,7 +18,7 @@ import (
 )
 
 // Version is the current version of the application
-const Version = "4.1.0"
+const Version = "4.2.0"
 
 // The main instance is the one used when --instance is not given. Only it shares
 // Cowork/Code sessions with the official install; other instances stay isolated (see
@@ -336,6 +336,13 @@ func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg strin
 	if o.debug {
 		args = append(args, "--debug")
 	}
+	// What the worker was asked to do has started from here on, though it only reports
+	// once it's running.
+	for row, asked := range map[string]bool{rowPatch: update.Needed, rowExtensions: needExtensions, rowCowork: needCowork} {
+		if asked {
+			ui.SetRow(row, status.Running, "", workerStartingNote)
+		}
+	}
 	res := followWorker(args)
 
 	switch {
@@ -423,9 +430,33 @@ func clearCaches(instance string) {
 
 func launchClaude(instance string, debug bool) error {
 	claudePath := claudeExecutablePath()
-	cmd := exec.Command(claudePath, "--instance="+instance)
+	args := []string{"--instance=" + instance}
+	// The --webext-* markers tell wrapper.js these came from us (see its comments).
+	opts := utils.LoadSettings().InstanceOptions[launchOptionsKey(instance)]
+	if opts.RemoteDebugging {
+		args = append(args, "--webext-remote-debugging", fmt.Sprintf("--remote-debugging-port=%d", opts.Port()))
+	}
+	if opts.DevMode {
+		args = append(args, "--webext-dev-mode")
+		if opts.Inspector && nodeInspectorSupported {
+			args = append(args, fmt.Sprintf("--inspect=%d", opts.NodeInspectorPort()))
+		}
+	}
+	if opts.DisableQUIC {
+		args = append(args, "--disable-quic")
+	}
+	cmd := exec.Command(claudePath, args...)
 	cmd.Dir = filepath.Dir(claudePath)
-	fmt.Printf("Launching Claude (instance %q).\n", instance)
+	fmt.Printf("Launching Claude: %s\n", strings.Join(args, " "))
+	if opts.DevMode && len(opts.Env) > 0 {
+		cmd.Env = append(os.Environ(), opts.Env...) // later entries win
+		// Names only: values can be secrets, and the log is kept.
+		names := make([]string, len(opts.Env))
+		for i, kv := range opts.Env {
+			names[i], _, _ = strings.Cut(kv, "=")
+		}
+		fmt.Printf("With environment variables: %s\n", strings.Join(names, ", "))
+	}
 
 	if debug {
 		// Run Claude in this terminal to see its output.
@@ -481,6 +512,12 @@ func launcherSettings(title string, subtitle []string) *gui.Setup {
 	}
 	startup := add("Start when I log in", hasStartup(launcherEntry))
 	manage := add("Manage multiple instances (separate logins and data)", settings.ManageInstances)
+	// Without the list, the main instance's launch options (which the list has in its
+	// own settings) are here. Not on the first run, which is kept to the basics.
+	var launch *launchOptions
+	if settings.SetupDone && !settings.ManageInstances {
+		launch = addLaunchOptions(&options, mainInstance)
+	}
 	var extra []gui.SetupButton
 	if settings.SetupDone { // not on the very first run: there's nothing to uninstall yet
 		extra = append(extra, gui.SetupButton{Label: "Uninstall…", OnClick: startUninstall, CloseWindow: true})
@@ -488,10 +525,15 @@ func launcherSettings(title string, subtitle []string) *gui.Setup {
 	return &gui.Setup{
 		Title:    title,
 		Subtitle: subtitle,
-		Options:  options,
-		Extra:    extra,
-		Apply: func(checked []bool) {
+		Options:         options,
+		Validate:        launch.validate, // nil-safe: no launch options here then
+		AdvancedWarning: launchOptionsWarning,
+		Extra:           extra,
+		Apply: func(checked []bool, values []string) {
 			applyShortcuts(launcherEntry, menu >= 0 && checked[menu], checked[startup])
+			if launch != nil {
+				launch.save(checked, values)
+			}
 			err := utils.UpdateSettings(func(s *utils.Settings) {
 				s.SetupDone = true
 				s.ManageInstances = checked[manage]

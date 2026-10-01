@@ -219,11 +219,11 @@ func (w *window) showSettings(inst Instance) {
 	if setup == nil {
 		return
 	}
-	w.win.SetContent(w.buildSetup(setup, "Save", func(checked []bool) {
+	w.win.SetContent(w.buildSetup(setup, "Save", func(checked []bool, values []string) {
 		w.setNote(inst.Name, "Saving settings…")
 		w.showList()
 		w.background(func() {
-			setup.Apply(checked)
+			setup.Apply(checked, values)
 			w.setNote(inst.Name, "Settings saved")
 		})
 	}, w.showList))
@@ -233,8 +233,8 @@ func (w *window) showSettings(inst Instance) {
 // and applies them in the background.
 func (w *window) showLauncherSettings() {
 	setup := w.inst.LauncherSettings()
-	w.win.SetContent(w.buildSetup(setup, "Save", func(checked []bool) {
+	w.win.SetContent(w.buildSetup(setup, "Save", func(checked []bool, values []string) {
 		w.showList()
-		w.background(func() { setup.Apply(checked) })
+		w.background(func() { setup.Apply(checked, values) })
 	}, w.showList))
 }

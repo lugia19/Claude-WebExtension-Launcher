@@ -146,6 +146,7 @@ func deleteInstance(name string) error {
 			}
 		}
 		s.Instances = kept
+		delete(s.InstanceOptions, name)
 	})
 }
 
@@ -195,15 +196,20 @@ func launchable(name string) string {
 // instanceSettings is an instance's settings screen: its own menu and startup entries,
 // which launch it directly.
 func instanceSettings(name string) *gui.Setup {
+	options := []gui.SetupOption{
+		{Label: "Add to the applications menu", Checked: hasMenuEntry(name)},
+		{Label: "Start when I log in", Checked: hasStartup(name)},
+	}
+	launch := addLaunchOptions(&options, launchable(name))
 	return &gui.Setup{
-		Title:    "Settings for " + name,
-		Subtitle: []string{"Shortcuts that launch this instance directly, without the list."},
-		Options: []gui.SetupOption{
-			{Label: "Add to the applications menu", Checked: hasMenuEntry(name)},
-			{Label: "Start when I log in", Checked: hasStartup(name)},
-		},
-		Apply: func(checked []bool) {
+		Title:           "Settings for " + name,
+		Subtitle:        []string{"Shortcuts that launch this instance directly, without the list."},
+		AdvancedWarning: launchOptionsWarning,
+		Options:         options,
+		Validate:        launch.validate,
+		Apply: func(checked []bool, values []string) {
 			applyShortcuts(name, checked[0], checked[1])
+			launch.save(checked, values)
 		},
 	}
 }

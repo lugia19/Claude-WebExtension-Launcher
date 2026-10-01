@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -22,6 +23,56 @@ type Settings struct {
 	Instances []string `json:"instances,omitempty"`
 	// InstancesImported: existing instance data folders were added to Instances once.
 	InstancesImported bool `json:"instancesImported,omitempty"`
+	// InstanceOptions are how each instance is launched, by the name it's launched with.
+	InstanceOptions map[string]InstanceOptions `json:"instanceOptions,omitempty"`
+}
+
+// The remote debugging and Node inspector ports when none was chosen.
+const (
+	DefaultDebugPort     = 9222
+	DefaultInspectorPort = 9229
+)
+
+// InstanceOptions are an instance's launch options.
+type InstanceOptions struct {
+	// RemoteDebugging opens Chromium's remote debugging port (DebugPort).
+	RemoteDebugging bool `json:"remoteDebugging,omitempty"`
+	DebugPort       int  `json:"debugPort,omitempty"` // 0: DefaultDebugPort
+	// DevMode (advanced debug mode) makes Claude's checks for Anthropic's test harness
+	// pass, which turns on its internal test features.
+	DevMode bool `json:"devMode,omitempty"`
+	// Env are KEY=value environment variables for Claude, set in advanced debug mode
+	// (most of its features are configured through them).
+	Env []string `json:"env,omitempty"`
+	// Inspector starts Node's inspector in Claude's main process, on InspectorPort. It
+	// needs advanced debug mode (version.dll turns on the --inspect fuse only then).
+	Inspector     bool `json:"inspector,omitempty"`
+	InspectorPort int  `json:"inspectorPort,omitempty"` // 0: DefaultInspectorPort
+	// DisableQUIC keeps Chromium on HTTP/2 over TLS, which packet captures decode
+	// better than HTTP/3 over QUIC.
+	DisableQUIC bool `json:"disableQuic,omitempty"`
+}
+
+// Port is the remote debugging port to use.
+func (o InstanceOptions) Port() int {
+	if o.DebugPort == 0 {
+		return DefaultDebugPort
+	}
+	return o.DebugPort
+}
+
+// IsZero reports whether o is all defaults, with nothing worth storing. (An empty but
+// non-nil Env counts as set.)
+func (o InstanceOptions) IsZero() bool {
+	return reflect.ValueOf(o).IsZero()
+}
+
+// NodeInspectorPort is the Node inspector port to use.
+func (o InstanceOptions) NodeInspectorPort() int {
+	if o.InspectorPort == 0 {
+		return DefaultInspectorPort
+	}
+	return o.InspectorPort
 }
 
 // settingsMu serializes UpdateSettings within this process (the setup screen and the
@@ -53,7 +104,9 @@ func SaveSettings(s Settings) error {
 		return err
 	}
 	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	// Owner-only: the launch options' environment variables can hold secrets. Being
+	// renamed over the old file, this also tightens one written before.
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return err
 	}
 	// On Windows the rename fails while another process has the file open (reading
