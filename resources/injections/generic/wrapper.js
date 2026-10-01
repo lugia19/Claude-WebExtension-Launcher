@@ -339,6 +339,107 @@ app.on("web-contents-created", (event, contents) => {
 });
 
 // ================================================================
+// Tray menu — instance name, and 5-hour and weekly usage
+// ================================================================
+// Claude's tray menu is: Show App, separator, its usage rows ("<tier> plan" and
+// "Usage: X%", the highest of all limits), separator, Exit; without usage rows it's just
+// Show App, separator, Exit. Every menu it gives the tray is rebuilt with those rows
+// replaced by the instance name and the 5-hour and weekly percentages. The rows are found
+// by position, so it works in every language; anything unexpected leaves Claude's menu as
+// it is. The percentages come from Claude's own usage requests (net.fetch to
+// /api/organizations/<org>/usage), read from a copy of each response.
+(() => {
+    const { Menu, Tray, net } = require("electron");
+    if (typeof Tray?.prototype?.setContextMenu !== "function" || typeof net?.fetch !== "function") {
+        return;
+    }
+    const usageURL = /\/api\/organizations\/[^/?]+\/usage(?:\?|$)/;
+    const usage = { fiveHour: null, weekly: null };
+
+    const fetch = net.fetch;
+    net.fetch = function (input, ...rest) {
+        const result = fetch.call(this, input, ...rest);
+        const url = typeof input === "string" ? input : input?.url;
+        if (typeof url === "string" && usageURL.test(url)) {
+            result.then(response => {
+                if (!response.ok) return;
+                return response.clone().json().then(data => {
+                    usage.fiveHour = data?.five_hour?.utilization ?? null;
+                    usage.weekly = data?.seven_day?.utilization ?? null;
+                    refresh(); // Claude may have rebuilt its menu before this was read
+                });
+            }).catch(() => {});
+        }
+        return result;
+    };
+
+    const percent = value => typeof value === "number" ? Math.round(value) + "%" : "–";
+    // The legacy main instance name is still the main instance.
+    const shownName = instanceName === "modified" ? "Main" : instanceName;
+
+    // copyItem turns a built MenuItem back into a template (keeping its click handler).
+    function copyItem(item) {
+        const template = {};
+        for (const key of ["id", "label", "sublabel", "toolTip", "type", "role", "enabled", "visible",
+                           "checked", "accelerator", "icon", "click"]) {
+            if (item[key] !== undefined && item[key] !== null) template[key] = item[key];
+        }
+        if (item.submenu) template.submenu = item.submenu;
+        return template;
+    }
+
+    // rebuild returns Claude's menu with its usage rows replaced, or it unchanged.
+    function rebuild(menu) {
+        try {
+            const items = menu.items;
+            const separators = [];
+            items.forEach((item, i) => item.type === "separator" && separators.push(i));
+            if (separators.length === 0) return menu;
+            const first = separators[0], last = separators[separators.length - 1];
+            const hadUsage = last > first + 1; // rows between two separators
+            const disabled = label => ({ label, enabled: false });
+            const lines = [
+                disabled("Instance: " + shownName),
+                disabled("5h: " + (hadUsage ? percent(usage.fiveHour) : "–")),
+                disabled("Weekly: " + (hadUsage ? percent(usage.weekly) : "–")),
+            ];
+            const template = [
+                ...items.slice(0, first + 1).map(copyItem),
+                ...lines,
+                { type: "separator" },
+                ...items.slice((hadUsage ? last : first) + 1).map(copyItem),
+            ];
+            return Menu.buildFromTemplate(template);
+        } catch (e) {
+            console.error("[webext] Couldn't rebuild the tray menu:", e);
+            return menu;
+        }
+    }
+
+    let lastTray = null, lastMenu = null;
+    const setContextMenu = Tray.prototype.setContextMenu;
+    Tray.prototype.setContextMenu = function (menu) {
+        lastTray = this;
+        lastMenu = menu;
+        return setContextMenu.call(this, menu ? rebuild(menu) : menu);
+    };
+    const popUpContextMenu = Tray.prototype.popUpContextMenu;
+    if (typeof popUpContextMenu === "function") {
+        Tray.prototype.popUpContextMenu = function (menu, ...rest) {
+            return popUpContextMenu.call(this, menu ? rebuild(menu) : menu, ...rest);
+        };
+    }
+
+    // refresh re-applies Claude's last menu with the current numbers.
+    function refresh() {
+        if (lastTray && lastMenu && !lastTray.isDestroyed()) {
+            setContextMenu.call(lastTray, rebuild(lastMenu));
+        }
+    }
+    console.log("[webext] Tray menu: instance name and usage lines");
+})();
+
+// ================================================================
 // Boot the original app
 // ================================================================
 require("./index.pre.js");
