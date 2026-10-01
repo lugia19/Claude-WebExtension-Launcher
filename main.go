@@ -336,6 +336,10 @@ func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg strin
 	if o.debug {
 		args = append(args, "--debug")
 	}
+	if update.Needed {
+		// Started from here on, though the worker only reports once it's running.
+		ui.SetRow(rowPatch, status.Running, "", workerStartingNote)
+	}
 	res := followWorker(args)
 
 	switch {

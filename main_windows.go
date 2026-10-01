@@ -20,6 +20,9 @@ const (
 	patchLockName = `Local\ClaudeWebExtLauncher-Patch`
 	// patchLockTimeout is generous: a real update downloads the ~222 MB MSIX.
 	patchLockTimeout = 5 * time.Minute
+	// workerStartingNote is the Patching row's note until the worker reports: it's
+	// started through UAC.
+	workerStartingNote = "waiting for permission"
 )
 
 // platformSetup cleans up files older launcher versions left next to the executable:

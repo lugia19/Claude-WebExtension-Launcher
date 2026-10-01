@@ -256,9 +256,12 @@ func (s *Status) build() fyne.CanvasObject {
 		}
 		r.spinner.Hide()
 		r.note.Importance = widget.LowImportance
+		// The note gets the rest of the line, cut short if it doesn't fit: it can be a
+		// whole error message, which would otherwise widen the window (the log has it).
+		r.note.Truncation = fyne.TextTruncateEllipsis
 		s.rows[row.ID] = r
 		iconSlot := container.NewGridWrap(fyne.NewSquareSize(20), container.NewStack(r.icon, r.spinner))
-		list.Add(container.NewHBox(container.NewCenter(iconSlot), r.label, r.note))
+		list.Add(container.NewBorder(nil, nil, container.NewHBox(container.NewCenter(iconSlot), r.label), nil, r.note))
 		if row.Download {
 			s.downloadNote = r.note
 			list.Add(s.progress)
