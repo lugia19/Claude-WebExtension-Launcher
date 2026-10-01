@@ -25,10 +25,15 @@ func launchOptionsKey(instance string) string {
 }
 
 // launchOptions are an instance's launch options (utils.InstanceOptions) on a settings
-// screen: their indexes in its Options.
+// screen: their indexes in its Options, -1 for one this platform doesn't have.
 type launchOptions struct {
 	key                                              string // see launchOptionsKey
 	remoteDebugging, inspector, disableQUIC, devMode int
+}
+
+// on reports whether option i is there and checked.
+func on(checked []bool, i int) bool {
+	return i >= 0 && checked[i]
 }
 
 // addLaunchOptions adds instance's launch options to a settings screen's options, in
@@ -51,16 +56,19 @@ func addLaunchOptions(options *[]gui.SetupOption, instance string) *launchOption
 			Validate: func(text string) string { _, problem := parsePort(text, "remote debugging"); return problem },
 		},
 	})
-	l.inspector = add(gui.SetupOption{
-		Label:   "Node inspector on port",
-		Checked: current.Inspector,
-		Note:    "Debugs Claude's main process (e.g. from chrome://inspect). Needs advanced debug mode.",
-		Entry: &gui.SetupEntry{
-			Value:    strconv.Itoa(current.NodeInspectorPort()),
-			Width:    80,
-			Validate: func(text string) string { _, problem := parsePort(text, "Node inspector"); return problem },
-		},
-	})
+	l.inspector = -1
+	if nodeInspectorSupported {
+		l.inspector = add(gui.SetupOption{
+			Label:   "Node inspector on port",
+			Checked: current.Inspector,
+			Note:    "Debugs Claude's main process (e.g. from chrome://inspect). Needs advanced debug mode.",
+			Entry: &gui.SetupEntry{
+				Value:    strconv.Itoa(current.NodeInspectorPort()),
+				Width:    80,
+				Validate: func(text string) string { _, problem := parsePort(text, "Node inspector"); return problem },
+			},
+		})
+	}
 	l.disableQUIC = add(gui.SetupOption{
 		Label:   "Disable QUIC",
 		Checked: current.DisableQUIC,
@@ -88,10 +96,10 @@ func (l *launchOptions) validate(checked []bool, values []string) string {
 	if l == nil {
 		return ""
 	}
-	if checked[l.inspector] && !checked[l.devMode] {
+	if on(checked, l.inspector) && !checked[l.devMode] {
 		return "The Node inspector needs advanced debug mode."
 	}
-	if checked[l.remoteDebugging] && checked[l.inspector] {
+	if checked[l.remoteDebugging] && on(checked, l.inspector) {
 		// Both entries are valid ports by now.
 		debug, _ := parsePort(values[l.remoteDebugging], "remote debugging")
 		inspector, _ := parsePort(values[l.inspector], "Node inspector")
@@ -107,15 +115,17 @@ func (l *launchOptions) validate(checked []bool, values []string) string {
 func (l *launchOptions) save(checked []bool, values []string) {
 	opts := utils.InstanceOptions{
 		RemoteDebugging: checked[l.remoteDebugging],
-		Inspector:       checked[l.inspector],
+		Inspector:       on(checked, l.inspector),
 		DisableQUIC:     checked[l.disableQUIC],
 		DevMode:         checked[l.devMode],
 	}
 	if port, problem := parsePort(values[l.remoteDebugging], "remote debugging"); problem == "" && port != utils.DefaultDebugPort {
 		opts.DebugPort = port
 	}
-	if port, problem := parsePort(values[l.inspector], "Node inspector"); problem == "" && port != utils.DefaultInspectorPort {
-		opts.InspectorPort = port
+	if l.inspector >= 0 {
+		if port, problem := parsePort(values[l.inspector], "Node inspector"); problem == "" && port != utils.DefaultInspectorPort {
+			opts.InspectorPort = port
+		}
 	}
 	if env, problem := parseEnv(values[l.devMode]); problem == "" {
 		opts.Env = env

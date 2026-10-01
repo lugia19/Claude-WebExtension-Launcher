@@ -23,6 +23,9 @@ const (
 	// workerStartingNote is a row's note until the worker reports on it: it's
 	// started through UAC.
 	workerStartingNote = "waiting for permission"
+	// nodeInspectorSupported: version.dll turns on Electron's --inspect fuse for the
+	// launch options' Node inspector.
+	nodeInspectorSupported = true
 )
 
 // platformSetup cleans up files older launcher versions left next to the executable:

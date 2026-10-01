@@ -438,7 +438,7 @@ func launchClaude(instance string, debug bool) error {
 	}
 	if opts.DevMode {
 		args = append(args, "--webext-dev-mode")
-		if opts.Inspector {
+		if opts.Inspector && nodeInspectorSupported {
 			args = append(args, fmt.Sprintf("--inspect=%d", opts.NodeInspectorPort()))
 		}
 	}

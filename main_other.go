@@ -17,6 +17,9 @@ const (
 	patchLockTimeout = 10 * time.Minute
 	// workerStartingNote is a row's note until the worker reports on it.
 	workerStartingNote = "starting"
+	// nodeInspectorSupported: nothing turns on Electron's --inspect fuse here (that's
+	// version.dll, on Windows), so the launch options have no Node inspector.
+	nodeInspectorSupported = false
 )
 
 // ensureConsole is a no-op outside Windows, which has no GUI/console subsystem split.
