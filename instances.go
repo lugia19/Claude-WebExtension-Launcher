@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"claude-webext-patcher/gui"
@@ -146,6 +147,7 @@ func deleteInstance(name string) error {
 			}
 		}
 		s.Instances = kept
+		delete(s.InstanceOptions, name)
 	})
 }
 
@@ -195,15 +197,82 @@ func launchable(name string) string {
 // instanceSettings is an instance's settings screen: its own menu and startup entries,
 // which launch it directly.
 func instanceSettings(name string) *gui.Setup {
+	options := []gui.SetupOption{
+		{Label: "Add to the applications menu", Checked: hasMenuEntry(name)},
+		{Label: "Start when I log in", Checked: hasStartup(name)},
+	}
+	launch := addLaunchOptions(&options, launchable(name))
 	return &gui.Setup{
-		Title:    "Settings for " + name,
-		Subtitle: []string{"Shortcuts that launch this instance directly, without the list."},
-		Options: []gui.SetupOption{
-			{Label: "Add to the applications menu", Checked: hasMenuEntry(name)},
-			{Label: "Start when I log in", Checked: hasStartup(name)},
+		Title: "Settings for " + name,
+		Subtitle: []string{
+			"Shortcuts that launch this instance directly, without the list.",
+			launchOptionsNote,
 		},
-		Apply: func(checked []bool) {
+		Options: options,
+		Apply: func(checked []bool, values []string) {
 			applyShortcuts(name, checked[0], checked[1])
+			launch.save(checked, values)
 		},
 	}
+}
+
+const launchOptionsNote = "Debugging options take effect the next time Claude starts."
+
+// launchOptions are an instance's launch options on a settings screen (see
+// utils.InstanceOptions), as indexes into its Options.
+type launchOptions struct {
+	instance                 string // as launched
+	remoteDebugging, devMode int
+}
+
+// addLaunchOptions adds instance's launch options to a settings screen's options.
+func addLaunchOptions(options *[]gui.SetupOption, instance string) launchOptions {
+	current := utils.LoadSettings().InstanceOptions[instance]
+	l := launchOptions{instance: instance, remoteDebugging: len(*options), devMode: len(*options) + 1}
+	*options = append(*options,
+		gui.SetupOption{
+			Label:   "Allow remote debugging on port",
+			Checked: current.RemoteDebugging,
+			Entry: &gui.SetupEntry{
+				Value:    strconv.Itoa(current.Port()),
+				Width:    80,
+				Validate: func(text string) string { _, problem := parseDebugPort(text); return problem },
+			},
+		},
+		gui.SetupOption{Label: "Developer mode (Claude's internal test features)", Checked: current.DevMode},
+	)
+	return l
+}
+
+// save stores the launch options from a confirmed settings screen.
+func (l launchOptions) save(checked []bool, values []string) {
+	opts := utils.InstanceOptions{
+		RemoteDebugging: checked[l.remoteDebugging],
+		DevMode:         checked[l.devMode],
+	}
+	if port, problem := parseDebugPort(values[l.remoteDebugging]); problem == "" && port != utils.DefaultDebugPort {
+		opts.DebugPort = port
+	}
+	err := utils.UpdateSettings(func(s *utils.Settings) {
+		if opts == (utils.InstanceOptions{}) {
+			delete(s.InstanceOptions, l.instance)
+			return
+		}
+		if s.InstanceOptions == nil {
+			s.InstanceOptions = map[string]utils.InstanceOptions{}
+		}
+		s.InstanceOptions[l.instance] = opts
+	})
+	if err != nil {
+		fmt.Printf("Warning: could not save the launch options: %v\n", err)
+	}
+}
+
+// parseDebugPort reads a remote debugging port, or says why it isn't one.
+func parseDebugPort(text string) (int, string) {
+	port, err := strconv.Atoi(strings.TrimSpace(text))
+	if err != nil || port < 1024 || port > 65535 {
+		return 0, "The debugging port must be a number from 1024 to 65535."
+	}
+	return port, ""
 }

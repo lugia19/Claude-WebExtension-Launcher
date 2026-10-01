@@ -22,6 +22,29 @@ type Settings struct {
 	Instances []string `json:"instances,omitempty"`
 	// InstancesImported: existing instance data folders were added to Instances once.
 	InstancesImported bool `json:"instancesImported,omitempty"`
+	// InstanceOptions are how each instance is launched, by the name it's launched with.
+	InstanceOptions map[string]InstanceOptions `json:"instanceOptions,omitempty"`
+}
+
+// DefaultDebugPort is the remote debugging port when none was chosen.
+const DefaultDebugPort = 9222
+
+// InstanceOptions are an instance's launch options.
+type InstanceOptions struct {
+	// RemoteDebugging opens Chromium's remote debugging port (DebugPort).
+	RemoteDebugging bool `json:"remoteDebugging,omitempty"`
+	DebugPort       int  `json:"debugPort,omitempty"` // 0: DefaultDebugPort
+	// DevMode makes Claude's checks for Anthropic's test harness pass, which turns on
+	// its internal test features.
+	DevMode bool `json:"devMode,omitempty"`
+}
+
+// Port is the remote debugging port to use.
+func (o InstanceOptions) Port() int {
+	if o.DebugPort == 0 {
+		return DefaultDebugPort
+	}
+	return o.DebugPort
 }
 
 // settingsMu serializes UpdateSettings within this process (the setup screen and the

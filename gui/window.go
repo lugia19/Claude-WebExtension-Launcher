@@ -111,10 +111,10 @@ func Run(o Options, work func(s *Status) error) error {
 	win.SetOnClosed(s.markClosed)
 
 	checklist := s.build()
-	setupDone := make(chan []bool, 1)
+	setupDone := make(chan func(), 1) // applies the choices
 	if o.Setup != nil {
-		win.SetContent(w.buildSetup(o.Setup, "Continue", func(checked []bool) {
-			setupDone <- checked
+		win.SetContent(w.buildSetup(o.Setup, "Continue", func(checked []bool, values []string) {
+			setupDone <- func() { o.Setup.Apply(checked, values) }
 			win.SetContent(checklist)
 		}, nil))
 	} else {
@@ -127,8 +127,8 @@ func Run(o Options, work func(s *Status) error) error {
 		defer close(finished)
 		if o.Setup != nil {
 			select {
-			case checked := <-setupDone:
-				o.Setup.Apply(checked)
+			case apply := <-setupDone:
+				apply()
 			case <-s.closed:
 				return // closed on the setup screen
 			}

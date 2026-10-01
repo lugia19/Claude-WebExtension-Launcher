@@ -48,6 +48,32 @@ app.requestSingleInstanceLock = function(...args) {
 };
 
 // ================================================================
+// Remote debugging and developer mode — set per instance in the launcher
+// ================================================================
+// Claude refuses to start when a debugging switch is on the command line, unless its
+// E2E token check passes. The launcher adds a marker flag next to the switches it adds,
+// so only a launch from the launcher gets through; the same switches without it are
+// still refused, as in the official app.
+// - --webext-dev-mode: the patched token checks (patchDevModeGate in patcher.go) pass,
+//   which also lets the debugging switches through and turns on Claude's test features.
+// - --webext-remote-debugging: the debugging switches are hidden from Claude's check.
+//   Chromium has already read them from the real command line, so the port still opens.
+if (process.argv.includes("--webext-dev-mode")) {
+    globalThis.__webextDevMode = true;
+    console.log("[webext] Developer mode on");
+} else if (process.argv.includes("--webext-remote-debugging")) {
+    // Normalized like Claude's own check: no leading -, -- or /, lowercase, no =value.
+    const switchName = a => a.replace(/^(?:--|-|\/)/, "").toLowerCase().split("=", 1)[0];
+    for (let i = process.argv.length - 1; i > 0; i--) {
+        const name = switchName(process.argv[i]);
+        if (name.startsWith("remote-debugging-port") || name.startsWith("remote-debugging-pipe")) {
+            process.argv.splice(i, 1); // in place: other code holds this array
+        }
+    }
+    console.log("[webext] Remote debugging allowed");
+}
+
+// ================================================================
 // Find the web-extensions directory by walking up from app path
 // ================================================================
 let extPath = null;

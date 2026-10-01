@@ -13,10 +13,10 @@ type Setup struct {
 	Title    string
 	Subtitle []string // one text line each
 	Options  []SetupOption
-	// Apply receives the final checkbox states (in Options order) once the screen is
-	// confirmed. It runs on a background goroutine: for the first-run setup, before the
-	// launcher's work starts.
-	Apply func(checked []bool)
+	// Apply receives the final checkbox states and entry values (both in Options order;
+	// "" for an option without an entry) once the screen is confirmed. It runs on a
+	// background goroutine: for the first-run setup, before the launcher's work starts.
+	Apply func(checked []bool, values []string)
 	// Extra are more buttons, after the others.
 	Extra []SetupButton
 }
@@ -32,6 +32,18 @@ type SetupButton struct {
 type SetupOption struct {
 	Label   string
 	Checked bool // initial state
+	// Entry is an optional short text field after the checkbox, for a value that goes
+	// with it (e.g. a port). It's only editable, and only validated, while checked.
+	Entry *SetupEntry
+}
+
+// SetupEntry is a SetupOption's text field.
+type SetupEntry struct {
+	Value string // initial text
+	Width float32
+	// Validate returns why the text isn't acceptable, or "" if it is. It runs on the
+	// UI thread.
+	Validate func(text string) string
 }
 
 // heading is a screen's title.
@@ -66,31 +78,67 @@ func primaryButton(label string, icon fyne.Resource, onClick func()) fyne.Canvas
 }
 
 // buildSetup returns a setup screen: the checkboxes, a confirm button that hands the
-// final states to onConfirm, a Back button if onCancel isn't nil, and setup.Extra.
-// They all run in the click handler, on the UI thread; onConfirm must switch screens.
-func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked []bool), onCancel func()) fyne.CanvasObject {
+// final states and entry values to onConfirm, a Back button if onCancel isn't nil, and
+// setup.Extra. They all run in the click handler, on the UI thread; onConfirm must
+// switch screens. The options scroll if they don't fit.
+func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked []bool, values []string), onCancel func()) fyne.CanvasObject {
 	content := container.NewVBox(heading(setup.Title))
 	for _, line := range setup.Subtitle {
 		content.Add(dim(line))
 	}
+	options := container.NewVBox()
 	checks := make([]*widget.Check, len(setup.Options))
+	entries := make([]*widget.Entry, len(setup.Options))
+	errs := errorLabel()
 	for i, opt := range setup.Options {
 		checks[i] = widget.NewCheck(opt.Label, nil)
 		checks[i].SetChecked(opt.Checked)
-		content.Add(noFocusRing(checks[i]))
+		if opt.Entry == nil {
+			options.Add(noFocusRing(checks[i]))
+			continue
+		}
+		entry := widget.NewEntry()
+		entry.SetText(opt.Entry.Value)
+		entry.OnChanged = func(string) { errs.SetText("") }
+		if !opt.Checked {
+			entry.Disable()
+		}
+		checks[i].OnChanged = func(on bool) {
+			if on {
+				entry.Enable()
+			} else {
+				entry.Disable()
+				errs.SetText("")
+			}
+		}
+		entries[i] = entry
+		field := container.NewGridWrap(fyne.NewSize(opt.Entry.Width, entry.MinSize().Height), entry)
+		options.Add(container.NewHBox(noFocusRing(checks[i]), field))
 	}
+	options.Add(errs)
 
 	sent := false // a quick double click can arrive before the screen has switched
 	buttons := container.NewHBox(primaryButton(confirm, nil, func() {
 		if sent {
 			return
 		}
-		sent = true
 		checked := make([]bool, len(checks))
+		values := make([]string, len(checks))
 		for i, c := range checks {
 			checked[i] = c.Checked
+			if entries[i] == nil {
+				continue
+			}
+			values[i] = entries[i].Text
+			if validate := setup.Options[i].Entry.Validate; c.Checked && validate != nil {
+				if problem := validate(values[i]); problem != "" {
+					errs.SetText(problem)
+					return
+				}
+			}
 		}
-		onConfirm(checked)
+		sent = true
+		onConfirm(checked, values)
 	}))
 	if onCancel != nil {
 		buttons.Add(widget.NewButton("Back", onCancel))
@@ -110,5 +158,5 @@ func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked
 		})
 		buttons.Add(b)
 	}
-	return screen(container.NewBorder(content, buttons, nil, nil))
+	return screen(container.NewBorder(content, buttons, nil, nil, container.NewVScroll(options)))
 }

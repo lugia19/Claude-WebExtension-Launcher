@@ -423,9 +423,18 @@ func clearCaches(instance string) {
 
 func launchClaude(instance string, debug bool) error {
 	claudePath := claudeExecutablePath()
-	cmd := exec.Command(claudePath, "--instance="+instance)
+	args := []string{"--instance=" + instance}
+	// The --webext-* markers tell wrapper.js these came from us (see its comments).
+	opts := utils.LoadSettings().InstanceOptions[instance]
+	if opts.RemoteDebugging {
+		args = append(args, "--webext-remote-debugging", fmt.Sprintf("--remote-debugging-port=%d", opts.Port()))
+	}
+	if opts.DevMode {
+		args = append(args, "--webext-dev-mode")
+	}
+	cmd := exec.Command(claudePath, args...)
 	cmd.Dir = filepath.Dir(claudePath)
-	fmt.Printf("Launching Claude (instance %q).\n", instance)
+	fmt.Printf("Launching Claude: %s\n", strings.Join(args, " "))
 
 	if debug {
 		// Run Claude in this terminal to see its output.
@@ -481,6 +490,14 @@ func launcherSettings(title string, subtitle []string) *gui.Setup {
 	}
 	startup := add("Start when I log in", hasStartup(launcherEntry))
 	manage := add("Manage multiple instances (separate logins and data)", settings.ManageInstances)
+	// Without the list, the main instance's launch options (which the list has in its
+	// own settings) are here. Not on the first run, which is kept to the basics.
+	var launch *launchOptions
+	if settings.SetupDone && !settings.ManageInstances {
+		l := addLaunchOptions(&options, mainInstance)
+		launch = &l
+		subtitle = append(subtitle[:len(subtitle):len(subtitle)], launchOptionsNote) // not into the caller's array
+	}
 	var extra []gui.SetupButton
 	if settings.SetupDone { // not on the very first run: there's nothing to uninstall yet
 		extra = append(extra, gui.SetupButton{Label: "Uninstall…", OnClick: startUninstall, CloseWindow: true})
@@ -490,8 +507,11 @@ func launcherSettings(title string, subtitle []string) *gui.Setup {
 		Subtitle: subtitle,
 		Options:  options,
 		Extra:    extra,
-		Apply: func(checked []bool) {
+		Apply: func(checked []bool, values []string) {
 			applyShortcuts(launcherEntry, menu >= 0 && checked[menu], checked[startup])
+			if launch != nil {
+				launch.save(checked, values)
+			}
 			err := utils.UpdateSettings(func(s *utils.Settings) {
 				s.SetupDone = true
 				s.ManageInstances = checked[manage]
