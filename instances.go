@@ -242,7 +242,7 @@ func addLaunchOptions(options *[]gui.SetupOption, instance string) launchOptions
 		gui.SetupOption{
 			Label:   "Developer mode (Claude's internal test features)",
 			Checked: current.DevMode,
-			Note:    "Its features are set up through environment variables, given here. It also stops Claude reinstalling the Cowork VM when that fails to start.",
+			Note:    "Its features are set up through environment variables, given here.",
 			Entry: &gui.SetupEntry{
 				Value:       strings.Join(current.Env, "\n"),
 				Lines:       3,
