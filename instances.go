@@ -230,7 +230,9 @@ type launchOptions struct {
 func addLaunchOptions(options *[]gui.SetupOption, instance string) launchOptions {
 	current := utils.LoadSettings().InstanceOptions[instance]
 	n := len(*options)
-	l := launchOptions{instance: instance, remoteDebugging: n, devMode: n + 1, inspector: n + 2, disableQUIC: n + 3}
+	// Advanced debug mode comes last: its multi-line field takes the mouse wheel, which
+	// would stop the screen scrolling past it.
+	l := launchOptions{instance: instance, remoteDebugging: n, inspector: n + 1, disableQUIC: n + 2, devMode: n + 3}
 	*options = append(*options,
 		gui.SetupOption{
 			Label:    "Allow remote debugging on port",
@@ -240,18 +242,6 @@ func addLaunchOptions(options *[]gui.SetupOption, instance string) launchOptions
 				Value:    strconv.Itoa(current.Port()),
 				Width:    80,
 				Validate: func(text string) string { _, problem := parsePort(text, "remote debugging"); return problem },
-			},
-		},
-		gui.SetupOption{
-			Label:    "Advanced debug mode",
-			Checked:  current.DevMode,
-			Advanced: true,
-			Note:     "Turns on Claude's internal test features, set up through the environment variables given here. SSLKEYLOGFILE also covers Node's TLS in the main process.",
-			Entry: &gui.SetupEntry{
-				Value:       strings.Join(current.Env, "\n"),
-				Lines:       3,
-				Placeholder: "KEY=value, one per line (e.g. SSLKEYLOGFILE=C:\\keys.log)",
-				Validate:    func(text string) string { _, problem := parseEnv(text); return problem },
 			},
 		},
 		gui.SetupOption{
@@ -270,6 +260,18 @@ func addLaunchOptions(options *[]gui.SetupOption, instance string) launchOptions
 			Checked:  current.DisableQUIC,
 			Advanced: true,
 			Note:     "Uses HTTP/2 over TLS instead of HTTP/3, which Wireshark decodes and decompresses better.",
+		},
+		gui.SetupOption{
+			Label:    "Advanced debug mode",
+			Checked:  current.DevMode,
+			Advanced: true,
+			Note:     "Turns on Claude's internal test features, set up through the environment variables given here. SSLKEYLOGFILE also covers Node's TLS in the main process.",
+			Entry: &gui.SetupEntry{
+				Value:       strings.Join(current.Env, "\n"),
+				Lines:       3,
+				Placeholder: "KEY=value, one per line (e.g. SSLKEYLOGFILE=C:\\keys.log)",
+				Validate:    func(text string) string { _, problem := parseEnv(text); return problem },
+			},
 		},
 	)
 	return l
