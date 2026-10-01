@@ -20,7 +20,7 @@ const (
 	patchLockName = `Local\ClaudeWebExtLauncher-Patch`
 	// patchLockTimeout is generous: a real update downloads the ~222 MB MSIX.
 	patchLockTimeout = 5 * time.Minute
-	// workerStartingNote is the Patching row's note until the worker reports: it's
+	// workerStartingNote is a row's note until the worker reports on it: it's
 	// started through UAC.
 	workerStartingNote = "waiting for permission"
 )

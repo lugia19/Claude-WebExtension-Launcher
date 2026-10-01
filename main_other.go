@@ -15,7 +15,7 @@ const (
 	patchLockName = "patch"
 	// patchLockTimeout is generous: a real update downloads Claude (~175-250 MB).
 	patchLockTimeout = 10 * time.Minute
-	// workerStartingNote is the Patching row's note until the worker reports.
+	// workerStartingNote is a row's note until the worker reports on it.
 	workerStartingNote = "starting"
 )
 

@@ -68,13 +68,16 @@ if (process.argv.includes("--webext-dev-mode")) {
     // Node's --tls-keylog in a packaged app.
     const keyLog = process.env.SSLKEYLOGFILE;
     if (keyLog) {
+        let fd = null; // opened on first use; written synchronously, so the keys are in
+                       // the file before the connection's traffic
         const tls = require("tls");
         const connect = tls.connect;
         tls.connect = function (...args) {
             const socket = connect.apply(this, args);
             socket.on("keylog", line => {
                 try {
-                    fs.appendFileSync(keyLog, line);
+                    fd ??= fs.openSync(keyLog, "a");
+                    fs.writeSync(fd, line);
                 } catch {}
             });
             return socket;

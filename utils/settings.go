@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -58,6 +59,12 @@ func (o InstanceOptions) Port() int {
 		return DefaultDebugPort
 	}
 	return o.DebugPort
+}
+
+// IsZero reports whether o is all defaults, with nothing worth storing. (An empty but
+// non-nil Env counts as set.)
+func (o InstanceOptions) IsZero() bool {
+	return reflect.ValueOf(o).IsZero()
 }
 
 // NodeInspectorPort is the Node inspector port to use.

@@ -106,32 +106,42 @@ static BOOL ComputeAsarHeaderHash(const char* asarPath, char* hexHash) {
     return success;
 }
 
+// FindInExe returns the address just past sentinel in this process's copy of the exe,
+// where at least trailing more bytes follow it, or NULL.
+static BYTE* FindInExe(const char* sentinel, size_t trailing) {
+    MODULEINFO modInfo;
+    if (!GetModuleInformation(GetCurrentProcess(), GetModuleHandle(NULL), &modInfo, sizeof(modInfo))) {
+        Log("Failed to get module info");
+        return NULL;
+    }
+    BYTE* base = (BYTE*)modInfo.lpBaseOfDll;
+    size_t size = modInfo.SizeOfImage, sentinelLen = strlen(sentinel);
+    for (size_t i = 0; i + sentinelLen + trailing <= size; i++) {
+        if (memcmp(base + i, sentinel, sentinelLen) == 0) {
+            return base + i + sentinelLen;
+        }
+    }
+    return NULL;
+}
+
+// WriteExe copies n bytes from src over at, in this process's copy of the exe.
+static BOOL WriteExe(void* at, const void* src, size_t n) {
+    // Execute too, in case the bytes share a page with code.
+    DWORD oldProtect;
+    if (!VirtualProtect(at, n, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+        Log("VirtualProtect failed");
+        return FALSE;
+    }
+    memcpy(at, src, n);
+    VirtualProtect(at, n, oldProtect, &oldProtect);
+    return TRUE;
+}
+
 static void PatchHash(HMODULE hDll) {
     Log("PatchHash started");
 
-    // Get exe module info
-    HMODULE hExe = GetModuleHandle(NULL);
-    MODULEINFO modInfo;
-    if (!GetModuleInformation(GetCurrentProcess(), hExe, &modInfo, sizeof(modInfo))) {
-        Log("Failed to get module info");
-        return;
-    }
-
-    BYTE* base = (BYTE*)modInfo.lpBaseOfDll;
-    DWORD size = modInfo.SizeOfImage;
-
     // Find the expected hash in process memory
-    const char* sentinel = "\"alg\":\"SHA256\",\"value\":\"";
-    size_t sentinelLen = strlen(sentinel);
-    char* hashLocation = NULL;
-
-    for (DWORD i = 0; i < size - sentinelLen - 64; i++) {
-        if (memcmp(base + i, sentinel, sentinelLen) == 0) {
-            hashLocation = (char*)(base + i + sentinelLen);
-            break;
-        }
-    }
-
+    char* hashLocation = (char*)FindInExe("\"alg\":\"SHA256\",\"value\":\"", 64);
     if (!hashLocation) {
         Log("Could not find expected hash in exe memory");
         return;
@@ -177,11 +187,9 @@ static void PatchHash(HMODULE hDll) {
 
     // Patch the expected hash in memory with the actual hash
     Log("Hashes differ, patching...");
-    DWORD oldProtect;
-    VirtualProtect(hashLocation, 64, PAGE_READWRITE, &oldProtect);
-    memcpy(hashLocation, actualHash, 64);
-    VirtualProtect(hashLocation, 64, oldProtect, &oldProtect);
-    Log("Patch applied successfully");
+    if (WriteExe(hashLocation, actualHash, 64)) {
+        Log("Patch applied successfully");
+    }
 }
 
 // EnableNodeCliInspectArguments's index in Electron's fuse wire (see @electron/fuses).
@@ -198,26 +206,9 @@ static void EnableInspectFuse() {
     }
     Log("Advanced debug mode: enabling the --inspect fuse");
 
-    HMODULE hExe = GetModuleHandle(NULL);
-    MODULEINFO modInfo;
-    if (!GetModuleInformation(GetCurrentProcess(), hExe, &modInfo, sizeof(modInfo))) {
-        Log("Failed to get module info");
-        return;
-    }
-    BYTE* base = (BYTE*)modInfo.lpBaseOfDll;
-    DWORD size = modInfo.SizeOfImage;
-
     // The wire: the sentinel, a version byte, a length byte, then one byte per fuse:
     // '0' disabled, '1' enabled, 'r' removed.
-    const char* sentinel = "dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX";
-    size_t sentinelLen = strlen(sentinel);
-    BYTE* wire = NULL;
-    for (DWORD i = 0; i + sentinelLen + 2 < size; i++) {
-        if (memcmp(base + i, sentinel, sentinelLen) == 0) {
-            wire = base + i + sentinelLen;
-            break;
-        }
-    }
+    BYTE* wire = FindInExe("dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX", 2 + FUSE_NODE_CLI_INSPECT + 1);
     if (!wire) {
         Log("Could not find the fuse wire in exe memory");
         return;
@@ -237,14 +228,9 @@ static void EnableInspectFuse() {
         Log("The --inspect fuse isn't off, leaving it alone");
         return;
     }
-    // Execute too, in case the wire shares a page with code.
-    DWORD oldProtect;
-    if (!VirtualProtect(fuses + FUSE_NODE_CLI_INSPECT, 1, PAGE_EXECUTE_READWRITE, &oldProtect)) {
-        Log("VirtualProtect failed");
+    if (!WriteExe(fuses + FUSE_NODE_CLI_INSPECT, "1", 1)) {
         return;
     }
-    fuses[FUSE_NODE_CLI_INSPECT] = '1';
-    VirtualProtect(fuses + FUSE_NODE_CLI_INSPECT, 1, oldProtect, &oldProtect);
     sprintf(buf, "Fuses now: %.*s", (int)length, (const char*)fuses);
     Log(buf);
 }

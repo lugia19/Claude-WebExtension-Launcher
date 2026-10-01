@@ -19,7 +19,9 @@ type Setup struct {
 	Apply func(checked []bool, values []string)
 	// Validate, if set, checks the options together once each entry is valid, and
 	// returns why they can't be saved, or "". It runs on the UI thread.
-	Validate func(checked []bool) string
+	Validate func(checked []bool, values []string) string
+	// AdvancedWarning heads the Advanced section (see SetupOption.Advanced), in red.
+	AdvancedWarning string
 	// Extra are more buttons, after the others.
 	Extra []SetupButton
 }
@@ -91,7 +93,7 @@ func primaryButton(label string, icon fyne.Resource, onClick func()) fyne.Canvas
 // final states and entry values to onConfirm, a Back button if onCancel isn't nil, and
 // setup.Extra. They all run in the click handler, on the UI thread; onConfirm must
 // switch screens. The options scroll if they don't fit; Advanced ones are in their own
-// collapsible section, under a warning.
+// collapsible section, under setup.AdvancedWarning.
 func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked []bool, values []string), onCancel func()) fyne.CanvasObject {
 	content := container.NewVBox(heading(setup.Title))
 	for _, line := range setup.Subtitle {
@@ -101,59 +103,44 @@ func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked
 	checks := make([]*widget.Check, len(setup.Options))
 	entries := make([]*widget.Entry, len(setup.Options))
 	errs := errorLabel()
-	warning := errorLabel()
-	warning.SetText("Don't turn these on unless you know what you're doing.")
-	advanced, openAdvanced := container.NewVBox(warning), false
+	advanced, openAdvanced := container.NewVBox(), false
+	if setup.AdvancedWarning != "" {
+		warning := errorLabel()
+		warning.SetText(setup.AdvancedWarning)
+		advanced.Add(warning)
+	}
+	hasAdvanced := false
 	for i, opt := range setup.Options {
 		box := options
 		if opt.Advanced {
 			box = advanced
+			hasAdvanced = true
 			openAdvanced = openAdvanced || opt.Checked
 		}
 		checks[i] = widget.NewCheck(opt.Label, nil)
 		checks[i].SetChecked(opt.Checked)
-		if opt.Entry == nil {
-			box.Add(noFocusRing(checks[i]))
-			if opt.Note != "" {
-				box.Add(dim(opt.Note))
-			}
-			continue
-		}
-		entry := widget.NewEntry()
-		if opt.Entry.Lines > 0 {
-			entry = widget.NewMultiLineEntry()
-			entry.SetMinRowsVisible(opt.Entry.Lines)
-		}
-		entry.SetPlaceHolder(opt.Entry.Placeholder)
-		entry.SetText(opt.Entry.Value)
-		entry.OnChanged = func(string) { errs.SetText("") }
-		if !opt.Checked {
-			entry.Disable()
-		}
-		checks[i].OnChanged = func(on bool) {
-			if on {
-				entry.Enable()
+		// The checkbox's row (with a short entry after it), its note, then a multi-line
+		// entry under them.
+		row := noFocusRing(checks[i])
+		var below fyne.CanvasObject
+		if opt.Entry != nil {
+			entries[i] = setupEntry(opt, checks[i], errs)
+			if opt.Entry.Lines > 0 {
+				below = entries[i]
 			} else {
-				entry.Disable()
-				errs.SetText("")
+				field := container.NewGridWrap(fyne.NewSize(opt.Entry.Width, entries[i].MinSize().Height), entries[i])
+				row = container.NewHBox(row, field)
 			}
 		}
-		entries[i] = entry
-		if opt.Entry.Lines > 0 {
-			box.Add(noFocusRing(checks[i]))
-			if opt.Note != "" {
-				box.Add(dim(opt.Note))
-			}
-			box.Add(entry)
-			continue
-		}
-		field := container.NewGridWrap(fyne.NewSize(opt.Entry.Width, entry.MinSize().Height), entry)
-		box.Add(container.NewHBox(noFocusRing(checks[i]), field))
+		box.Add(row)
 		if opt.Note != "" {
 			box.Add(dim(opt.Note))
 		}
+		if below != nil {
+			box.Add(below)
+		}
 	}
-	if len(advanced.Objects) > 1 { // more than the warning
+	if hasAdvanced {
 		section := widget.NewAccordion(widget.NewAccordionItem("Advanced", advanced))
 		if openAdvanced {
 			section.Open(0)
@@ -183,7 +170,7 @@ func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked
 			}
 		}
 		if setup.Validate != nil {
-			if problem := setup.Validate(checked); problem != "" {
+			if problem := setup.Validate(checked, values); problem != "" {
 				errs.SetText(problem)
 				return
 			}
@@ -210,4 +197,29 @@ func (w *window) buildSetup(setup *Setup, confirm string, onConfirm func(checked
 		buttons.Add(b)
 	}
 	return screen(container.NewBorder(content, buttons, nil, nil, container.NewVScroll(options)))
+}
+
+// setupEntry makes opt's entry, editable while check is checked; errs is the screen's
+// error, cleared when either changes.
+func setupEntry(opt SetupOption, check *widget.Check, errs *widget.Label) *widget.Entry {
+	entry := widget.NewEntry()
+	if opt.Entry.Lines > 0 {
+		entry = widget.NewMultiLineEntry()
+		entry.SetMinRowsVisible(opt.Entry.Lines)
+	}
+	entry.SetPlaceHolder(opt.Entry.Placeholder)
+	entry.SetText(opt.Entry.Value)
+	entry.OnChanged = func(string) { errs.SetText("") }
+	if !opt.Checked {
+		entry.Disable()
+	}
+	check.OnChanged = func(on bool) {
+		if on {
+			entry.Enable()
+		} else {
+			entry.Disable()
+			errs.SetText("")
+		}
+	}
+	return entry
 }

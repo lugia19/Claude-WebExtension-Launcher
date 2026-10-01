@@ -336,9 +336,12 @@ func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg strin
 	if o.debug {
 		args = append(args, "--debug")
 	}
-	if update.Needed {
-		// Started from here on, though the worker only reports once it's running.
-		ui.SetRow(rowPatch, status.Running, "", workerStartingNote)
+	// What the worker was asked to do has started from here on, though it only reports
+	// once it's running.
+	for row, asked := range map[string]bool{rowPatch: update.Needed, rowExtensions: needExtensions, rowCowork: needCowork} {
+		if asked {
+			ui.SetRow(row, status.Running, "", workerStartingNote)
+		}
 	}
 	res := followWorker(args)
 
@@ -508,9 +511,7 @@ func launcherSettings(title string, subtitle []string) *gui.Setup {
 	// own settings) are here. Not on the first run, which is kept to the basics.
 	var launch *launchOptions
 	if settings.SetupDone && !settings.ManageInstances {
-		l := addLaunchOptions(&options, mainInstance)
-		launch = &l
-		subtitle = append(subtitle[:len(subtitle):len(subtitle)], launchOptionsNote) // not into the caller's array
+		launch = addLaunchOptions(&options, mainInstance)
 	}
 	var extra []gui.SetupButton
 	if settings.SetupDone { // not on the very first run: there's nothing to uninstall yet
@@ -519,9 +520,10 @@ func launcherSettings(title string, subtitle []string) *gui.Setup {
 	return &gui.Setup{
 		Title:    title,
 		Subtitle: subtitle,
-		Options:  options,
-		Validate: launch.validate, // nil-safe: no launch options here then
-		Extra:    extra,
+		Options:         options,
+		Validate:        launch.validate, // nil-safe: no launch options here then
+		AdvancedWarning: launchOptionsWarning,
+		Extra:           extra,
 		Apply: func(checked []bool, values []string) {
 			applyShortcuts(launcherEntry, menu >= 0 && checked[menu], checked[startup])
 			if launch != nil {

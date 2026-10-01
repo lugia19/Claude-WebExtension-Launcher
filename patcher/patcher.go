@@ -1,6 +1,7 @@
 package patcher
 
 import (
+	"bytes"
 	"claude-webext-patcher/asar"
 	"claude-webext-patcher/utils"
 	"embed"
@@ -166,6 +167,9 @@ var functionStart = regexp.MustCompile(`function\s*[\w$]+\(\)\{`)
 // check is duplicated across bundle files.
 func patchDevModeGate(content []byte) ([]byte, bool) {
 	const read = "process.env.CLAUDE_CDP_AUTH"
+	if !bytes.Contains(content, []byte(read)) {
+		return content, false // most bundle files: skip copying them to a string
+	}
 	s := string(content)
 	var out strings.Builder
 	last, count := 0, 0
@@ -430,6 +434,7 @@ func applyPatches(version string) error {
 		fmt.Printf("Applying content patch %d/%d...\n", i+1, len(patches))
 
 		patchApplied := false
+	files:
 		for _, filePattern := range patch.Files {
 			pattern := filepath.Join(tempDir, filePattern)
 			matches, err := filepath.Glob(pattern)
@@ -472,12 +477,8 @@ func applyPatches(version string) error {
 				patchApplied = true
 				modifiedFiles[matchedFile] = true
 				if !patch.All {
-					break
+					break files
 				}
-			}
-
-			if patchApplied && !patch.All {
-				break
 			}
 		}
 
@@ -513,23 +514,15 @@ func applyPatches(version string) error {
 // against the source's length, so after a patch that kept a file's length it would run
 // the unpatched code; otherwise it's rejected on every start, which only costs time.
 func removeCompileCache(asarRoot string, modified map[string]bool) {
-	cacheDir := filepath.Join(asarRoot, "compile-cache")
-	entries, err := os.ReadDir(cacheDir)
-	if err != nil {
-		return // none in this version
-	}
 	for file := range modified {
-		prefix := filepath.Base(file) + "."
-		for _, e := range entries {
-			name := e.Name()
-			if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".jsc") {
+		// Bundle file names are hashes of [A-Za-z0-9_-], so nothing to escape.
+		caches, _ := filepath.Glob(filepath.Join(asarRoot, "compile-cache", filepath.Base(file)+".*.jsc"))
+		for _, cache := range caches {
+			if err := os.Remove(cache); err != nil {
+				fmt.Printf("Warning: could not remove %s: %v\n", cache, err)
 				continue
 			}
-			if err := os.Remove(filepath.Join(cacheDir, name)); err != nil {
-				fmt.Printf("Warning: could not remove compile-cache/%s: %v\n", name, err)
-				continue
-			}
-			fmt.Printf("Removed compile-cache/%s\n", name)
+			fmt.Printf("Removed compile-cache/%s\n", filepath.Base(cache))
 		}
 	}
 }
