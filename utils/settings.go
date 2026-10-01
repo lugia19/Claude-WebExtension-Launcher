@@ -104,7 +104,9 @@ func SaveSettings(s Settings) error {
 		return err
 	}
 	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	// Owner-only: the launch options' environment variables can hold secrets. Being
+	// renamed over the old file, this also tightens one written before.
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return err
 	}
 	// On Windows the rename fails while another process has the file open (reading
