@@ -57,8 +57,8 @@ func claudeExecutablePath() string {
 	return filepath.Join(patcher.AppFolder, "claude.exe")
 }
 
-// detachFromTerminal is a no-op here; see main_linux.go.
-func detachFromTerminal(cmd *exec.Cmd) {}
+// startClaude starts Claude (cmd, whose Env already includes env) and returns.
+func startClaude(cmd *exec.Cmd, env []string) error { return cmd.Start() }
 
 // ensureConsole attaches or opens a console for output (the build is GUI-subsystem).
 func ensureConsole() {

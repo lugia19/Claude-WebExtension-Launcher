@@ -29,10 +29,11 @@ func claudeExecutablePath() string {
 	return filepath.Join(patcher.AppFolder, "claude-desktop")
 }
 
-// detachFromTerminal starts Claude in its own session, so closing the terminal the
-// launcher ran in (which SIGHUPs its process group) doesn't take Claude down with it.
-func detachFromTerminal(cmd *exec.Cmd) {
+// startClaude starts Claude in its own session, so closing the terminal the launcher
+// ran in (which SIGHUPs its process group) doesn't take Claude down with it.
+func startClaude(cmd *exec.Cmd, env []string) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	return cmd.Start()
 }
 
 // coworkNeeded is Windows-only.
