@@ -1,7 +1,7 @@
 # Builds the launcher for every platform on each push and pull request. The window
 # (Fyne) needs cgo, so each platform builds on its own runner, through the same
 # scripts used locally. The zips are kept as the run's artifacts, named as the
-# self-updater expects.
+# self-updater expects. On a pull request, a comment links them.
 #
 # Pushing a version tag (git tag v3.4.0 && git push origin v3.4.0) also creates a
 # draft release with the zips attached; it stays invisible to users and to the
@@ -116,6 +116,39 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: ${{ env.ARTIFACT_DAYS }}
+
+  # On a pull request, keep one comment linking the latest run's zips. Fork PRs get a
+  # read-only token, so they're skipped.
+  pr-artifacts:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - name: Comment the artifact links
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          MARKER='<!-- build-artifacts -->'
+          ROWS=$(gh api "repos/$GH_REPO/actions/runs/$GITHUB_RUN_ID/artifacts" --jq '
+            {"windows": "Windows", "ubuntu-22.04": "Linux amd64", "ubuntu-22.04-arm": "Linux arm64", "macos": "macOS (arm64 + amd64)"} as $names
+            | .artifacts | sort_by(.name)[]
+            | "| \($names[.name] // .name) | [\(.name).zip](\(env.RUN_URL)/artifacts/\(.id)) | \(.size_in_bytes / 1048576 | floor) MB |"')
+          BODY=$(printf '%s\n### Build artifacts\n\nFor %s ([run](%s)). Kept %s days; downloading needs a GitHub login.\n\n| Platform | Download | Size |\n|---|---|---|\n%s\n' \
+            "$MARKER" "${SHA:0:7}" "$RUN_URL" "$ARTIFACT_DAYS" "$ROWS")
+          ID=$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$MARKER\"))) | .id" | head -n1)
+          if [ -n "$ID" ]; then
+            gh api -X PATCH "repos/$GH_REPO/issues/comments/$ID" -f body="$BODY" >/dev/null
+          else
+            gh pr comment "$PR" --body "$BODY"
+          fi
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
