@@ -31,6 +31,7 @@ Instances other than Main are not registered to handle Claude's magic links. Whe
 
 ### Windows requires admin perms
 This is to make Cowork function. The app will block cowork if the application is not inside of C:\Program Files\WindowsApps, which requires admin permissions to be written to and read from.
+EDIT: This WAS to make Cowork function, but Anthropic has since removed the ability to run it locally. I may rework the launcher to remove the admin requirement in the future. But right now, I'd rather keep it all working.
 
 ## Overview
 
