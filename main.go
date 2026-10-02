@@ -448,11 +448,15 @@ func launchClaude(instance string, debug bool) error {
 	cmd := exec.Command(claudePath, args...)
 	cmd.Dir = filepath.Dir(claudePath)
 	fmt.Printf("Launching Claude: %s\n", strings.Join(args, " "))
-	if opts.DevMode && len(opts.Env) > 0 {
-		cmd.Env = append(os.Environ(), opts.Env...) // later entries win
+	var env []string
+	if opts.DevMode {
+		env = opts.Env
+	}
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...) // later entries win
 		// Names only: values can be secrets, and the log is kept.
-		names := make([]string, len(opts.Env))
-		for i, kv := range opts.Env {
+		names := make([]string, len(env))
+		for i, kv := range env {
 			names[i], _, _ = strings.Cut(kv, "=")
 		}
 		fmt.Printf("With environment variables: %s\n", strings.Join(names, ", "))
@@ -465,8 +469,7 @@ func launchClaude(instance string, debug bool) error {
 		cmd.Stdin = os.Stdin
 		return cmd.Run()
 	}
-	detachFromTerminal(cmd)
-	return cmd.Start()
+	return startClaude(cmd, env)
 }
 
 // claudeInstalled reports whether a patched Claude is present to fall back on.
