@@ -19,3 +19,6 @@
 /copy_macos.ps1
 /resources/rcodesign.exe
 /resources/patch.log
+
+# Local agent instructions
+/AGENTS.md
