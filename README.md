@@ -32,13 +32,6 @@ Instances other than Main are not registered to handle Claude's magic links. Whe
 ### Windows requires admin perms
 This is to make Cowork function. The app will block cowork if the application is not inside of C:\Program Files\WindowsApps, which requires admin permissions to be written to and read from.
 
-### Cowork does not work on MacOS (Corrupt install)
-This is because the app is signed, and cowork checks for the signature.
-On windows, this is circumvented by not modifying the exe and instead using a .dll, but that cannot be done on MacOS.
-
-
-I would recommend keeping a separate, unmodified install for it.
-
 ## Overview
 
 This installer generates a modified version of the Claude Desktop client with extension support enabled. It creates a standalone installation that can coexist with the official Claude Desktop client, automatically keeping both the client and extensions up to date.
