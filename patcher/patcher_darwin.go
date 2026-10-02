@@ -288,35 +288,7 @@ func downloadAndExtract(version, downloadURL string) error {
 	// Close the zip reader before attempting to delete temp file
 	zipReader.Close()
 
-	// macOS specific: Make sure the executable has execute permissions
-	// Make the main executable executable
-	claudeExec := filepath.Join(AppFolder, "Claude.app", "Contents", "MacOS", "Claude")
-	if err := os.Chmod(claudeExec, 0755); err != nil {
-		fmt.Printf("Warning: Could not set executable permissions: %v\n", err)
-	}
-
-	// Also make helper apps executable
-	helpers := []string{
-		"Claude Helper",
-		"Claude Helper (GPU)",
-		"Claude Helper (Plugin)",
-		"Claude Helper (Renderer)",
-	}
-	for _, helper := range helpers {
-		helperPath := filepath.Join(AppFolder, "Claude.app", "Contents", "Frameworks",
-			helper+".app", "Contents", "MacOS", helper)
-		if err := os.Chmod(helperPath, 0755); err != nil {
-			// Don't warn for each one, they might not all exist
-			continue
-		}
-	}
-
-	// Also make chrome_crashpad_handler executable
-	crashpadPath := filepath.Join(AppFolder, "Claude.app", "Contents", "Frameworks",
-		"Electron Framework.framework", "Helpers", "chrome_crashpad_handler")
-	if err := os.Chmod(crashpadPath, 0755); err != nil {
-		// Don't warn, might not exist in all versions
-	}
+	// Executables keep their exec bit from the zip (utils.ExtractZipFile).
 
 	// Delete ShipIt to prevent self-updates
 	shipItPath := filepath.Join(AppFolder, "Claude.app", "Contents", "Frameworks", "Squirrel.framework", "Resources", "ShipIt")
