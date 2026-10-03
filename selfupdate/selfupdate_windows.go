@@ -22,7 +22,7 @@ const executableName = "Claude_WebExtension_Launcher.exe"
 func finishUpdateIfNeeded(exePath string) {
 	if strings.HasSuffix(filepath.Base(exePath), ".new.exe") {
 		originalExe := strings.TrimSuffix(exePath, ".new.exe") + ".exe"
-		if err := utils.ReplaceFile(exePath, originalExe, 0755); err != nil {
+		if _, err := utils.ReplaceFile(exePath, originalExe, 0755); err != nil {
 			fmt.Printf("Couldn't finish the launcher update: %v\n", err)
 			return
 		}
@@ -65,6 +65,7 @@ func installUpdate(tempDir, tempZip string) error {
 
 	exePath, _ := os.Executable()
 	appDir := filepath.Dir(exePath)
+	restore := func() error { return nil }
 
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -76,7 +77,8 @@ func installUpdate(tempDir, tempZip string) error {
 		// The main executable replaces this one: moved aside while it runs, then
 		// restarted below.
 		if entry.Name() == executableName {
-			if err := utils.ReplaceFile(srcPath, exePath, 0755); err != nil {
+			restore, err = utils.ReplaceFile(srcPath, exePath, 0755)
+			if err != nil {
 				os.Remove(tempZip)
 				os.RemoveAll(tempDir)
 				return fmt.Errorf("failed to install the new executable: %v", err)
@@ -105,7 +107,11 @@ func installUpdate(tempDir, tempZip string) error {
 	fmt.Println("Restarting to complete update...")
 
 	if err := restart(exePath); err != nil {
-		return fmt.Errorf("failed to start updated executable: %v", err)
+		// Put the current version back, or every later launch would hit the new one.
+		if rerr := restore(); rerr != nil {
+			return fmt.Errorf("failed to start updated executable: %v (and couldn't restore the current one: %v)", err, rerr)
+		}
+		return fmt.Errorf("failed to start updated executable (kept the current version): %v", err)
 	}
 	return nil
 }

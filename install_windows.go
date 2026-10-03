@@ -64,7 +64,8 @@ func runningLauncher() (string, error) {
 func launcherBinary(path string) string { return path }
 
 func installCopy(running, installed string) error {
-	return utils.ReplaceFile(running, installed, 0755)
+	_, err := utils.ReplaceFile(running, installed, 0755)
+	return err
 }
 
 // handOff starts the installed launcher with args and exits. With --debug it waits

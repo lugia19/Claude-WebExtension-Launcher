@@ -17,7 +17,7 @@ func TestReplaceFile(t *testing.T) {
 	}
 
 	write(src, "v1")
-	if err := ReplaceFile(src, dst, 0755); err != nil {
+	if _, err := ReplaceFile(src, dst, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(dst); string(got) != "v1" {
@@ -25,7 +25,7 @@ func TestReplaceFile(t *testing.T) {
 	}
 
 	write(src, "v2")
-	if err := ReplaceFile(src, dst, 0755); err != nil {
+	if _, err := ReplaceFile(src, dst, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(dst); string(got) != "v2" {
@@ -52,7 +52,7 @@ func TestReplaceFileOldInUse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ReplaceFile(src, dst, 0755); err != nil {
+	if _, err := ReplaceFile(src, dst, 0755); err != nil {
 		busy.Close()
 		t.Fatal(err)
 	}
