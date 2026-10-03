@@ -150,22 +150,26 @@ func main() {
 	}
 	listLikely := instances != nil && utils.LoadSettings().ManageInstances
 	rows := checklistRows(sandboxNeeded(), coworkNeeded(), !listLikely)
-	err := gui.Run(gui.Options{
+	exit := func(err error) {
+		stop()
+		if err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	exit(gui.Run(gui.Options{
 		Title:     "Claude WebExtension Launcher",
 		Rows:      rows,
 		LogPath:   opts.logPath,
 		Setup:     firstRunSetup(*showSetup),
 		Instances: instances,
+		Exit:      exit,
 	}, func(s *gui.Status) error {
 		ui = s
 		patcher.DownloadProgress = s.DownloadProgress
 		opts.list = instances != nil && utils.LoadSettings().ManageInstances
 		return runLauncher(opts)
-	})
-	stop()
-	if err != nil {
-		os.Exit(1)
-	}
+	}))
 }
 
 // runLauncher is the launcher's whole flow: update itself, make sure Claude is

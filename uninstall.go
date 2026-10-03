@@ -78,37 +78,42 @@ func runUninstall(debug bool) int {
 		return nil
 	}
 
-	var err error
-	if debug {
-		err = work()
-	} else {
-		err = gui.Run(gui.Options{
-			Title:   "Uninstall Claude Desktop (Extended)",
-			Rows:    uninstallRows(),
-			LogPath: logPath,
-			Done: func() string {
-				if uninstalled {
-					return "Claude Desktop (Extended) has been uninstalled."
-				}
-				return "" // cancelled: just close
-			},
-		}, func(s *gui.Status) error {
-			ui = s
-			return work()
-		})
-	}
-	switch {
-	case err != nil:
-		fmt.Printf("Uninstall failed: %v\n", err)
-		return 1
-	case !uninstalled:
-		fmt.Println("Cancelled.")
+	finish := func(err error) int {
+		switch {
+		case err != nil:
+			fmt.Printf("Uninstall failed: %v\n", err)
+			return 1
+		case !uninstalled:
+			fmt.Println("Cancelled.")
+			return 0
+		}
+		fmt.Println("Uninstalled.")
+		stop()
+		finishUninstall()
 		return 0
 	}
-	fmt.Println("Uninstalled.")
-	stop()
-	finishUninstall()
-	return 0
+	if debug {
+		return finish(work())
+	}
+	return finish(gui.Run(gui.Options{
+		Title:   "Uninstall Claude Desktop (Extended)",
+		Rows:    uninstallRows(),
+		LogPath: logPath,
+		Done: func() string {
+			if uninstalled {
+				return "Claude Desktop (Extended) has been uninstalled."
+			}
+			return "" // cancelled: just close
+		},
+		Exit: func(err error) {
+			code := finish(err)
+			stop() // the deferred one doesn't run
+			os.Exit(code)
+		},
+	}, func(s *gui.Status) error {
+		ui = s
+		return work()
+	}))
 }
 
 // uninstallAll does the removal, mirroring each step to the checklist.
