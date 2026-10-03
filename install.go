@@ -130,8 +130,7 @@ func fileHash(path string) ([]byte, error) {
 // still running then), and the uninstall scripts older versions kept next to the
 // launcher (uninstalling is built in now: --uninstall).
 func cleanupInstall(installed string) {
-	os.Remove(installed + ".old")
-	os.Remove(installed + ".new")
+	utils.CleanupReplaced(installed)
 	for _, script := range []string{"Uninstall.bat", "Uninstall.command"} {
 		os.Remove(filepath.Join(utils.DataDir(), script))
 	}

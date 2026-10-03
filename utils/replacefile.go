@@ -4,20 +4,27 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
+	"time"
 )
 
 // ReplaceFile copies src over dst without ever leaving dst half written: the copy is
 // made next to dst, the old dst is moved aside, and the copy renamed into place.
 // Moving a file aside works even while it's running (on Windows too, where it can't
 // be overwritten or deleted then); the old copy is removed if possible, and otherwise
-// left as dst + ".old" for the caller to remove on a later start.
+// left as dst + ".old" (or ".old-<n>", if an earlier one is still running too) for
+// CleanupReplaced on a later start.
 func ReplaceFile(src, dst string, mode os.FileMode) error {
 	staged, old := dst+".new", dst+".old"
 	if err := copyWithMode(src, staged, mode); err != nil {
 		os.Remove(staged)
 		return err
 	}
-	os.Remove(old)
+	if err := os.Remove(old); err != nil && !os.IsNotExist(err) {
+		// Still running (e.g. a launcher that never exited): leave it be.
+		old = fmt.Sprintf("%s.old-%d", dst, time.Now().UnixNano())
+	}
 	if _, err := os.Stat(dst); err == nil {
 		if err := os.Rename(dst, old); err != nil {
 			os.Remove(staged)
@@ -30,6 +37,20 @@ func ReplaceFile(src, dst string, mode os.FileMode) error {
 	}
 	os.Remove(old)
 	return nil
+}
+
+// CleanupReplaced removes what ReplaceFile(_, dst) couldn't: old copies that were
+// still running then, and a staged copy left by a failed one. Those still running
+// now are left for next time.
+func CleanupReplaced(dst string) {
+	os.Remove(dst + ".new")
+	entries, _ := os.ReadDir(filepath.Dir(dst))
+	prefix := filepath.Base(dst) + ".old"
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), prefix) {
+			os.Remove(filepath.Join(filepath.Dir(dst), e.Name()))
+		}
+	}
 }
 
 func copyWithMode(src, dst string, mode os.FileMode) error {
