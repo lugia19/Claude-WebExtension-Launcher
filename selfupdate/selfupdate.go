@@ -21,6 +21,16 @@ type releaseAsset struct {
 	DownloadURL string
 }
 
+// startedFrom identifies the launcher binary this process was started from, so a
+// launcher that waited for the update lock can tell another one already replaced it.
+var startedFrom os.FileInfo
+
+func init() {
+	if exe, err := os.Executable(); err == nil {
+		startedFrom, _ = os.Stat(exe)
+	}
+}
+
 // FinishUpdateIfNeeded dispatches to the platform-specific update completion logic.
 func FinishUpdateIfNeeded() {
 	exePath, _ := os.Executable()

@@ -9,49 +9,31 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 const executableName = "Claude_WebExtension_Launcher.exe"
 
+// finishUpdateIfNeeded completes an update staged by an older launcher (4.2.2 and
+// before), which wrote the new version as a .new.exe next to itself and restarted
+// into it: move it into place and restart from there. The old exe is moved aside
+// rather than deleted, which works even while another launcher still runs from it.
+// If that fails anyway, carry on from here this time: exiting would only look like
+// the launcher not starting.
 func finishUpdateIfNeeded(exePath string) {
-	exeName := filepath.Base(exePath)
-
-	if strings.HasSuffix(exeName, ".new.exe") {
+	if strings.HasSuffix(filepath.Base(exePath), ".new.exe") {
 		originalExe := strings.TrimSuffix(exePath, ".new.exe") + ".exe"
-
-		// Wait a bit for the original to fully exit
-		time.Sleep(500 * time.Millisecond)
-
-		// Try to delete with retries
-		for i := 0; i < 5; i++ {
-			if err := os.Remove(originalExe); err == nil {
-				break
-			}
-			time.Sleep(100 * time.Millisecond)
+		if err := utils.ReplaceFile(exePath, originalExe, 0755); err != nil {
+			fmt.Printf("Couldn't finish the launcher update: %v\n", err)
+			return
 		}
-
-		// Copy ourselves to the original name
-		input, _ := os.ReadFile(exePath)
-		if err := os.WriteFile(originalExe, input, 0755); err != nil {
-			fmt.Printf("Failed to write update: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Launch the original in new console window, forwarding our own arguments so
-		// flags like --instance survive the restart instead of silently falling back
-		// to the default instance.
-		// Need to quote the path for cmd /c start to handle spaces
-		startArgs := append([]string{"/c", "start", "Claude Desktop (Extended)", originalExe}, os.Args[1:]...)
-		cmd := utils.Command("cmd", startArgs...)
-		cmd.Start()
-
-		os.Exit(0)
+		err := restart(originalExe)
+		fmt.Printf("Couldn't restart into the updated launcher: %v\n", err)
+		return
 	}
 
-	// Clean up any temporary update files
-	newExePath := strings.TrimSuffix(exePath, ".exe") + ".new.exe"
-	os.Remove(newExePath)
+	// Clean up a .new.exe an older launcher staged. (The .old ReplaceFile can leave
+	// behind is cleanupInstall's.)
+	os.Remove(strings.TrimSuffix(exePath, ".exe") + ".new.exe")
 }
 
 func selectAsset(assets []releaseAsset) (string, string, error) {
@@ -66,8 +48,7 @@ func selectAsset(assets []releaseAsset) (string, string, error) {
 
 func installUpdate(tempDir, tempZip string) error {
 	// First, make sure the executable exists
-	newExePath := filepath.Join(tempDir, executableName)
-	if _, err := os.Stat(newExePath); err != nil {
+	if _, err := os.Stat(filepath.Join(tempDir, executableName)); err != nil {
 		os.Remove(tempZip)
 		os.RemoveAll(tempDir)
 		return fmt.Errorf("failed to find executable in update: %v", err)
@@ -92,21 +73,15 @@ func installUpdate(tempDir, tempZip string) error {
 
 		srcPath := filepath.Join(tempDir, entry.Name())
 
-		// Special handling for the main executable - use .new suffix
+		// The main executable replaces this one: moved aside while it runs, then
+		// restarted below.
 		if entry.Name() == executableName {
-			dstPath := filepath.Join(appDir, strings.TrimSuffix(entry.Name(), ".exe")+".new.exe")
-			srcData, err := os.ReadFile(srcPath)
-			if err != nil {
+			if err := utils.ReplaceFile(srcPath, exePath, 0755); err != nil {
 				os.Remove(tempZip)
 				os.RemoveAll(tempDir)
-				return fmt.Errorf("failed to read executable: %v", err)
+				return fmt.Errorf("failed to install the new executable: %v", err)
 			}
-			if err := os.WriteFile(dstPath, srcData, 0755); err != nil {
-				os.Remove(tempZip)
-				os.RemoveAll(tempDir)
-				return fmt.Errorf("failed to write new executable: %v", err)
-			}
-			fmt.Printf("Staged update: %s\n", entry.Name())
+			fmt.Printf("Updated: %s\n", entry.Name())
 		} else {
 			// For all other files, copy them directly
 			dstPath := filepath.Join(appDir, entry.Name())
@@ -129,19 +104,20 @@ func installUpdate(tempDir, tempZip string) error {
 
 	fmt.Println("Restarting to complete update...")
 
-	// Launch the new exe, forwarding our own arguments so flags like --instance
-	// survive the update restart.
-	newExeName := filepath.Join(appDir, strings.TrimSuffix(executableName, ".exe")+".new.exe")
-	cmd := exec.Command(newExeName, os.Args[1:]...)
-	if err := cmd.Start(); err != nil {
+	if err := restart(exePath); err != nil {
 		return fmt.Errorf("failed to start updated executable: %v", err)
 	}
-	// Exit to let it take over
-	os.Exit(0)
 	return nil
 }
 
-// lockUpdate is a no-op on Windows, which swaps via a .new.exe on restart.
-func lockUpdate() (func(), bool) {
-	return func() {}, true
+const updateLockName = `Local\ClaudeWebExtLauncher-SelfUpdate`
+
+// restart starts exe with this process's arguments, so flags like --instance survive
+// the restart, and exits. Returns only if exe couldn't start.
+func restart(exe string) error {
+	if err := exec.Command(exe, os.Args[1:]...).Start(); err != nil {
+		return err
+	}
+	os.Exit(0)
+	return nil
 }

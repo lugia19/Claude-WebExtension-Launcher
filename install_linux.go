@@ -32,7 +32,7 @@ func launcherBinary(path string) string { return path }
 func samePath(a, b string) bool { return filepath.Clean(a) == filepath.Clean(b) }
 
 func installCopy(running, installed string) error {
-	return replaceFile(running, installed, 0755)
+	return utils.ReplaceFile(running, installed, 0755)
 }
 
 // handOff replaces this process with the installed launcher. Returns only if that

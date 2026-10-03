@@ -4,7 +4,10 @@
 package gui
 
 import (
+	"fmt"
+	"os"
 	"sync"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -88,7 +91,17 @@ type Options struct {
 	// Done, if set, replaces the countdown after a successful work: the window shows the
 	// message it returns until closed, or just closes if that's empty.
 	Done func() string
+
+	// Exit is called, from another goroutine, with what Run would have returned if
+	// Fyne hangs shutting down and Run never gets to return (see exitIfHung). It must
+	// do what the caller would do after Run, and end the process. Without it, the
+	// process just exits (status 1 on an error).
+	Exit func(error)
 }
+
+// shutdownGrace is how long Fyne gets to finish shutting down once everything else
+// is done, before exitIfHung gives up on it.
+var shutdownGrace = 3 * time.Second
 
 // Run shows the window with the checklist and runs work on another goroutine; call
 // it from the main goroutine. When work succeeds the window counts down and closes
@@ -151,9 +164,40 @@ func Run(o Options, work func(s *Status) error) error {
 		w.quit()
 	}()
 
+	returned := make(chan struct{})
+	go w.exitIfHung(finished, returned, &result, o.Exit)
+
 	win.ShowAndRun()
+	close(returned)
 	s.markClosed()
 	<-finished // also covers the user closing the window while work is still running
 	w.bg.Wait()
 	return result
+}
+
+// exitIfHung works around a race in Fyne's shutdown (2.8.1): the main loop drains its
+// call queue with len(), which misses a call still inside the queue's buffer, and
+// closes it. If that call is the app's stopped event (always queued at shutdown), the
+// lifecycle goroutine waits for it forever, and ShowAndRun with it, leaving a process
+// with no window that keeps the launcher's exe and log locked. Once the window is
+// closed and everything Run waits for is done, Fyne gets shutdownGrace to return;
+// after that, exit gives up on it.
+func (w *window) exitIfHung(finished, returned <-chan struct{}, result *error, exit func(error)) {
+	if exit == nil {
+		exit = func(err error) {
+			if err != nil {
+				os.Exit(1)
+			}
+			os.Exit(0)
+		}
+	}
+	<-w.s.closed
+	<-finished
+	w.bg.Wait()
+	select {
+	case <-returned:
+	case <-time.After(shutdownGrace):
+		fmt.Println("The window didn't finish closing; exiting anyway")
+		exit(*result) // set before finished was closed
+	}
 }
