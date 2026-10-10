@@ -47,6 +47,18 @@ func getInstalledVersion(ext Extension) string {
 	return ""
 }
 
+// isLinked reports whether the extension's folder, or web-extensions itself, is a junction
+// or symlink: a developer's own checkout, left alone since updating would replace it.
+func isLinked(ext Extension) bool {
+	root := utils.ResolveInstallPath("web-extensions")
+	for _, p := range []string{root, filepath.Join(root, ext.Folder)} {
+		if _, err := os.Readlink(p); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func fetchLatestRelease(ext Extension) (*extensionRelease, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", ext.Owner, ext.Repo)
 	resp, err := http.Get(url)
@@ -76,6 +88,9 @@ func fetchLatestRelease(ext Extension) (*extensionRelease, error) {
 func NeedsUpdate() (bool, error) {
 	var failed []string
 	for _, ext := range extensions {
+		if isLinked(ext) {
+			continue
+		}
 		currentVersion := getInstalledVersion(ext)
 		release, err := fetchLatestRelease(ext)
 		if err != nil {
@@ -102,6 +117,11 @@ func UpdateAll() error {
 
 	var failed []string
 	for _, ext := range extensions {
+		if isLinked(ext) {
+			fmt.Printf("  %s: linked folder, not updating\n", ext.Folder)
+			continue
+		}
+
 		currentVersion := getInstalledVersion(ext)
 
 		release, err := fetchLatestRelease(ext)
