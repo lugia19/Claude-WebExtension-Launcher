@@ -453,6 +453,67 @@ app.on("web-contents-created", (event, contents) => {
 })();
 
 // ================================================================
+// Claude QoL: custom system prompt for local Code sessions
+// ================================================================
+// QoL stores {text, mode: "append"|"replace"} in claude.ai's localStorage. The page's
+// LocalSessions.start/prewarm* calls reach these main-process handlers, so add the prompt
+// to their info argument here. All three get the same change, so prewarmed sessions still match.
+{
+    const channel = /_\$_claude\.web_\$_LocalSessions_\$_(?:start|prewarmLocal|prewarmFolderless)$/;
+    const readPrompt = async frame => {
+        try {
+            const raw = await Promise.race([
+                frame.executeJavaScript('localStorage.getItem("claude_qol_code_prompt")'),
+                new Promise(r => setTimeout(r, 1000, null)),
+            ]);
+            const p = raw && JSON.parse(raw);
+            return p && typeof p.text === "string" && p.text.trim() ? p : null;
+        } catch { return null; }
+    };
+    // The app checks the arguments before running anything, so a call rejected with this was
+    // never started and can be retried as the page sent it (e.g. a Claude update dropped a field).
+    const invalidArgs = /^Argument .* failed to pass validation$/;
+    const wrapListener = (name, orig) => async function (event, info, ...rest) {
+        const p = info && typeof info === "object" && await readPrompt(event.senderFrame ?? event.sender);
+        if (!p) return orig.call(this, event, info, ...rest);
+        const patched = { ...info };
+        const mode = p.mode === "replace" ? "replace" : "append";
+        if (mode === "replace") patched.systemPrompt = p.text;
+        else patched.systemPromptAppend = info.systemPromptAppend ? info.systemPromptAppend + "\n\n" + p.text : p.text;
+        const method = name.split("_$_").pop();
+        try {
+            const result = await orig.call(this, event, patched, ...rest);
+            console.log(`[webext] QoL code prompt (${mode}) added to ${method}`);
+            return result;
+        } catch (err) {
+            if (!invalidArgs.test(err?.message)) throw err;
+            console.error(`[webext] QoL code prompt rejected by ${method}, starting without it:`, err.message);
+            return orig.call(this, event, info, ...rest);
+        }
+    };
+    // The handlers are registered on each window's webContents.ipc. Electron gives every
+    // IpcMainImpl its own handle (an arrow-function field, not a prototype method), so wrap
+    // it per instance, as soon as the webContents exists and before the app registers on it.
+    // This runs while Electron creates the webContents: if a future Electron changes ipc,
+    // skip the feature rather than throw there.
+    app.on("web-contents-created", (_e, wc) => {
+        try {
+            const ipc = wc.ipc;
+            const handle = ipc?.handle;
+            if (typeof handle !== "function") return;
+            ipc.handle = function (name, listener) {
+                if (typeof name === "string" && channel.test(name) && typeof listener === "function") {
+                    listener = wrapListener(name, listener);
+                }
+                return handle.call(this, name, listener);
+            };
+        } catch (err) {
+            console.error("[webext] Couldn't hook IPC for the QoL code prompt:", err);
+        }
+    });
+}
+
+// ================================================================
 // Boot the original app
 // ================================================================
 require("./index.pre.js");
