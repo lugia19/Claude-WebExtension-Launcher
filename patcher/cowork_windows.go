@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -82,7 +83,7 @@ func RegisterCoworkService() error {
 		fmt.Printf("Warning: setting service trigger failed: %v\n%s\n", err, out)
 	}
 
-	if err := configureCoworkFirewall(binPath); err != nil {
+	if err := syncCoworkFirewall([]string{binPath}); err != nil {
 		fmt.Printf("Warning: configuring Cowork firewall rules failed: %v\n", err)
 	}
 
@@ -90,28 +91,34 @@ func RegisterCoworkService() error {
 	return nil
 }
 
-// configureCoworkFirewall mirrors the AppxManifest's inbound+outbound TCP allow rules for
-// cowork-svc.exe. Idempotent: stable rule names are deleted (ignoring "no rules match")
-// before being re-added.
-func configureCoworkFirewall(binPath string) error {
-	deleteCoworkFirewallRules()
+// coworkFirewallFile records the programs our Cowork firewall rules allow, one per
+// line, so they're only rewritten when that changes (netsh's own output is localized).
+const coworkFirewallFile = "cowork-firewall.txt"
 
-	rules := []struct {
-		name string
-		dir  string
-	}{
-		{coworkFirewallIn, "in"},
-		{coworkFirewallOut, "out"},
+// syncCoworkFirewall makes our firewall rules mirror the AppxManifest's inbound and
+// outbound TCP allow rules for each of programs: the cowork-svc.exe the service is
+// configured to run, plus an old copy still running until the service restarts from
+// the new folder. Rules of the same name are deleted (ignoring "no rules match") before
+// being re-added; nothing is done when they already allow exactly programs.
+func syncCoworkFirewall(programs []string) error {
+	programs = slices.Sorted(slices.Values(programs))
+	want := strings.Join(programs, "\n")
+	if readVersionFile(coworkFirewallFile) == want {
+		return nil
 	}
-	for _, r := range rules {
-		cmd := utils.Command("netsh", "advfirewall", "firewall", "add", "rule",
-			"name="+r.name, "dir="+r.dir, "action=allow",
-			"program="+binPath, "protocol=TCP", "profile=any", "enable=yes")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("adding %s rule: %v\n%s", r.dir, err, string(out))
+	deleteCoworkFirewallRules()
+	for _, program := range programs {
+		for _, r := range []struct{ name, dir string }{{coworkFirewallIn, "in"}, {coworkFirewallOut, "out"}} {
+			cmd := utils.Command("netsh", "advfirewall", "firewall", "add", "rule",
+				"name="+r.name, "dir="+r.dir, "action=allow",
+				"program="+program, "protocol=TCP", "profile=any", "enable=yes")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				os.Remove(filepath.Join(installBaseDir, coworkFirewallFile)) // retry next time
+				return fmt.Errorf("adding %s rule: %v\n%s", r.dir, err, string(out))
+			}
 		}
 	}
-	return nil
+	return os.WriteFile(filepath.Join(installBaseDir, coworkFirewallFile), []byte(want), 0644)
 }
 
 // ourCoworkService returns CoworkVMService's configuration (sc qc) and whether it's
@@ -135,28 +142,43 @@ func stopCoworkService() {
 	}
 }
 
-// moveCoworkService points our CoworkVMService and its firewall rules at folder's
-// cowork-svc.exe, when they name another install folder: each version installs into a
-// folder of its own (see appfolder_windows.go). A service that's running keeps running
-// the old copy until it's stopped (see CleanupOldInstalls). Must be called elevated.
-func moveCoworkService(folder string) {
+// moveCoworkService points our CoworkVMService at folder's cowork-svc.exe, when it
+// names another install folder: each version installs into a folder of its own (see
+// appfolder_windows.go). A service that's running keeps running the old copy until
+// it's stopped (see CleanupOldInstalls). Returns the install folder the service is
+// configured to run from afterwards, "" if it isn't ours. Must be called elevated.
+func moveCoworkService(folder string) string {
 	config, ours, _ := ourCoworkService()
-	binPath := filepath.Join(folder, "resources", "cowork-svc.exe")
-	if !ours || strings.Contains(strings.ToLower(config), strings.ToLower(binPath)) {
-		return
+	if !ours {
+		return ""
 	}
+	configured := coworkServiceFolder(config)
+	if strings.EqualFold(configured, filepath.Base(folder)) {
+		return configured
+	}
+	binPath := filepath.Join(folder, "resources", "cowork-svc.exe")
 	if _, err := os.Stat(binPath); err != nil {
 		fmt.Printf("Warning: not moving CoworkVMService, %s is missing: %v\n", binPath, err)
-		return
+		return configured
 	}
 	fmt.Printf("Moving CoworkVMService to %s\n", binPath)
 	if out, err := runSC("config", coworkServiceName, "binPath=", binPath); err != nil {
 		fmt.Printf("Warning: moving CoworkVMService failed: %v\n%s\n", err, out)
-		return
+		return configured
 	}
-	if err := configureCoworkFirewall(binPath); err != nil {
-		fmt.Printf("Warning: updating Cowork firewall rules failed: %v\n", err)
+	return filepath.Base(folder)
+}
+
+// coworkServiceFolder is the install folder (its name, e.g. app-latest) that the
+// service configuration config (sc qc) runs cowork-svc.exe from, or "".
+func coworkServiceFolder(config string) string {
+	base := strings.ToLower(filepath.Clean(installBaseDir)) + `\`
+	i := strings.Index(strings.ToLower(config), base)
+	if i < 0 {
+		return ""
 	}
+	folder, _, _ := strings.Cut(config[i+len(base):], `\`)
+	return folder
 }
 
 // RemoveCoworkService undoes RegisterCoworkService: it stops and deletes

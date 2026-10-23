@@ -28,6 +28,7 @@ var (
 	appFolderProcesses = runningAppFolderProcesses
 	moveCowork         = moveCoworkService
 	stopCowork         = stopCoworkService
+	syncCoworkRules    = syncCoworkFirewall
 )
 
 // currentAppFolder is the current install's folder. Installs from before versioned
@@ -65,13 +66,19 @@ func commitAppFolder(folder, previous string) (string, error) {
 
 // CleanupOldInstalls deletes the install folders other than the current one (earlier
 // versions, app-latest from before versioned folders, leftovers of failed builds) once
-// nothing runs from them. Our Cowork service is first moved to the current folder;
-// one still running from an old folder is stopped only while no patched Claude runs,
-// so a local Cowork task is never cut off. A folder still in use is kept and retried
-// in a later worker run. Must be called elevated.
+// nothing runs from them. Our Cowork service is first moved to the current folder (if
+// that fails, the folder it's still configured for is kept); one still running from
+// an old folder is stopped only while no patched Claude runs, so a local Cowork task
+// is never cut off, and keeps its firewall allowance until then. A folder still in use
+// is kept and retried in a later worker run. Must be called elevated.
 func CleanupOldInstalls() {
 	current := currentAppFolder()
-	moveCowork(current)
+	serviceFolder := moveCowork(current)
+	defer func() {
+		if serviceFolder != "" {
+			syncServiceFirewall(serviceFolder)
+		}
+	}()
 
 	entries, err := os.ReadDir(installBaseDir)
 	if err != nil {
@@ -85,6 +92,10 @@ func CleanupOldInstalls() {
 	for _, e := range entries {
 		name := e.Name()
 		if !e.IsDir() || !strings.HasPrefix(name, "app-") || strings.EqualFold(name, filepath.Base(current)) {
+			continue
+		}
+		if strings.EqualFold(name, serviceFolder) {
+			fmt.Printf("Keeping old install %s for now, CoworkVMService is still set up to run from it\n", name)
 			continue
 		}
 		exes := running[strings.ToLower(name)]
@@ -102,6 +113,25 @@ func CleanupOldInstalls() {
 			continue
 		}
 		fmt.Printf("Removed old install %s\n", name)
+	}
+}
+
+// syncServiceFirewall points our Cowork firewall rules at the cowork-svc.exe the
+// service is configured to run (in serviceFolder), and at any other copy of it still
+// running from an old install folder, so a running service keeps its allowance until
+// it restarts from the new one.
+func syncServiceFirewall(serviceFolder string) {
+	exe := func(folder string) string {
+		return filepath.Join(installBaseDir, folder, "resources", "cowork-svc.exe")
+	}
+	programs := []string{exe(serviceFolder)}
+	for folder, exes := range appFolderProcesses() {
+		if exes["cowork-svc.exe"] && !strings.EqualFold(folder, serviceFolder) {
+			programs = append(programs, exe(folder))
+		}
+	}
+	if err := syncCoworkRules(programs); err != nil {
+		fmt.Printf("Warning: updating Cowork firewall rules failed: %v\n", err)
 	}
 }
 
