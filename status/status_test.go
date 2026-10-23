@@ -48,11 +48,11 @@ func TestPartialLinesAndGarbage(t *testing.T) {
 	}
 
 	f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0644)
-	f.Write([]byte("te\":\"running\"}\nnot json\n{\"state\":\"done\"}\n{\"step\":\"extensions\",\"state\":\"done\"}\n"))
+	f.Write([]byte("te\":\"running\"}\nnot json\n{\"state\":\"done\"}\n{\"step\":\"cowork\",\"state\":\"done\"}\n"))
 	f.Close()
 
 	got := r.Poll()
-	want := []Event{{StepPatch, Running, ""}, {StepExtensions, Done, ""}}
+	want := []Event{{StepPatch, Running, ""}, {StepCowork, Done, ""}}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("got %v, want %v (garbage and step-less lines skipped)", got, want)
 	}

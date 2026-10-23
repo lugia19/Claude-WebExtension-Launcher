@@ -31,8 +31,7 @@ const (
 	// arch ("x64" or "arm64"), e.g. https://downloads.claude.ai/releases/win32/x64/{VERSION}/Claude-{hash}.msix.
 	// The MSIX is the complete app and additionally ships the Cowork service binary
 	// (cowork-svc.exe) and its sandbox image (smol-bin.{arch}.vhdx), which the Squirrel
-	// .nupkg does not contain (the reason for using it, from when the launcher set up
-	// local Cowork). The arch is the native host arch (see HostArch), so an
+	// .nupkg does not contain. The arch is the native host arch (see HostArch), so an
 	// emulated amd64 launcher on ARM64 still provisions native arm64 Claude.
 	windowsMSIXRedirectURLFmt = "https://claude.ai/api/desktop/win32/%s/msix/latest/redirect"
 	appFolderName             = "app-latest"

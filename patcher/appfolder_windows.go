@@ -10,6 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 // Each install goes into a folder of its own, app-<version> (app-<version>-2, ... when
@@ -20,8 +23,12 @@ import (
 // later worker run, once they're no longer in use.
 const currentAppFile = "current-app.txt"
 
-// removeCoworkService is RemoveCoworkService, replaceable in tests.
-var removeCoworkService = RemoveCoworkService
+// Replaceable in tests.
+var (
+	appFolderProcesses = runningAppFolderProcesses
+	moveCowork         = moveCoworkService
+	stopCowork         = stopCoworkService
+)
 
 // currentAppFolder is the current install's folder. Installs from before versioned
 // folders have no currentAppFile: they're app-latest.
@@ -56,39 +63,96 @@ func commitAppFolder(folder, previous string) (string, error) {
 	return folder, nil
 }
 
-// CleanupOldInstalls deletes every install folder but the current one: earlier
-// versions, app-latest from before versioned folders, and leftovers of failed builds.
-// claude.exe goes first: Windows won't delete it while it runs, so a folder that an
-// open Claude still uses is skipped (and retried next time) before anything in it is
-// touched. Must be called elevated.
-//
-// While app-latest is still there, the Cowork service older versions registered is
-// removed first: it runs from app-latest (and would keep it from being deleted).
+// CleanupOldInstalls deletes the install folders other than the current one (earlier
+// versions, app-latest from before versioned folders, leftovers of failed builds) once
+// nothing runs from them. Our Cowork service is first moved to the current folder;
+// one still running from an old folder is stopped only while no patched Claude runs,
+// so a local Cowork task is never cut off. A folder still in use is kept and retried
+// in a later worker run. Must be called elevated.
 func CleanupOldInstalls() {
-	current := filepath.Base(currentAppFolder())
-	if !strings.EqualFold(current, appFolderName) {
-		if _, err := os.Stat(filepath.Join(installBaseDir, appFolderName)); err == nil {
-			removeCoworkService()
-		}
-	}
+	current := currentAppFolder()
+	moveCowork(current)
+
 	entries, err := os.ReadDir(installBaseDir)
 	if err != nil {
 		return
 	}
+	running := appFolderProcesses()
+	claudeOpen := false
+	for _, exes := range running {
+		claudeOpen = claudeOpen || exes["claude.exe"]
+	}
 	for _, e := range entries {
 		name := e.Name()
-		if !e.IsDir() || !strings.HasPrefix(name, "app-") || strings.EqualFold(name, current) {
+		if !e.IsDir() || !strings.HasPrefix(name, "app-") || strings.EqualFold(name, filepath.Base(current)) {
 			continue
 		}
-		dir := filepath.Join(installBaseDir, name)
-		if err := os.Remove(filepath.Join(dir, "claude.exe")); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			fmt.Printf("Keeping old install %s for now, it's in use: %v\n", name, err)
+		exes := running[strings.ToLower(name)]
+		if len(exes) == 1 && exes["cowork-svc.exe"] && !claudeOpen {
+			fmt.Printf("Stopping CoworkVMService, it still runs from %s\n", name)
+			stopCowork()
+			exes = appFolderProcesses()[strings.ToLower(name)]
+		}
+		if len(exes) > 0 {
+			fmt.Printf("Keeping old install %s for now, it's in use (%s)\n", name, strings.Join(setKeys(exes), ", "))
 			continue
 		}
-		if err := os.RemoveAll(dir); err != nil {
+		if err := os.RemoveAll(filepath.Join(installBaseDir, name)); err != nil {
 			fmt.Printf("Could not fully remove old install %s (will retry next time): %v\n", name, err)
 			continue
 		}
 		fmt.Printf("Removed old install %s\n", name)
 	}
+}
+
+// runningAppFolderProcesses returns the programs running from each install folder:
+// lowercased folder name -> lowercased exe names. Needs elevation to see other
+// users' (and the service's) processes.
+func runningAppFolderProcesses() map[string]map[string]bool {
+	running := map[string]map[string]bool{}
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return running
+	}
+	defer windows.CloseHandle(snapshot)
+	base := strings.ToLower(filepath.Clean(installBaseDir)) + `\`
+	var entry windows.ProcessEntry32
+	entry.Size = uint32(unsafe.Sizeof(entry))
+	for err = windows.Process32First(snapshot, &entry); err == nil; err = windows.Process32Next(snapshot, &entry) {
+		path := strings.ToLower(processImagePath(entry.ProcessID))
+		rel, ok := strings.CutPrefix(path, base)
+		if !ok {
+			continue
+		}
+		folder, _, _ := strings.Cut(rel, `\`)
+		if running[folder] == nil {
+			running[folder] = map[string]bool{}
+		}
+		running[folder][filepath.Base(path)] = true
+	}
+	return running
+}
+
+// processImagePath is the full path of a process's executable, or "" if it can't be
+// queried.
+func processImagePath(pid uint32) string {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return ""
+	}
+	defer windows.CloseHandle(h)
+	buf := make([]uint16, windows.MAX_LONG_PATH)
+	size := uint32(len(buf))
+	if err := windows.QueryFullProcessImageName(h, 0, &buf[0], &size); err != nil {
+		return ""
+	}
+	return windows.UTF16ToString(buf[:size])
+}
+
+func setKeys(set map[string]bool) []string {
+	keys := make([]string, 0, len(set))
+	for k := range set {
+		keys = append(keys, k)
+	}
+	return keys
 }

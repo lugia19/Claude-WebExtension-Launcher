@@ -16,7 +16,7 @@ import (
 )
 
 // removePatchedClaude runs the elevated worker (one UAC prompt) to remove the
-// WindowsApps install, and the Cowork service and firewall rules older versions set up.
+// WindowsApps install and our Cowork service and firewall rules.
 func removePatchedClaude(logPath string) (string, error) {
 	if _, err := os.Stat(utils.WindowsInstallDir); err != nil && !patcher.CoworkFirewallRulesExist() {
 		return "", stepSkipped("not installed")

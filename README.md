@@ -97,7 +97,7 @@ After that you can delete what you downloaded. Running a downloaded copy again s
 ### Uninstalling
 Open the launcher's settings (run it with `--show-setup`, or **Launcher settings** in the instance list) and click **Uninstall…**. On Windows it's also listed under Settings → Apps → Installed apps. Or run the launcher with `--uninstall`.
 
-It removes the launcher, the patched Claude, the shortcuts and everything else the launcher set up (on Windows: the patched Claude in WindowsApps and the Cowork service older versions set up, which needs one administrator prompt; on Linux: the AppArmor profile, which needs your password). Your instances' data (logins, settings and local sessions) is kept unless you tick the box to delete it. Cowork and Code sessions shared with the official Claude app are given back to it first.
+It removes the launcher, the patched Claude, the shortcuts and everything else the launcher set up (on Windows: the Cowork service, which needs one administrator prompt; on Linux: the AppArmor profile, which needs your password). Your instances' data (logins, settings and local sessions) is kept unless you tick the box to delete it. Cowork and Code sessions shared with the official Claude app are given back to it first.
 
 On Linux, pick the `linux-amd64` or `linux-arm64` zip, extract it and run `Claude_WebExtension_Launcher`. The modified Claude and its extensions are kept in `~/.local/share/claude-webext-launcher` too.
 

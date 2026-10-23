@@ -45,7 +45,8 @@ func startWorker(args []string) (int, error) {
 	return 0, nil
 }
 
-// Worker hooks: nothing to set up, tear down or clean up outside Windows.
-func workerBefore() error { return nil }
-func workerAfter()        {}
-func cleanupOldInstalls() {}
+// Worker hooks: nothing to set up, register or clean up outside Windows.
+func workerBefore() error   { return nil }
+func workerAfter()          {}
+func registerCowork() error { return nil }
+func cleanupOldInstalls()   {}

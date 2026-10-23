@@ -18,6 +18,12 @@ func currentAppFolder() string {
 	return utils.ResolvePath(appFolderName)
 }
 
+// CoworkServiceExists is Windows-only; on other platforms report "present" so the shared
+// launcher flow never tries to register a service.
+func CoworkServiceExists() bool {
+	return true
+}
+
 // prepareInstallDir is a no-op on non-Windows platforms.
 func prepareInstallDir() error {
 	return nil

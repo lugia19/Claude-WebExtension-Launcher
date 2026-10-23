@@ -11,27 +11,21 @@ import (
 func TestVersionedAppFolders(t *testing.T) {
 	old := installBaseDir
 	installBaseDir = t.TempDir()
-	coworkRemovals := 0
-	removeCoworkService = func() { coworkRemovals++ }
-	defer func() { installBaseDir, removeCoworkService = old, RemoveCoworkService }()
+	defer func() { installBaseDir = old }()
 	join := func(name string) string { return filepath.Join(installBaseDir, name) }
-	mkApp := func(name string) {
-		os.MkdirAll(join(name), 0755)
-		os.WriteFile(filepath.Join(join(name), "claude.exe"), []byte("exe"), 0644)
-	}
 
 	// Before versioned folders: app-latest.
 	if got := currentAppFolder(); got != join(appFolderName) {
 		t.Fatalf("no current-app.txt: got %s, want app-latest", got)
 	}
-	mkApp(appFolderName)
+	os.MkdirAll(join(appFolderName), 0755)
 
 	// A new version gets its own folder, and becomes current once committed.
 	folder := newAppFolder("1.2.3")
 	if folder != join("app-1.2.3") {
 		t.Fatalf("newAppFolder = %s", folder)
 	}
-	mkApp("app-1.2.3")
+	os.MkdirAll(folder, 0755)
 	if got, err := commitAppFolder(folder, currentAppFolder()); err != nil || got != folder {
 		t.Fatalf("commitAppFolder = %s, %v", got, err)
 	}
@@ -43,36 +37,51 @@ func TestVersionedAppFolders(t *testing.T) {
 	if again := newAppFolder("1.2.3"); again != join("app-1.2.3-2") {
 		t.Fatalf("reinstall folder = %s", again)
 	}
+}
 
-	// Cleanup keeps the current folder and one whose claude.exe is in use (an open
-	// handle stands in for a running Claude), and removes the rest.
-	mkApp("app-1.2.2")
-	os.MkdirAll(join("app-1.2.3-2"), 0755) // a failed build's leftover, no claude.exe
-	busy, err := os.Open(filepath.Join(join("app-1.2.2"), "claude.exe"))
-	if err != nil {
-		t.Fatal(err)
+func TestCleanupOldInstalls(t *testing.T) {
+	oldBase, oldProcs, oldMove, oldStop := installBaseDir, appFolderProcesses, moveCowork, stopCowork
+	defer func() {
+		installBaseDir, appFolderProcesses, moveCowork, stopCowork = oldBase, oldProcs, oldMove, oldStop
+	}()
+	installBaseDir = t.TempDir()
+	join := func(name string) string { return filepath.Join(installBaseDir, name) }
+	exists := func(name string) bool { _, err := os.Stat(join(name)); return err == nil }
+
+	// What runs where: Claude from app-1, our Cowork service from app-latest.
+	running := map[string]map[string]bool{
+		"app-1":      {"claude.exe": true},
+		"app-latest": {"cowork-svc.exe": true},
 	}
+	appFolderProcesses = func() map[string]map[string]bool { return running }
+	movedTo, stops := "", 0
+	moveCowork = func(folder string) { movedTo = folder }
+	stopCowork = func() { stops++; delete(running, "app-latest") }
+
+	for _, name := range []string{"app-current", "app-1", "app-latest", "app-leftover"} {
+		os.MkdirAll(join(name), 0755)
+	}
+	commitAppFolder(join("app-current"), "")
+
+	// Claude is open: app-1 is in use, and the service isn't stopped under it, so
+	// app-latest stays too. Only the unused leftover goes.
 	CleanupOldInstalls()
-	busy.Close()
-
-	for name, want := range map[string]bool{"app-1.2.3": true, "app-1.2.2": true, appFolderName: false, "app-1.2.3-2": false} {
-		if _, err := os.Stat(join(name)); (err == nil) != want {
-			t.Errorf("%s exists = %v, want %v", name, err == nil, want)
-		}
+	if movedTo != join("app-current") {
+		t.Errorf("Cowork service moved to %q, want app-current", movedTo)
 	}
-	if _, err := os.Stat(filepath.Join(join("app-1.2.2"), "claude.exe")); err != nil {
-		t.Errorf("the in-use install lost its claude.exe: %v", err)
+	if !exists("app-current") || !exists("app-1") || !exists("app-latest") || exists("app-leftover") {
+		t.Errorf("with Claude open: current %v, app-1 %v, app-latest %v, leftover %v",
+			exists("app-current"), exists("app-1"), exists("app-latest"), exists("app-leftover"))
 	}
-	if coworkRemovals != 1 {
-		t.Errorf("Cowork service removal ran %d times while app-latest was there, want 1", coworkRemovals)
+	if stops != 0 {
+		t.Error("stopped the Cowork service while Claude was open")
 	}
 
-	// Once it's no longer in use, the next run removes it.
+	// Claude closed: the service is stopped to free app-latest, and both old ones go.
+	delete(running, "app-1")
 	CleanupOldInstalls()
-	if _, err := os.Stat(join("app-1.2.2")); err == nil {
-		t.Error("app-1.2.2 still there after it was closed")
-	}
-	if coworkRemovals != 1 {
-		t.Error("Cowork service removal ran again with app-latest gone")
+	if stops != 1 || exists("app-1") || exists("app-latest") || !exists("app-current") {
+		t.Errorf("with Claude closed: stops %d, app-1 %v, app-latest %v, current %v",
+			stops, exists("app-1"), exists("app-latest"), exists("app-current"))
 	}
 }
