@@ -84,10 +84,12 @@ func init() {
 	initPaths()
 }
 
-// ReloadPaths points the app-folder globals at the current install again, for the
-// launcher after the worker (another process) may have installed a new version.
-func ReloadPaths() {
-	initPaths()
+// CurrentAppFolder is the current install's folder, looked up afresh: another process
+// (this launcher's worker, or another launcher's) may have installed a new version
+// into a new folder since AppFolder was set (see newAppFolder). The launcher uses it
+// for everything that runs Claude.
+func CurrentAppFolder() string {
+	return currentAppFolder()
 }
 
 func InstallBaseDir() string {

@@ -10,7 +10,12 @@ import (
 
 func initPaths() {
 	installBaseDir = utils.ResolvePath(".")
-	setAppPaths(utils.ResolvePath(appFolderName))
+	setAppPaths(currentAppFolder())
+}
+
+// currentAppFolder is always app-latest here: a new install is swapped into place.
+func currentAppFolder() string {
+	return utils.ResolvePath(appFolderName)
 }
 
 // prepareInstallDir is a no-op on non-Windows platforms.

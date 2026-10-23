@@ -336,7 +336,6 @@ func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg strin
 		}
 	}
 	res := followWorker(args)
-	patcher.ReloadPaths() // the worker may have installed a new version elsewhere
 
 	switch {
 	case res.err != nil: // e.g. UAC declined
