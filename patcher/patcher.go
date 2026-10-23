@@ -83,6 +83,14 @@ func init() {
 	initPaths()
 }
 
+// CurrentAppFolder is the current install's folder, looked up afresh: another process
+// (this launcher's worker, or another launcher's) may have installed a new version
+// into a new folder since AppFolder was set (see newAppFolder). The launcher uses it
+// for everything that runs Claude.
+func CurrentAppFolder() string {
+	return currentAppFolder()
+}
+
 func InstallBaseDir() string {
 	return installBaseDir
 }
@@ -263,61 +271,30 @@ func installWrapper(tempDir string, version string) error {
 	return nil
 }
 
-const stagingSuffix = ".staging"
-
-// buildAndSwap downloads and patches a fresh Claude into a staging folder, then
-// atomically swaps it into place as AppFolder. The live install is never touched
-// until the final swap, so a failed/interrupted patch (or a locked claude.exe held
+// buildAndInstall downloads and patches a fresh Claude into a new folder
+// (newAppFolder), then makes it the install (commitAppFolder). The live install is
+// never touched until then, so a failed/interrupted patch (or a locked claude.exe held
 // by a running instance) leaves the previous working install intact rather than a
-// half-written or stock one. On return the app-folder globals point back at the real
-// install, so canFallbackToExisting() checks the right place.
-func buildAndSwap(version, downloadURL string) error {
-	realApp := AppFolder
-	staging := realApp + stagingSuffix
+// half-written or stock one. On return the app-folder globals point at whichever
+// folder holds the install.
+func buildAndInstall(version, downloadURL string) error {
+	previous := AppFolder
+	folder := newAppFolder(version)
+	setAppPaths(folder) // build everything into the new folder
 
-	os.RemoveAll(staging) // clear any leftover from a previous aborted run
-	setAppPaths(staging)  // build everything into the staging folder
-	defer setAppPaths(realApp)
-
-	if err := downloadAndExtract(version, downloadURL); err != nil {
-		os.RemoveAll(staging)
-		return err
+	err := downloadAndExtract(version, downloadURL)
+	if err == nil {
+		err = applyPatches(version)
 	}
-	if err := applyPatches(version); err != nil {
-		os.RemoveAll(staging)
-		return err
+	installed := previous
+	if err == nil {
+		installed, err = commitAppFolder(folder, previous)
 	}
-	if err := swapAppFolder(staging, realApp); err != nil {
-		os.RemoveAll(staging)
-		return err
+	if err != nil {
+		os.RemoveAll(folder)
 	}
-	return nil
-}
-
-// swapAppFolder replaces target with staging via two renames (os.Rename cannot
-// atomically replace an existing directory on Windows). The window where target is
-// absent is a couple of fast metadata ops. If moving the old install aside fails
-// (e.g. a running claude.exe holds a lock), the old install is left in place.
-func swapAppFolder(staging, target string) error {
-	backup := target + ".old"
-	os.RemoveAll(backup)
-
-	if _, err := os.Stat(target); err == nil {
-		if err := os.Rename(target, backup); err != nil {
-			return fmt.Errorf("moving old install aside (is Claude still running?): %w", err)
-		}
-	}
-
-	if err := os.Rename(staging, target); err != nil {
-		// Roll the old install back so we're never left without one.
-		if _, berr := os.Stat(backup); berr == nil {
-			os.Rename(backup, target)
-		}
-		return fmt.Errorf("swapping in new install: %w", err)
-	}
-
-	os.RemoveAll(backup)
-	return nil
+	setAppPaths(installed)
+	return err
 }
 
 // ClaudeUpdate is the launcher's view of whether Claude needs (re)building.
@@ -358,15 +335,15 @@ func CheckClaude(force bool) (ClaudeUpdate, error) {
 	return u, nil
 }
 
-// Install builds a patched Claude version into a staging folder from the package the
-// launcher downloaded (PrefetchedPackage), swaps it into place, and records it. Only
-// after the swap are the version files written, so an interrupted build can never
-// leave a "patched" marker on a stock or half-built app. Runs in the worker.
+// Install builds a patched Claude version from the package the launcher downloaded
+// (PrefetchedPackage), makes it the install, and records it. Only then are the version
+// files written, so an interrupted build can never leave a "patched" marker on a stock
+// or half-built app. Runs in the worker.
 func Install(version, url string) error {
 	if err := prepareInstallDir(); err != nil {
 		return fmt.Errorf("setting up install directory: %v", err)
 	}
-	if err := buildAndSwap(version, url); err != nil {
+	if err := buildAndInstall(version, url); err != nil {
 		return err
 	}
 	os.WriteFile(filepath.Join(installBaseDir, "claude-version.txt"), []byte(version), 0644)

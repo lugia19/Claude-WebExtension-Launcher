@@ -23,7 +23,7 @@ func claudeExecutablePath() string {
 
 // claudeApp is the patched app bundle that claudeExecutablePath is inside.
 func claudeApp() string {
-	return filepath.Join(patcher.AppFolder, "Claude.app")
+	return filepath.Join(patcher.CurrentAppFolder(), "Claude.app")
 }
 
 // startClaude opens Claude.app through LaunchServices rather than starting its binary

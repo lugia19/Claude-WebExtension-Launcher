@@ -54,7 +54,7 @@ func claudeUserDataDir(instance string) string {
 }
 
 func claudeExecutablePath() string {
-	return filepath.Join(patcher.AppFolder, "claude.exe")
+	return filepath.Join(patcher.CurrentAppFolder(), "claude.exe")
 }
 
 // startClaude starts Claude (cmd, whose Env already includes env) and returns.
@@ -103,4 +103,10 @@ func workerAfter() {
 
 func registerCowork() error {
 	return patcher.RegisterCoworkService()
+}
+
+// cleanupOldInstalls removes earlier installs' folders once they're no longer in use
+// (see patcher.CleanupOldInstalls).
+func cleanupOldInstalls() {
+	patcher.CleanupOldInstalls()
 }

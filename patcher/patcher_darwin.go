@@ -27,8 +27,8 @@ type MacOSManifest struct {
 	} `json:"releases"`
 }
 
-// setAppPaths points the app-folder globals at appFolder. buildAndSwap uses this to
-// build a patched install in a staging folder before swapping it into place.
+// setAppPaths points the app-folder globals at appFolder. buildAndInstall uses this
+// to build a patched install in a staging folder before swapping it into place.
 func setAppPaths(appFolder string) {
 	AppFolder = appFolder
 	appResourcesDir = filepath.Join(appFolder, "Claude.app", "Contents", "Resources")
@@ -49,7 +49,7 @@ func finalizePatches() error {
 //
 // Every failure here is fatal. A wrong value makes Electron abort with "Integrity check
 // failed" on every single launch (issue #38), so a bundle with an unverified hash must
-// never reach swapAppFolder — erroring out leaves the previous working install in place.
+// never reach commitAppFolder — erroring out leaves the previous working install in place.
 func updateAsarIntegrity() error {
 	newHash, err := asar.HeaderHash(filepath.Join(appResourcesDir, "app.asar"))
 	if err != nil {

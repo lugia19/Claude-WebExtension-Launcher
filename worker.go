@@ -98,6 +98,8 @@ func runWorker(o workerOptions) int {
 		}
 	}
 
+	cleanupOldInstalls()
+
 	fmt.Println("--- Worker done ---")
 	return exitCode
 }

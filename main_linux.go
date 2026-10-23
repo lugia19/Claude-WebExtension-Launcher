@@ -26,7 +26,7 @@ func claudeUserDataDir(instance string) string {
 }
 
 func claudeExecutablePath() string {
-	return filepath.Join(patcher.AppFolder, "claude-desktop")
+	return filepath.Join(patcher.CurrentAppFolder(), "claude-desktop")
 }
 
 // startClaude starts Claude in its own session, so closing the terminal the launcher
