@@ -69,11 +69,6 @@ func ensureConsole() {
 func sandboxNeeded() bool   { return false }
 func installSandbox() error { return nil }
 
-// coworkNeeded reports whether the Cowork service still has to be registered.
-func coworkNeeded() bool {
-	return !patcher.CoworkServiceExists()
-}
-
 // startWorker runs the worker elevated through UAC (the install lives in
 // C:\Program Files\WindowsApps) and returns its exit code. The build is GUI-subsystem,
 // so the worker opens no window; it writes to the log file itself.
@@ -101,6 +96,8 @@ func workerAfter() {
 	patcher.ReleaseWindowsAppsOwnership()
 }
 
-func registerCowork() error {
-	return patcher.RegisterCoworkService()
+// cleanupOldInstalls removes what earlier installs left behind (see
+// patcher.CleanupOldInstalls).
+func cleanupOldInstalls() {
+	patcher.CleanupOldInstalls()
 }

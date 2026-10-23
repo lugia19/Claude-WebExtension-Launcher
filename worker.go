@@ -11,11 +11,10 @@ import (
 )
 
 // The worker is the launcher re-run with --worker. It does the part of the update
-// that writes to the install: patching Claude, updating extensions, and (Windows)
-// registering the Cowork service. On Windows it's started elevated through UAC; on
-// macOS and Linux it's a plain child process. Either way it has no console: it
-// appends to the launcher's log file and reports each step through a status file the
-// launcher's window follows.
+// that writes to the install: patching Claude and updating extensions. On Windows
+// it's started elevated through UAC; on macOS and Linux it's a plain child process.
+// Either way it has no console: it appends to the launcher's log file and reports
+// each step through a status file the launcher's window follows.
 
 type workerOptions struct {
 	statusFile     string
@@ -23,13 +22,12 @@ type workerOptions struct {
 	installVersion string // Claude version to install; empty to leave Claude as is
 	installURL     string
 	packagePath    string // the package the launcher downloaded for installVersion
-	cowork         bool   // register the Cowork service (Windows)
 	uninstall      bool   // remove the patched Claude instead (see uninstall.go)
 	debug          bool
 }
 
 // runWorker does the work and returns the process exit code: 0, or 1 if Claude
-// couldn't be patched. Extension and Cowork failures are reported as warnings only.
+// couldn't be patched. Extension failures are reported as warnings only.
 func runWorker(o workerOptions) int {
 	var console io.Writer
 	if o.debug {
@@ -88,15 +86,7 @@ func runWorker(o workerOptions) int {
 		st.Report(status.StepExtensions, status.Done, "")
 	}
 
-	if o.cowork {
-		st.Report(status.StepCowork, status.Running, "")
-		if err := registerCowork(); err != nil {
-			fmt.Printf("Warning: Cowork service registration failed: %v\n", err)
-			st.Report(status.StepCowork, status.Warning, err.Error())
-		} else {
-			st.Report(status.StepCowork, status.Done, "")
-		}
-	}
+	cleanupOldInstalls()
 
 	fmt.Println("--- Worker done ---")
 	return exitCode

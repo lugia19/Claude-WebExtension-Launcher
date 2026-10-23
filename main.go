@@ -57,7 +57,6 @@ func main() {
 	installVersion := flag.String("install-version", "", "Claude version to install (internal)")
 	installURL := flag.String("install-url", "", "Download URL of --install-version (internal)")
 	packagePath := flag.String("package", "", "Downloaded package for --install-version (internal)")
-	cowork := flag.Bool("cowork", false, "Register the Cowork service (internal)")
 
 	showSetup := flag.Bool("show-setup", false, "Show the setup screen again (applications menu, start at login, multiple instances) before launching")
 	installedFrom := flag.String(installedFromFlag, "", "The launcher copy that handed over to this installed one (internal)")
@@ -77,7 +76,6 @@ func main() {
 			installVersion: *installVersion,
 			installURL:     *installURL,
 			packagePath:    *packagePath,
-			cowork:         *cowork,
 			uninstall:      *uninstall,
 			debug:          *debug,
 		}))
@@ -149,7 +147,7 @@ func main() {
 		instances.Enabled = func() bool { return opts.list }
 	}
 	listLikely := instances != nil && utils.LoadSettings().ManageInstances
-	rows := checklistRows(sandboxNeeded(), coworkNeeded(), !listLikely)
+	rows := checklistRows(sandboxNeeded(), !listLikely)
 	exit := func(err error) {
 		stop()
 		if err != nil {
@@ -275,14 +273,13 @@ func launchInstance(instance string) error {
 }
 
 // runWorkerIfNeeded starts the worker when anything needs writing to the install (a
-// new Claude, extension updates, the Cowork service), and follows its progress. A
+// new Claude or extension updates), and follows its progress. A
 // failure is fatal only when there's no existing install to fall back to.
 func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg string) error {
 	// nothingToDo marks the rows when no worker is needed. A failed extension check
 	// is a warning, not "up to date".
 	nothingToDo := func(extErr error) error {
 		ui.SetRow(rowPatch, status.Skipped, "Patching", "up to date")
-		ui.SetRow(rowCowork, status.Skipped, "Cowork service", "set up") // no-op if the row isn't shown
 		if extErr != nil {
 			ui.SetRow(rowExtensions, status.Warning, "Extensions", "couldn't check for updates")
 		} else {
@@ -291,9 +288,8 @@ func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg strin
 		return nil
 	}
 
-	needCowork := coworkNeeded()
 	needExtensions, extErr := extensions.NeedsUpdate()
-	if !update.Needed && !needExtensions && !needCowork {
+	if !update.Needed && !needExtensions {
 		return nothingToDo(extErr)
 	}
 
@@ -304,7 +300,6 @@ func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg strin
 			fmt.Println("Timed out waiting for another launcher to finish updating; launching the existing install.")
 			ui.SetRow(rowPatch, status.Warning, "Patching", "another launcher is updating")
 			ui.SetRow(rowExtensions, status.Skipped, "Extensions", "")
-			ui.SetRow(rowCowork, status.Skipped, "Cowork service", "")
 			return nil
 		}
 		fmt.Println("Waiting for another launcher to finish installing Claude...")
@@ -321,33 +316,27 @@ func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg strin
 		fmt.Printf("Claude %s was installed by another launcher in the meantime\n", update.Latest)
 		update.Needed = false
 	}
-	needCowork = coworkNeeded()
 	needExtensions, extErr = extensions.NeedsUpdate()
-	if !update.Needed && !needExtensions && !needCowork {
+	if !update.Needed && !needExtensions {
 		return nothingToDo(extErr)
-	}
-	if !needCowork {
-		ui.SetRow(rowCowork, status.Skipped, "Cowork service", "set up") // registered meanwhile
 	}
 
 	args := []string{"--log-file=" + o.logPath}
 	if update.Needed {
 		args = append(args, "--install-version="+update.Latest, "--install-url="+update.URL, "--package="+pkg)
 	}
-	if needCowork {
-		args = append(args, "--cowork")
-	}
 	if o.debug {
 		args = append(args, "--debug")
 	}
 	// What the worker was asked to do has started from here on, though it only reports
 	// once it's running.
-	for row, asked := range map[string]bool{rowPatch: update.Needed, rowExtensions: needExtensions, rowCowork: needCowork} {
+	for row, asked := range map[string]bool{rowPatch: update.Needed, rowExtensions: needExtensions} {
 		if asked {
 			ui.SetRow(row, status.Running, "", workerStartingNote)
 		}
 	}
 	res := followWorker(args)
+	patcher.ReloadPaths() // the worker may have installed a new version elsewhere
 
 	switch {
 	case res.err != nil: // e.g. UAC declined
@@ -359,7 +348,6 @@ func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg strin
 		// Nothing the worker was asked to do happened.
 		ui.SetRow(rowPatch, status.Warning, "", "not updated: "+res.err.Error())
 		ui.SetRow(rowExtensions, status.Warning, "", "not updated")
-		ui.SetRow(rowCowork, status.Warning, "", "not set up")
 	case res.code != 0:
 		detail := res.detail(status.StepPatch)
 		if !claudeInstalled() {

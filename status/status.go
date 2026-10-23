@@ -16,9 +16,8 @@ import (
 const (
 	StepPatch      = "patch"
 	StepExtensions = "extensions"
-	StepCowork     = "cowork"
 
-	// The uninstall worker's step: removing the patched Claude (and its Cowork service).
+	// The uninstall worker's step: removing the patched Claude.
 	StepRemoveClaude = "remove-claude"
 )
 

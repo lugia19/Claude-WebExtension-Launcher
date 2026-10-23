@@ -15,11 +15,11 @@ import (
 
 func initPaths() {
 	installBaseDir = utils.ResolveInstallPath(".")
-	setAppPaths(utils.ResolveInstallPath(appFolderName))
+	setAppPaths(currentAppFolder())
 }
 
-// setAppPaths points the app-folder globals at appFolder. buildAndSwap uses this to
-// build a patched install in a staging folder before swapping it into place.
+// setAppPaths points the app-folder globals at appFolder. buildAndInstall uses this
+// to build a patched install in a new folder.
 func setAppPaths(appFolder string) {
 	AppFolder = appFolder
 	appResourcesDir = filepath.Join(appFolder, "resources")

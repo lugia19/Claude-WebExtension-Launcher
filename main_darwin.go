@@ -44,7 +44,6 @@ func startClaude(cmd *exec.Cmd, env []string) error {
 	return nil
 }
 
-// The sandbox (AppArmor) step is Linux-only, the Cowork service Windows-only.
+// The sandbox (AppArmor) step is Linux-only.
 func sandboxNeeded() bool   { return false }
 func installSandbox() error { return nil }
-func coworkNeeded() bool    { return false }

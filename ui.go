@@ -7,20 +7,19 @@ import (
 	"claude-webext-patcher/status"
 )
 
-// Checklist rows, in display order. rowSandbox (Linux AppArmor) and rowCowork
-// (Windows) only appear when they're needed.
+// Checklist rows, in display order. rowSandbox (Linux AppArmor) only appears when
+// it's needed.
 const (
 	rowLauncher   = "launcher"
 	rowClaude     = "claude"
 	rowSandbox    = "sandbox"
 	rowPatch      = status.StepPatch
 	rowExtensions = status.StepExtensions
-	rowCowork     = status.StepCowork
 	rowLaunch     = "launch"
 )
 
 // withLaunch is false when the run ends on the instance list rather than launching.
-func checklistRows(withSandbox, withCowork, withLaunch bool) []gui.Row {
+func checklistRows(withSandbox, withLaunch bool) []gui.Row {
 	rows := []gui.Row{
 		{ID: rowLauncher, Label: "Launcher update"},
 		{ID: rowClaude, Label: "Claude", Download: true},
@@ -32,9 +31,6 @@ func checklistRows(withSandbox, withCowork, withLaunch bool) []gui.Row {
 		gui.Row{ID: rowPatch, Label: "Patching"},
 		gui.Row{ID: rowExtensions, Label: "Extensions"},
 	)
-	if withCowork {
-		rows = append(rows, gui.Row{ID: rowCowork, Label: "Cowork service"})
-	}
 	if withLaunch {
 		rows = append(rows, gui.Row{ID: rowLaunch, Label: "Launching Claude"})
 	}

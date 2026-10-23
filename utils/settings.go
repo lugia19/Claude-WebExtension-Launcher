@@ -103,14 +103,21 @@ func SaveSettings(s Settings) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
 	// Owner-only: the launch options' environment variables can hold secrets. Being
 	// renamed over the old file, this also tightens one written before.
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
+	return WriteFileAtomic(path, data, 0600)
+}
+
+// WriteFileAtomic writes data to a temporary file and renames it over path, so a
+// reader sees either the old content or the new, never half of it.
+func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
+	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
+	if err := os.WriteFile(tmp, data, perm); err != nil {
 		return err
 	}
 	// On Windows the rename fails while another process has the file open (reading
 	// it); that's brief, so retry a few times.
+	var err error
 	for attempt := 0; ; attempt++ {
 		err = os.Rename(tmp, path)
 		if err == nil || attempt == 4 {

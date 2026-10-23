@@ -35,6 +35,3 @@ func startClaude(cmd *exec.Cmd, env []string) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	return cmd.Start()
 }
-
-// coworkNeeded is Windows-only.
-func coworkNeeded() bool { return false }
