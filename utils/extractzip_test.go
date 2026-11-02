@@ -137,3 +137,33 @@ func TestExtractZipRejectsCorruptEntry(t *testing.T) {
 		t.Fatal("corrupt entry was accepted")
 	}
 }
+
+func TestExtractZipEntryContainsWrites(t *testing.T) {
+	parent := t.TempDir()
+	dst := filepath.Join(parent, "extension")
+	outside := filepath.Join(parent, "outside")
+	if err := os.WriteFile(outside, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	archive := writeArchive(t,
+		archiveEntry{"scripts/main.js", "script", 0644},
+		archiveEntry{"../outside", "overwrite", 0644},
+	)
+	zr, err := zip.OpenReader(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	if err := ExtractZipEntry(zr.File[0], dst); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dst, "scripts", "main.js")); err != nil || string(got) != "script" {
+		t.Fatalf("extension script: %q, %v", got, err)
+	}
+	if err := ExtractZipEntry(zr.File[1], dst); err == nil {
+		t.Fatal("escaping entry was accepted")
+	}
+	if got, err := os.ReadFile(outside); err != nil || string(got) != "keep" {
+		t.Fatalf("outside file changed: %q, %v", got, err)
+	}
+}

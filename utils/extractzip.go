@@ -39,27 +39,48 @@ func ExtractZip(archive, dst string) error {
 	defer root.Close()
 
 	for _, f := range zr.File {
-		name, err := zipPath(f.Name)
-		if err != nil {
+		if err := extractZipEntry(root, f); err != nil {
 			return err
-		}
-		if f.FileInfo().IsDir() || strings.HasSuffix(name, string(filepath.Separator)) {
-			if err := root.MkdirAll(name, 0755); err != nil {
-				return fmt.Errorf("creating archive directory %q: %w", f.Name, err)
-			}
-			continue
-		}
-		if err := root.MkdirAll(filepath.Dir(name), 0755); err != nil {
-			return fmt.Errorf("creating parent of %q: %w", f.Name, err)
-		}
-		if err := extractZipEntry(root, f, name); err != nil {
-			return fmt.Errorf("extracting %q: %w", f.Name, err)
 		}
 	}
 	return nil
 }
 
-func extractZipEntry(root *os.Root, f *zip.File, name string) error {
+// ExtractZipEntry confines one entry to dst. Callers that already own the ZIP
+// reader can keep their download and installation lifecycle separate.
+func ExtractZipEntry(f *zip.File, dst string) error {
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(dst)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	return extractZipEntry(root, f)
+}
+
+func extractZipEntry(root *os.Root, f *zip.File) error {
+	name, err := zipPath(f.Name)
+	if err != nil {
+		return err
+	}
+	if f.FileInfo().IsDir() || strings.HasSuffix(name, string(filepath.Separator)) {
+		if err := root.MkdirAll(name, 0755); err != nil {
+			return fmt.Errorf("creating archive directory %q: %w", f.Name, err)
+		}
+		return nil
+	}
+	if err := root.MkdirAll(filepath.Dir(name), 0755); err != nil {
+		return fmt.Errorf("creating parent of %q: %w", f.Name, err)
+	}
+	if err := writeZipEntry(root, f, name); err != nil {
+		return fmt.Errorf("extracting %q: %w", f.Name, err)
+	}
+	return nil
+}
+
+func writeZipEntry(root *os.Root, f *zip.File, name string) error {
 	src, err := f.Open()
 	if err != nil {
 		return err

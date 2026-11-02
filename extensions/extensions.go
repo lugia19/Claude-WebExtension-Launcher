@@ -1,6 +1,7 @@
 package extensions
 
 import (
+	"archive/zip"
 	"claude-webext-patcher/utils"
 	"encoding/json"
 	"fmt"
@@ -188,8 +189,17 @@ func downloadAndExtractExtension(url, folder string) error {
 	os.RemoveAll(extPath)
 	os.MkdirAll(extPath, 0755)
 
-	if err := utils.ExtractZip(tempFile, extPath); err != nil {
+	// Extract zip
+	zipReader, err := zip.OpenReader(tempFile)
+	if err != nil {
 		return err
+	}
+	defer zipReader.Close()
+
+	for _, f := range zipReader.File {
+		if err := utils.ExtractZipEntry(f, extPath); err != nil {
+			return err
+		}
 	}
 
 	return nil
