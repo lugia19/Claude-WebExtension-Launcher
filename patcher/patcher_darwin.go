@@ -41,7 +41,39 @@ func finalizePatches() error {
 	if err := updateAsarIntegrity(); err != nil {
 		return err
 	}
+	if err := updateIntegrityDigest(); err != nil {
+		return err
+	}
 	return signApp(filepath.Join(AppFolder, "Claude.app"))
+}
+
+// updateIntegrityDigest makes Electron Framework's digest of the ElectronAsarIntegrity
+// dictionary match Info.plist again (see integritydigest.go). As with the hash, every
+// failure is fatal: a stale digest crashes Claude on every launch (issue #68).
+func updateIntegrityDigest() error {
+	plistPath := filepath.Join(AppFolder, "Claude.app", "Contents", "Info.plist")
+	// A top-level key, so plutil's dot-separated key paths are no problem here.
+	output, err := exec.Command("plutil", "-extract", "ElectronAsarIntegrity", "json", "-o", "-", plistPath).Output()
+	if err != nil {
+		return fmt.Errorf("reading ElectronAsarIntegrity from Info.plist: %v", err)
+	}
+	var dict map[string]asarIntegrityEntry
+	if err := json.Unmarshal(output, &dict); err != nil {
+		return fmt.Errorf("parsing ElectronAsarIntegrity: %v", err)
+	}
+
+	framework := filepath.Join(AppFolder, "Claude.app", "Contents", "Frameworks",
+		"Electron Framework.framework", "Versions", "A", "Electron Framework")
+	updated, err := writeIntegrityDigest(framework, integrityDictDigest(dict))
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		fmt.Println("Electron Framework has no integrity digest to update")
+	} else {
+		fmt.Printf("Electron Framework integrity digest updated (%d architectures)\n", updated)
+	}
+	return nil
 }
 
 // updateAsarIntegrity records the repacked app.asar's header hash in Info.plist, which
