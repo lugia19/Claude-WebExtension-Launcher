@@ -39,6 +39,11 @@ const (
 )
 
 type Patch struct {
+	Name     string
+	Required bool
+	// Verify checks the postcondition, including when the upstream bundle already
+	// has the desired behavior and Func doesn't need to change it.
+	Verify  func(content []byte) bool
 	Files   []string
 	Exclude []string
 	// All applies the patch to every matching file; otherwise it stops at the first
@@ -57,11 +62,15 @@ var supportedVersions = map[string][]Patch{
 	// that can't be done from the wrapper.
 	"generic": {
 		{
-			Files:   []string{".vite/build/index*.js"},
-			Exclude: []string{"index.pre", "wrapper"},
-			Func:    patchProtocolArray,
+			Name:     "extension protocol support",
+			Required: true,
+			Verify:   hasExtensionProtocol,
+			Files:    []string{".vite/build/index*.js"},
+			Exclude:  []string{"index.pre", "wrapper"},
+			Func:     patchProtocolArray,
 		},
 		{
+			Name: "developer mode gate",
 			// index.pre.js holds the startup check, a chunk the runtime copy.
 			Files:   []string{".vite/build/*.js"},
 			Exclude: []string{"wrapper"},
@@ -156,6 +165,23 @@ func patchProtocolArray(content []byte) ([]byte, bool) {
 	}
 
 	return content, false
+}
+
+// hasExtensionProtocol verifies the actual allow-list, not an unrelated occurrence
+// of chrome-extension: elsewhere in the bundle.
+func hasExtensionProtocol(content []byte) bool {
+	s := string(content)
+	for _, q := range []string{`"`, "`"} {
+		start := strings.Index(s, "["+q+"devtools:"+q+","+q+"file:"+q)
+		if start < 0 {
+			continue
+		}
+		end := strings.Index(s[start:], "]")
+		if end >= 0 && strings.Contains(s[start:start+end], q+"chrome-extension:"+q) {
+			return true
+		}
+	}
+	return false
 }
 
 // devModeGate is what patchDevModeGate inserts: the check passes when wrapper.js has
@@ -406,6 +432,37 @@ func applyPatches(version string) error {
 	}
 
 	// Apply content patches (e.g. protocol array)
+	modifiedFiles, err := applyContentPatches(tempDir, patches)
+	if err != nil {
+		return err
+	}
+
+	removeCompileCache(tempDir, modifiedFiles)
+
+	// Backup original and repack
+	if err := os.Rename(asarPath, asarPath+".backup"); err != nil {
+		return fmt.Errorf("backing up asar: %w", err)
+	}
+
+	fmt.Println("Repacking asar...")
+	if err := asar.Pack(tempDir, asarPath); err != nil {
+		fmt.Printf("Repacking failed: %v\n", err)
+		os.Rename(asarPath+".backup", asarPath)
+		return fmt.Errorf("repacking asar: %v", err)
+	}
+	fmt.Println("Repacking successful")
+
+	if err := finalizePatches(); err != nil {
+		return err
+	}
+
+	fmt.Println("Patches applied successfully!")
+	return nil
+}
+
+// applyContentPatches must succeed before repacking or activating the staged app.
+// Unsupported bundles therefore leave the previous installation in place.
+func applyContentPatches(tempDir string, patches []Patch) (map[string]bool, error) {
 	modifiedFiles := map[string]bool{}
 	for i, patch := range patches {
 		fmt.Printf("Applying content patch %d/%d...\n", i+1, len(patches))
@@ -416,8 +473,7 @@ func applyPatches(version string) error {
 			pattern := filepath.Join(tempDir, filePattern)
 			matches, err := filepath.Glob(pattern)
 			if err != nil {
-				fmt.Printf("Error with pattern %s: %v\n", filePattern, err)
-				continue
+				return nil, fmt.Errorf("patch %q file pattern: %w", patch.Name, err)
 			}
 
 			for _, matchedFile := range matches {
@@ -437,22 +493,28 @@ func applyPatches(version string) error {
 
 				content, err := os.ReadFile(matchedFile)
 				if err != nil {
-					fmt.Printf("  Skipping %s: %v\n", relPath, err)
-					continue
+					return nil, fmt.Errorf("reading %s for patch %q: %w", relPath, patch.Name, err)
 				}
 
 				newContent, modified := patch.Func(content)
-				if !modified {
+				verified := patch.Verify != nil && patch.Verify(newContent)
+				if modified && patch.Verify != nil && !verified {
+					return nil, fmt.Errorf("patch %q failed verification in %s", patch.Name, relPath)
+				}
+				if !modified && !verified {
 					continue
 				}
 
-				fmt.Printf("Patched %s\n", relPath)
-				if err := os.WriteFile(matchedFile, newContent, 0644); err != nil {
-					fmt.Printf("  Failed to write %s: %v\n", relPath, err)
-					continue
+				if modified {
+					if err := os.WriteFile(matchedFile, newContent, 0644); err != nil {
+						return nil, fmt.Errorf("writing %s for patch %q: %w", relPath, patch.Name, err)
+					}
+					fmt.Printf("Patched %s\n", relPath)
+					modifiedFiles[matchedFile] = true
+				} else {
+					fmt.Printf("Patch %q already satisfied in %s\n", patch.Name, relPath)
 				}
 				patchApplied = true
-				modifiedFiles[matchedFile] = true
 				if !patch.All {
 					break files
 				}
@@ -460,30 +522,15 @@ func applyPatches(version string) error {
 		}
 
 		if !patchApplied {
-			fmt.Printf("Warning: content patch %d did not match any files\n", i+1)
+			if patch.Required {
+				return nil, fmt.Errorf("required patch %q is not satisfied (Claude bundle layout may have changed)", patch.Name)
+			}
+			fmt.Printf("Warning: optional content patch %q did not match any files\n", patch.Name)
 			debugPause()
 		}
 	}
 
-	removeCompileCache(tempDir, modifiedFiles)
-
-	// Backup original and repack
-	os.Rename(asarPath, asarPath+".backup")
-
-	fmt.Println("Repacking asar...")
-	if err := asar.Pack(tempDir, asarPath); err != nil {
-		fmt.Printf("Repacking failed: %v\n", err)
-		os.Rename(asarPath+".backup", asarPath)
-		return fmt.Errorf("repacking asar: %v", err)
-	}
-	fmt.Println("Repacking successful")
-
-	if err := finalizePatches(); err != nil {
-		return err
-	}
-
-	fmt.Println("Patches applied successfully!")
-	return nil
+	return modifiedFiles, nil
 }
 
 // removeCompileCache deletes the precompiled V8 code of the bundle files we changed.

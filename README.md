@@ -71,6 +71,12 @@ If anything goes wrong, click **Open logs** in the launcher's window (it's there
 
 Running the launcher with `--debug` skips the window and shows everything in the terminal instead, with Claude attached to it so its own output is visible too.
 
+Update checks time out after 15 seconds, and package downloads after 15 minutes.
+If a check or download fails, the launcher warns and uses the existing Claude
+installation when available. Extension updates are validated before replacing the
+installed extension. If a new Claude bundle no longer supports a required patch,
+the update is rejected and the previous installation is kept.
+
 ## Installation
 
 ### Supported Platforms
