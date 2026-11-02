@@ -188,10 +188,9 @@ func GetLatestVersion() (string, string, error) {
 
 	// Resolve the MSIX redirect without following it — the 307 response carries the
 	// real download URL in its Location header, and we avoid pulling the ~222 MB body.
-	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+	client := utils.NewMetadataClient()
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
 	}
 	resp, err := client.Get(redirectURL)
 	if err != nil {

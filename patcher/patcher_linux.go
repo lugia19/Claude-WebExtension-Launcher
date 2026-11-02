@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -48,14 +47,11 @@ func GetLatestVersion() (string, string, error) {
 	fmt.Printf("Getting latest version for OS: linux (%s)\n", arch)
 	fmt.Printf("Fetching Packages index from: %s\n", indexURL)
 
-	resp, err := http.Get(indexURL)
+	resp, err := utils.GetURL(indexURL)
 	if err != nil {
 		return "", "", fmt.Errorf("fetching Packages index: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("fetching Packages index: HTTP %d", resp.StatusCode)
-	}
 
 	pkg, err := parseAptPackages(resp.Body, "claude-desktop")
 	if err != nil {
