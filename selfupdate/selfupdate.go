@@ -1,14 +1,12 @@
 package selfupdate
 
 import (
-	"archive/zip"
 	"claude-webext-patcher/utils"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -123,56 +121,15 @@ func CheckAndUpdate() error {
 		return fmt.Errorf("failed to save update: %v", err)
 	}
 
-	// Extract to temp dir
 	fmt.Println("Extracting update...")
 	tempDir := utils.ResolvePath("update-temp")
-	os.RemoveAll(tempDir)
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		os.Remove(tempZip)
-		return fmt.Errorf("failed to create temp dir: %v", err)
+	if err := os.RemoveAll(tempDir); err != nil {
+		return fmt.Errorf("clearing update directory: %w", err)
 	}
-
-	// Extract zip
-	zipReader, err := zip.OpenReader(tempZip)
-	if err != nil {
-		os.Remove(tempZip)
-		os.RemoveAll(tempDir)
-		return fmt.Errorf("failed to open zip: %v", err)
+	defer os.RemoveAll(tempDir)
+	if err := utils.ExtractZip(tempZip, tempDir); err != nil {
+		return fmt.Errorf("extracting update: %w", err)
 	}
-
-	for _, f := range zipReader.File {
-		// Normalize path separators - replace backslashes with forward slashes
-		normalizedName := strings.ReplaceAll(f.Name, "\\", "/")
-		// Then use filepath.Join which will use the correct separator for the OS
-		path := filepath.Join(tempDir, filepath.FromSlash(normalizedName))
-
-		// Treat as directory if IsDir() returns true OR if it's a zero-byte entry ending with slash/backslash
-		isDirectory := f.FileInfo().IsDir() || (f.UncompressedSize64 == 0 && (strings.HasSuffix(normalizedName, "/") || strings.HasSuffix(f.Name, "\\")))
-
-		if isDirectory {
-			fmt.Printf("Creating directory: %s\n", path)
-			os.MkdirAll(path, 0755)
-			continue
-		}
-
-		// Skip if path already exists as a directory (created by earlier MkdirAll)
-		if info, err := os.Stat(path); err == nil && info.IsDir() {
-			fmt.Printf("Skipping %s - already exists as directory\n", path)
-			continue
-		}
-
-		os.MkdirAll(filepath.Dir(path), 0755)
-
-		// A truncated or corrupt download must abort the update here (the zip reader
-		// reports CRC mismatches from Read), not reach installUpdate as a partial file.
-		if err := utils.ExtractZipFile(f, path); err != nil {
-			zipReader.Close()
-			os.Remove(tempZip)
-			os.RemoveAll(tempDir)
-			return fmt.Errorf("failed to extract %s: %v", f.Name, err)
-		}
-	}
-	zipReader.Close()
 
 	fmt.Println("Installing update...")
 	return installUpdate(tempDir, tempZip)
