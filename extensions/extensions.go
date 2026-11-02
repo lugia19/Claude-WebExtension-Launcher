@@ -198,6 +198,9 @@ func installExtension(url, destination string) error {
 			os.RemoveAll(stage)
 		}
 	}()
+	if err := markExtensionUpdate(stage, destination); err != nil {
+		return err
+	}
 	tempFile := filepath.Join(stage, "download.zip")
 	if err := utils.DownloadFile(url, tempFile, nil); err != nil {
 		return err
@@ -273,7 +276,28 @@ func validateManifest(dir string) error {
 	if (manifest.ManifestVersion != 2 && manifest.ManifestVersion != 3) || strings.TrimSpace(manifest.Name) == "" || manifest.Version == "" {
 		return fmt.Errorf("extension manifest must contain manifest_version (2 or 3), name and version")
 	}
+	if !validExtensionVersion(manifest.Version) {
+		return fmt.Errorf("invalid extension version %q", manifest.Version)
+	}
 	return nil
+}
+
+// Chromium accepts one to four canonical decimal components in [0, 65535],
+// with at least one nonzero component.
+func validExtensionVersion(version string) bool {
+	parts := strings.Split(version, ".")
+	if len(parts) > 4 {
+		return false
+	}
+	nonzero := false
+	for _, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil || n < 0 || n > 65535 || strconv.Itoa(n) != part {
+			return false
+		}
+		nonzero = nonzero || n != 0
+	}
+	return nonzero
 }
 
 func compareVersions(v1, v2 string) int {

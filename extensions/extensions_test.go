@@ -53,6 +53,7 @@ func TestFailedUpdateKeepsInstalledExtension(t *testing.T) {
 		{"missing manifest", 200, extensionZip(t, map[string]string{"script.js": "new"})},
 		{"invalid manifest", 200, extensionZip(t, map[string]string{"manifest.json": "{"})},
 		{"incomplete manifest", 200, extensionZip(t, map[string]string{"manifest.json": `{"version":"2.0"}`})},
+		{"invalid version", 200, extensionZip(t, map[string]string{"manifest.json": `{"manifest_version":3,"name":"Broken","version":"broken"}`})},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -83,6 +84,19 @@ func TestFailedUpdateKeepsInstalledExtension(t *testing.T) {
 				t.Fatalf("failed update left files outside the installed extension: %v, %v", entries, err)
 			}
 		})
+	}
+}
+
+func TestExtensionVersionFormat(t *testing.T) {
+	for _, version := range []string{"1", "1.2", "1.2.3.4", "0.1.0.0", "65535.65535.65535.65535"} {
+		if !validExtensionVersion(version) {
+			t.Errorf("valid version rejected: %q", version)
+		}
+	}
+	for _, version := range []string{"", "broken", "0", "0.0.0.0", "01.2", "+1", "-1", "1..2", "1.", ".1", "1.2.3.4.5", "65536", "1.2beta", " 1", "1 "} {
+		if validExtensionVersion(version) {
+			t.Errorf("invalid version accepted: %q", version)
+		}
 	}
 }
 

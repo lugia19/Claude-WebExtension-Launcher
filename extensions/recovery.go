@@ -7,6 +7,16 @@ import (
 	"strings"
 )
 
+const extensionUpdateMarker = ".launcher-extension-update"
+
+func markExtensionUpdate(stage, destination string) error {
+	return os.WriteFile(filepath.Join(stage, extensionUpdateMarker), extensionUpdateIdentity(destination), 0600)
+}
+
+func extensionUpdateIdentity(destination string) []byte {
+	return []byte("claude-webext-launcher-extension-update-v1\n" + filepath.Base(destination) + "\n")
+}
+
 // The launcher's patch lock excludes other workers while updates and recovery run.
 // A process killed before its deferred cleanup can leave a staging directory; if
 // it died between the two renames, that directory also holds the installed copy.
@@ -52,8 +62,35 @@ func extensionUpdateDirs(destination string) ([]string, error) {
 	prefix := "." + filepath.Base(destination) + "-update-"
 	var stages []string
 	for _, entry := range entries {
-		if entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) {
-			stages = append(stages, filepath.Join(parent, entry.Name()))
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		stage := filepath.Join(parent, entry.Name())
+		// A name alone doesn't establish ownership. Unknown/older unmarked
+		// folders and folders the wrapper could load as extensions are preserved.
+		if _, err := os.Lstat(filepath.Join(stage, "manifest.json")); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+		marker := filepath.Join(stage, extensionUpdateMarker)
+		info, err := os.Lstat(marker)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		expected := extensionUpdateIdentity(destination)
+		if !info.Mode().IsRegular() || info.Size() != int64(len(expected)) {
+			continue
+		}
+		data, err := os.ReadFile(marker)
+		if err != nil {
+			return nil, err
+		}
+		if string(data) == string(expected) {
+			stages = append(stages, stage)
 		}
 	}
 	return stages, nil

@@ -38,6 +38,9 @@ func TestRecoverInterruptedExtensionUpdate(t *testing.T) {
 			if err := os.MkdirAll(stage, 0755); err != nil {
 				t.Fatal(err)
 			}
+			if err := markExtensionUpdate(stage, destination); err != nil {
+				t.Fatal(err)
+			}
 			if c.current {
 				writeCopy(destination, current)
 			}
@@ -73,6 +76,50 @@ func TestRecoverInterruptedExtensionUpdate(t *testing.T) {
 			}
 			if _, err := os.Stat(unrelated); err != nil {
 				t.Fatalf("unrelated directory touched: %v", err)
+			}
+		})
+	}
+}
+
+func TestRecoveryPreservesUnownedFolders(t *testing.T) {
+	for _, c := range []struct {
+		name, markerDestination string
+		manifest                bool
+	}{
+		{"custom extension", "", true},
+		{"custom extension with copied marker", "usage-tracker", true},
+		{"unmarked previous backup", "", false},
+		{"marker for another extension", "other-extension", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			parent := t.TempDir()
+			destination := filepath.Join(parent, "usage-tracker")
+			stage := filepath.Join(parent, ".usage-tracker-update-my-extension")
+			backup := filepath.Join(stage, "previous", "keep.js")
+			if err := os.MkdirAll(filepath.Dir(backup), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(backup, []byte("user data"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if c.manifest {
+				if err := os.WriteFile(filepath.Join(stage, "manifest.json"), []byte(`{"manifest_version":3,"name":"Custom","version":"1.0"}`), 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if c.markerDestination != "" {
+				if err := markExtensionUpdate(stage, filepath.Join(parent, c.markerDestination)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := recoverExtensionUpdates(destination); err != nil {
+				t.Fatal(err)
+			}
+			if data, err := os.ReadFile(backup); err != nil || string(data) != "user data" {
+				t.Fatalf("unowned folder changed: %q, %v", data, err)
+			}
+			if _, err := os.Stat(destination); !os.IsNotExist(err) {
+				t.Fatalf("unowned backup was moved: %v", err)
 			}
 		})
 	}
