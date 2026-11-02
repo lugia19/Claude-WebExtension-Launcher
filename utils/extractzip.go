@@ -17,7 +17,9 @@ func zipPath(name string) (string, error) {
 	if !filepath.IsLocal(local) || strings.Contains(name, ":") {
 		return "", fmt.Errorf("refusing archive path outside the destination: %q", name)
 	}
-	return local, nil
+	// Interpret redundant components before an archive-created alias can change
+	// what a following ".." means on the filesystem.
+	return filepath.Clean(local), nil
 }
 
 // ExtractZip extracts into dst using os.Root so writes cannot escape through
@@ -65,7 +67,7 @@ func extractZipEntry(root *os.Root, f *zip.File) error {
 	if err != nil {
 		return err
 	}
-	if f.FileInfo().IsDir() || strings.HasSuffix(name, string(filepath.Separator)) {
+	if f.FileInfo().IsDir() || strings.HasSuffix(f.Name, "/") || strings.HasSuffix(f.Name, "\\") {
 		if err := root.MkdirAll(name, 0755); err != nil {
 			return fmt.Errorf("creating archive directory %q: %w", f.Name, err)
 		}
@@ -95,6 +97,9 @@ func writeZipEntry(root *os.Root, f *zip.File, name string) error {
 		if len(target) == 0 || len(target) > 4096 || strings.HasPrefix(link, "/") || strings.Contains(link, ":") {
 			return fmt.Errorf("refusing symlink target %q", link)
 		}
+		if err := checkSymlinkPath(root, name, link); err != nil {
+			return err
+		}
 		if _, err := zipPath(filepath.Join(filepath.Dir(name), filepath.FromSlash(link))); err != nil {
 			return err
 		}
@@ -115,4 +120,33 @@ func writeZipEntry(root *os.Root, f *zip.File, name string) error {
 		err = cerr
 	}
 	return err
+}
+
+// A link's leading ".." components are safe only when its parent isn't an
+// alias. Reject later ".." components too: a target such as alias/../outside
+// can escape even if alias is created later in the archive. Ordinary relative
+// bundle links (Versions/Current, ../Resources, etc.) remain supported.
+func checkSymlinkPath(root *os.Root, name, target string) error {
+	for parent := filepath.Dir(name); parent != "."; parent = filepath.Dir(parent) {
+		info, err := root.Lstat(parent)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing symlink %q through parent alias %q", name, parent)
+		}
+	}
+	seenName := false
+	for _, part := range strings.Split(target, "/") {
+		switch part {
+		case "", ".":
+		case "..":
+			if seenName {
+				return fmt.Errorf("refusing symlink target with parent traversal after a name: %q", target)
+			}
+		default:
+			seenName = true
+		}
+	}
+	return nil
 }

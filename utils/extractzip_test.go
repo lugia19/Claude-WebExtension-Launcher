@@ -93,23 +93,118 @@ func TestExtractZipPreservesBundleFilesAndLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	archive := writeArchive(t,
+		archiveEntry{`App\bin\`, "", 0644}, // PowerShell directory entry without a directory mode
 		archiveEntry{`App\bin\run`, "executable", 0755},
 		archiveEntry{"App/Versions/A/data", "resource", 0644},
 		archiveEntry{"App/Versions/Current", "A", os.ModeSymlink | 0777},
-		archiveEntry{"App/Resources", "Versions/Current", os.ModeSymlink | 0777},
+		archiveEntry{"App/Links/Version", "../Versions/Current", os.ModeSymlink | 0777},
+		archiveEntry{"App/Resources", "Links/Version", os.ModeSymlink | 0777},
 	)
-	if err := ExtractZip(archive, dst); err != nil {
-		t.Fatal(err)
+	for _, extract := range []func(string, string) error{ExtractZip, extractArchiveByEntry} {
+		dst := t.TempDir()
+		if err := extract(archive, dst); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := os.ReadFile(filepath.Join(dst, "App", "Resources", "data")); err != nil || string(got) != "resource" {
+			t.Fatalf("bundle links: %q, %v", got, err)
+		}
+		info, err := os.Stat(filepath.Join(dst, "App", "bin", "run"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if runtime.GOOS != "windows" && info.Mode()&0111 == 0 {
+			t.Fatal("bundle executable lost its executable bit")
+		}
 	}
-	if got, err := os.ReadFile(filepath.Join(dst, "App", "Resources", "data")); err != nil || string(got) != "resource" {
-		t.Fatalf("bundle links: %q, %v", got, err)
-	}
-	info, err := os.Stat(filepath.Join(dst, "App", "bin", "run"))
+}
+
+func extractArchiveByEntry(archive, dst string) error {
+	zr, err := zip.OpenReader(archive)
 	if err != nil {
-		t.Fatal(err)
+		return err
 	}
-	if runtime.GOOS != "windows" && info.Mode()&0111 == 0 {
-		t.Fatal("bundle executable lost its executable bit")
+	defer zr.Close()
+	for _, entry := range zr.File {
+		if err := ExtractZipEntry(entry, dst); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func TestExtractZipRejectsSymlinkAliases(t *testing.T) {
+	probe := filepath.Join(t.TempDir(), "probe")
+	if err := os.Symlink(".", probe); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	for _, extractor := range []struct {
+		name    string
+		extract func(string, string) error
+	}{{"archive", ExtractZip}, {"entry", extractArchiveByEntry}} {
+		for _, c := range []struct {
+			name    string
+			entries []archiveEntry
+		}{
+			{"parent alias", []archiveEntry{
+				{"alias", ".", os.ModeSymlink | 0777},
+				{"alias/leak", "../outside", os.ModeSymlink | 0777},
+			}},
+			{"target alias already present", []archiveEntry{
+				{"alias", ".", os.ModeSymlink | 0777},
+				{"leak", "alias/../outside", os.ModeSymlink | 0777},
+			}},
+			{"target alias created later", []archiveEntry{
+				{"leak", "alias/../outside", os.ModeSymlink | 0777},
+				{"alias", ".", os.ModeSymlink | 0777},
+			}},
+		} {
+			t.Run(extractor.name+"/"+c.name, func(t *testing.T) {
+				parent := t.TempDir()
+				dst := filepath.Join(parent, "app")
+				outside := filepath.Join(parent, "outside")
+				if err := os.WriteFile(outside, []byte("outside root"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				archive := writeArchive(t, c.entries...)
+				if err := extractor.extract(archive, dst); err == nil {
+					t.Fatal("escaping alias accepted")
+				}
+				if data, err := os.ReadFile(filepath.Join(dst, "leak")); err == nil {
+					t.Fatalf("external link left behind: %q", data)
+				}
+				if data, err := os.ReadFile(outside); err != nil || string(data) != "outside root" {
+					t.Fatalf("outside file changed: %q, %v", data, err)
+				}
+			})
+		}
+	}
+}
+
+func TestExtractZipNormalizesEntryBeforeFollowingAliases(t *testing.T) {
+	if err := os.Symlink(".", filepath.Join(t.TempDir(), "probe")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	archive := writeArchive(t,
+		archiveEntry{"outside", "inside root", 0644},
+		archiveEntry{"other/file", "file", 0644},
+		archiveEntry{"deep/alias", "../other", os.ModeSymlink | 0777},
+		archiveEntry{"deep/alias/../leak", "../outside", os.ModeSymlink | 0777},
+	)
+	for _, extract := range []func(string, string) error{ExtractZip, extractArchiveByEntry} {
+		parent := t.TempDir()
+		dst := filepath.Join(parent, "app")
+		if err := os.WriteFile(filepath.Join(parent, "outside"), []byte("outside root"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := extract(archive, dst); err != nil {
+			t.Fatal(err)
+		}
+		if data, err := os.ReadFile(filepath.Join(dst, "deep", "leak")); err != nil || string(data) != "inside root" {
+			t.Fatalf("normalized link: %q, %v", data, err)
+		}
+		if data, err := os.ReadFile(filepath.Join(dst, "leak")); err == nil {
+			t.Fatalf("alias changed entry's parent: %q", data)
+		}
 	}
 }
 
