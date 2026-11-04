@@ -84,13 +84,9 @@ func NeedsUpdate() (bool, error) {
 		if isLinked(ext) {
 			continue
 		}
-		stages, err := extensionUpdateDirs(filepath.Join(utils.ResolveInstallPath("web-extensions"), ext.Folder))
-		if err != nil {
-			return false, err
-		}
-		if len(stages) > 0 {
-			return true, nil
-		} // recovery needs the worker, even if already up to date
+		// Leftover staging folders don't trigger the worker: UpdateAll recovers them the
+		// next time it runs. A crash that left the extension moved aside shows up below
+		// as a missing version, which already needs an update.
 		currentVersion := getInstalledVersion(ext)
 		release, err := fetchLatestRelease(ext)
 		if err != nil {
