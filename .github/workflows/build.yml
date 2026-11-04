@@ -117,6 +117,41 @@ jobs:
           compression-level: 0
           retention-days: ${{ env.ARTIFACT_DAYS }}
 
+  # The macos job builds the amd64 launcher on Apple silicon, so nothing runs it there.
+  # This tests it on an Intel Mac, then patches the current Claude through the
+  # launcher's own flow and checks that Claude stays up (issue #68).
+  macos-intel:
+    needs: check-tag
+    runs-on: macos-15-intel
+    env:
+      CGO_ENABLED: "1"
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Vet and test
+        run: go vet ./... && go test ./...
+      - name: Smoke test
+        timeout-minutes: 15
+        run: |
+          go build -o launcher .
+          # --debug: no window; after downloading and patching Claude, the launcher runs
+          # it attached, so it's still running 20 s after Claude started only if Claude is.
+          ./launcher --debug &
+          launcher=$!
+          until pgrep -f 'Claude.app/Contents/MacOS/Claude' >/dev/null || ! kill -0 $launcher 2>/dev/null; do
+            sleep 1
+          done
+          sleep 20
+          if ! kill -0 $launcher 2>/dev/null; then
+            echo "Claude didn't stay up; the launcher's error above says why"
+            exit 1
+          fi
+          echo "Claude stayed up for 20 s"
+          pkill -f 'Claude.app/Contents/MacOS/Claude'
+
   # On a pull request, keep one comment linking the latest run's zips. Fork PRs get a
   # read-only token, so they're skipped.
   pr-artifacts:
