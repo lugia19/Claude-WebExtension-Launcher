@@ -61,6 +61,9 @@ stop_claude() {
 
 # Extra state for working out why a run failed.
 diagnose() {
+	# Uploaded by smoke.yml; created first, so a failure before Claude made its logs
+	# folder still keeps smoke.log and launcher.log.
+	mkdir -p smoke-logs
 	echo "--- Claude's own logs ---"
 	for dir in "${APPDATA:-}/Claude-Main/logs" "$HOME/.config/Claude-Main/logs" \
 		"$HOME/Library/Logs/Claude-Main" "$HOME/Library/Application Support/Claude-Main/logs"; do
