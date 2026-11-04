@@ -1,7 +1,6 @@
 package patcher
 
 import (
-	"archive/zip"
 	"claude-webext-patcher/asar"
 	"claude-webext-patcher/utils"
 	"encoding/json"
@@ -215,79 +214,13 @@ func downloadAndExtract(version, downloadURL string) error {
 		return fmt.Errorf("no downloaded package for Claude %s", version)
 	}
 
-	// Extract
 	fmt.Println("Extracting...")
-	os.RemoveAll(AppFolder)
-	os.MkdirAll(AppFolder, 0755)
-
-	zipReader, err := zip.OpenReader(newVersionDownloadPath)
-	if err != nil {
-		return fmt.Errorf("opening archive: %v", err)
+	if err := os.RemoveAll(AppFolder); err != nil {
+		return err
 	}
-	// Don't defer close - we need to close before deleting temp file
-
-	for _, f := range zipReader.File {
-		// For macOS, keep the full .app bundle structure
-		relativePath := f.Name
-
-		if relativePath == "" {
-			continue
-		}
-
-		path := filepath.Join(AppFolder, relativePath)
-
-		// Handle PowerShell Compress-Archive's broken directory entries
-		normalizedName := strings.ReplaceAll(f.Name, "\\", "/")
-		isDirectory := f.FileInfo().IsDir() || (f.UncompressedSize64 == 0 && (strings.HasSuffix(normalizedName, "/") || strings.HasSuffix(f.Name, "\\")))
-
-		if isDirectory {
-			os.MkdirAll(path, 0755)
-			continue
-		}
-
-		// Skip if path already exists as a directory (created by earlier MkdirAll)
-		if info, err := os.Stat(path); err == nil && info.IsDir() {
-			continue
-		}
-
-		os.MkdirAll(filepath.Dir(path), 0755)
-
-		// Check if this is a symlink on macOS
-		isSymlink := (f.ExternalAttrs>>16)&0170000 == 0120000
-
-		if isSymlink {
-			// Read the symlink target
-			src, err := f.Open()
-			if err != nil {
-				continue
-			}
-			linkTarget, err := io.ReadAll(src)
-			src.Close()
-
-			if err == nil && len(linkTarget) > 0 {
-				linkStr := string(linkTarget)
-				// Create the symlink
-				os.Remove(path) // Remove if exists
-				if err := os.Symlink(linkStr, path); err == nil {
-					fmt.Printf("Created symlink: %s -> %s\n", filepath.Base(path), linkStr)
-				} else {
-					fmt.Printf("Failed to create symlink %s: %v\n", path, err)
-				}
-				continue
-			}
-		}
-
-		// Regular file extraction
-		if err := utils.ExtractZipFile(f, path); err != nil {
-			zipReader.Close()
-			return fmt.Errorf("extracting %s: %v", f.Name, err)
-		}
+	if err := utils.ExtractZip(newVersionDownloadPath, AppFolder); err != nil {
+		return fmt.Errorf("extracting archive: %w", err)
 	}
-
-	// Close the zip reader before attempting to delete temp file
-	zipReader.Close()
-
-	// Executables keep their exec bit from the zip (utils.ExtractZipFile).
 
 	// Delete ShipIt to prevent self-updates
 	shipItPath := filepath.Join(AppFolder, "Claude.app", "Contents", "Frameworks", "Squirrel.framework", "Resources", "ShipIt")

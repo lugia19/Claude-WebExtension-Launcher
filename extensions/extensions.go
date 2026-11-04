@@ -210,17 +210,8 @@ func installExtension(url, destination string) error {
 	defer zipReader.Close()
 
 	for _, f := range zipReader.File {
-		path := filepath.Join(extPath, f.Name)
-
-		if f.FileInfo().IsDir() {
-			os.MkdirAll(path, 0755)
-			continue
-		}
-
-		os.MkdirAll(filepath.Dir(path), 0755)
-
-		if err := utils.ExtractZipFile(f, path); err != nil {
-			return fmt.Errorf("extracting %s: %v", f.Name, err)
+		if err := utils.ExtractZipEntry(f, extPath); err != nil {
+			return err
 		}
 	}
 
