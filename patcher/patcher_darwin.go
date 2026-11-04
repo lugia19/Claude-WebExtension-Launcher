@@ -62,14 +62,17 @@ func updateIntegrityDigest() error {
 
 	framework := filepath.Join(AppFolder, "Claude.app", "Contents", "Frameworks",
 		"Electron Framework.framework", "Versions", "A", "Electron Framework")
-	updated, err := writeIntegrityDigest(framework, integrityDictDigest(dict))
+	written, disabled, err := writeIntegrityDigest(framework, integrityDictDigest(dict))
 	if err != nil {
 		return err
 	}
-	if updated == 0 {
+	switch {
+	case written == 0 && disabled == 0:
 		fmt.Println("Electron Framework has no integrity digest to update")
-	} else {
-		fmt.Printf("Electron Framework integrity digest updated (%d architectures)\n", updated)
+	case disabled == 0:
+		fmt.Printf("Electron Framework integrity digest updated (%d architectures)\n", written)
+	default:
+		fmt.Printf("Electron Framework integrity digest updated in %d architectures, check disabled in %d\n", written, disabled)
 	}
 	return nil
 }
