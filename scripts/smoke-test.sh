@@ -32,9 +32,9 @@ go build -o "$exe" . || exit 1
 out=smoke.log
 : >"$out"
 if [ $os = linux ]; then
-	xvfb-run -a "$exe" --debug >"$out" 2>&1 &
+	xvfb-run -a "$exe" --debug --no-pause >"$out" 2>&1 &
 else
-	"$exe" --debug >"$out" 2>&1 &
+	"$exe" --debug --no-pause >"$out" 2>&1 &
 fi
 launcher=$!
 tail -f "$out" &
@@ -51,6 +51,29 @@ stop_claude() {
 	kill $tailer 2>/dev/null
 }
 
+# Extra state for working out why a run failed.
+diagnose() {
+	echo "--- Claude's own logs ---"
+	for dir in "${APPDATA:-}/Claude-Main/logs" "$HOME/.config/Claude-Main/logs" \
+		"$HOME/Library/Logs/Claude-Main" "$HOME/Library/Application Support/Claude-Main/logs"; do
+		[ -f "$dir/main.log" ] || continue
+		echo "$dir/main.log (wrapper lines, then the last 60):"
+		grep -E 'webext|Loading|Extensions loaded|Sentinel' "$dir/main.log" | head -n 20
+		tail -n 60 "$dir/main.log"
+	done
+	echo "--- Claude processes ---"
+	case $os in
+		windows)
+			powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='claude.exe'\" | Select-Object ProcessId, ParentProcessId, CommandLine | Format-List"
+			echo "--- whoami /priv ---"
+			whoami //priv
+			echo "--- WindowsApps ACL ---"
+			icacls 'C:\Program Files\WindowsApps'
+			;;
+		*) ps -eo pid,ppid,args | grep -i '[c]laude' ;;
+	esac
+}
+
 fail() {
 	stop_claude
 	echo
@@ -59,6 +82,7 @@ fail() {
 		echo "--- launcher.log (includes the worker) ---"
 		cat "$launcher_log"
 	fi
+	diagnose
 	exit 1
 }
 
