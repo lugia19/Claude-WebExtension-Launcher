@@ -16,18 +16,26 @@ case $os in
 	windows)
 		exe=./launcher.exe
 		launcher_log="$LOCALAPPDATA/ClaudeWebExtLauncher/launcher.log"
+		user_data="$APPDATA/Claude-Main"
 		;;
 	macos)
 		exe=./launcher
 		launcher_log="$HOME/Library/Application Support/Claude WebExtension Launcher/launcher.log"
+		user_data="$HOME/Library/Application Support/Claude-Main"
 		;;
 	linux)
 		exe=./launcher
 		launcher_log="${XDG_DATA_HOME:-$HOME/.local/share}/claude-webext-launcher/launcher.log"
+		user_data="${XDG_CONFIG_HOME:-$HOME/.config}/Claude-Main"
 		;;
 esac
 
+# wrapper.js writes how many extensions it loaded here (stdout isn't reliable: on Linux,
+# Claude's console output after startup doesn't reach it).
+status_file="$user_data/webext-status.json"
+
 go build -o "$exe" . || exit 1
+rm -f "$status_file"
 
 out=smoke.log
 : >"$out"
@@ -92,7 +100,7 @@ fail() {
 
 # Downloading and patching Claude comes first, so allow a while.
 deadline=$((SECONDS + 600))
-until grep -q 'Extensions loaded:' "$out"; do
+until [ -s "$status_file" ]; do
 	kill -0 $launcher 2>/dev/null || fail "the launcher exited before Claude loaded its extensions"
 	[ $SECONDS -lt $deadline ] || fail "Claude didn't load its extensions within 10 minutes"
 	sleep 2
@@ -101,17 +109,21 @@ done
 # The launcher updating itself would mean testing the released build, not this one.
 grep -q 'Update available:' "$out" && fail "the launcher updated itself, so this isn't testing the checkout"
 
-loaded=$(grep -o 'Extensions loaded: [0-9]*/[0-9]*' "$out" | head -n1 | cut -d' ' -f3)
-[ "${loaded%/*}" = "${loaded#*/}" ] || fail "only $loaded extensions loaded"
+echo "webext-status.json: $(cat "$status_file")"
+n=$(grep -o '"loaded":[0-9]*' "$status_file" | cut -d: -f2)
+m=$(grep -o '"total":[0-9]*' "$status_file" | cut -d: -f2)
+[ -n "$m" ] && [ "$m" -gt 0 ] || fail "no extensions were found to load"
+[ "$n" = "$m" ] || fail "only $n of $m extensions loaded"
+loaded="$n/$m"
 
 sleep 20
 kill -0 $launcher 2>/dev/null || fail "Claude didn't stay up after loading its extensions"
 
 stop_claude
 # Warnings don't fail the run, but they're worth seeing (the worker only logs to the file).
-if [ -f "$launcher_log" ] && grep -q 'Warning' "$launcher_log"; then
+if [ -f "$launcher_log" ] && grep -q '^Warning' "$launcher_log"; then
 	echo "--- warnings in launcher.log ---"
-	grep -A3 'Warning' "$launcher_log"
+	grep -A3 '^Warning' "$launcher_log"
 fi
 echo
 echo "Smoke test passed: $loaded extensions loaded, and Claude stayed up for 20 s"
