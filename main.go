@@ -39,6 +39,7 @@ type launcherOptions struct {
 	instance      string
 	instanceGiven bool // --instance was passed (so no instance list)
 	debug         bool // no window: everything in the terminal, Claude attached to it
+	noPause       bool // with debug: never wait for Enter on a warning (CI)
 	logPath       string
 	list          bool   // end on the instance list instead of launching o.instance
 	installedFrom string // the copy that handed over to this installed one (see install.go)
@@ -49,6 +50,7 @@ func main() {
 	forceUpdate := flag.Bool("force-update", false, "Re-download and re-patch Claude even if already up to date")
 	instanceName := flag.String("instance", "", "Instance to launch, each with its own data (default: "+mainInstanceName+")")
 	debug := flag.Bool("debug", false, "No window: show all output in the terminal and run Claude attached to it")
+	noPause := flag.Bool("no-pause", false, "With --debug, don't wait for Enter after a warning (for unattended runs, e.g. CI)")
 
 	// Internal: the launcher re-runs itself with these to start the worker.
 	worker := flag.Bool("worker", false, "Run as the install worker (internal)")
@@ -68,7 +70,7 @@ func main() {
 
 	selfupdate.CurrentVersion = Version
 	patcher.EmbeddedFS = EmbeddedFS
-	patcher.Debug = *debug
+	patcher.Debug = *debug && !*noPause
 
 	if *worker {
 		os.Exit(runWorker(workerOptions{
@@ -101,6 +103,7 @@ func main() {
 		instance:      *instanceName,
 		instanceGiven: instanceGiven,
 		debug:         *debug,
+		noPause:       *noPause,
 		logPath:       utils.LogPath(logInstance, mainInstanceName),
 		installedFrom: *installedFrom,
 	}
@@ -339,6 +342,9 @@ func runWorkerIfNeeded(o launcherOptions, update patcher.ClaudeUpdate, pkg strin
 	}
 	if o.debug {
 		args = append(args, "--debug")
+	}
+	if o.noPause {
+		args = append(args, "--no-pause")
 	}
 	// What the worker was asked to do has started from here on, though it only reports
 	// once it's running.

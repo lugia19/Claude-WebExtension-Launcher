@@ -59,7 +59,7 @@ func ReleaseWindowsAppsOwnership() {
 	for _, c := range cmds {
 		cmd := utils.Command(c.name, c.args...)
 		if output, err := cmd.CombinedOutput(); err != nil {
-			fmt.Printf("Warning: cleanup step '%s' failed: %v\n%s\n", c.name, err, string(output))
+			fmt.Printf("Warning: cleanup step '%s %s' failed: %v\n%s\n", c.name, strings.Join(c.args, " "), err, string(output))
 			debugPause()
 		}
 	}

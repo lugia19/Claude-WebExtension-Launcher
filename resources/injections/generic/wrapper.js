@@ -119,8 +119,20 @@ const SENTINEL_TIMEOUT_MS = 5000;
 let sentinelReloadCount = 0;
 let sentinelReceived = false;
 
+// The load result, also written to a file: on Linux, Claude's console output after
+// startup doesn't reach the terminal, and the smoke test (scripts/smoke-test.sh) reads it.
+const extStatusFile = () => path.join(app.getPath("userData"), "webext-status.json");
+function writeExtStatus(loaded, total) {
+    try {
+        fs.writeFileSync(extStatusFile(), JSON.stringify({ loaded, total, at: new Date().toISOString() }));
+    } catch (err) {
+        console.error("Couldn't write the extension status file:", err);
+    }
+}
+
 app.on("ready", () => {
     session.defaultSession.clearCache();
+    try { fs.rmSync(extStatusFile(), { force: true }); } catch {}
 
     if (!extPath) return;
 
@@ -142,6 +154,7 @@ app.on("ready", () => {
     Promise.all(loadPromises).then(() => {
         const loaded = session.defaultSession.extensions.getAllExtensions().length;
         console.log(`Extensions loaded: ${loaded}/${extDirs.length}`);
+        writeExtStatus(loaded, extDirs.length);
         if (loaded < extDirs.length && claudeWebContents) {
             console.log("Not all extensions loaded, reloading page...");
             sentinelReloadCount++;
