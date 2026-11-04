@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -158,7 +157,7 @@ func GetLatestVersion() (string, string, error) {
 
 	// Parse macOS manifest
 	fmt.Printf("Fetching macOS manifest from: %s\n", macosReleasesURL)
-	resp, err := http.Get(macosReleasesURL)
+	resp, err := utils.GetURL(macosReleasesURL)
 	if err != nil {
 		return "", "", fmt.Errorf("fetching macOS manifest: %v", err)
 	}

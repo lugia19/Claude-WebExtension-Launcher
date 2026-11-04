@@ -5,8 +5,6 @@ import (
 	"claude-webext-patcher/utils"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -61,16 +59,11 @@ func isLinked(ext Extension) bool {
 
 func fetchLatestRelease(ext Extension) (*extensionRelease, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", ext.Owner, ext.Repo)
-	resp, err := http.Get(url)
+	resp, err := utils.GetURL(url)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	// Error replies (e.g. a 403 rate limit) are JSON too and would otherwise decode into
-	// an empty release that looks like "no update".
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub returned HTTP %d", resp.StatusCode)
-	}
 	var release extensionRelease
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
 		return nil, err
@@ -91,6 +84,13 @@ func NeedsUpdate() (bool, error) {
 		if isLinked(ext) {
 			continue
 		}
+		stages, err := extensionUpdateDirs(filepath.Join(utils.ResolveInstallPath("web-extensions"), ext.Folder))
+		if err != nil {
+			return false, err
+		}
+		if len(stages) > 0 {
+			return true, nil
+		} // recovery needs the worker, even if already up to date
 		currentVersion := getInstalledVersion(ext)
 		release, err := fetchLatestRelease(ext)
 		if err != nil {
@@ -119,6 +119,11 @@ func UpdateAll() error {
 	for _, ext := range extensions {
 		if isLinked(ext) {
 			fmt.Printf("  %s: linked folder, not updating\n", ext.Folder)
+			continue
+		}
+		if err := recoverExtensionUpdates(filepath.Join(utils.ResolveInstallPath("web-extensions"), ext.Folder)); err != nil {
+			fmt.Printf("  %s: recovery failed: %v\n", ext.Folder, err)
+			failed = append(failed, ext.Folder)
 			continue
 		}
 
@@ -169,26 +174,38 @@ func UpdateAll() error {
 }
 
 func downloadAndExtractExtension(url, folder string) error {
-	// Download to temp
-	resp, err := http.Get(url)
+	return installExtension(url, filepath.Join(utils.ResolveInstallPath("web-extensions"), folder))
+}
+
+// installExtension stages and validates the whole update before moving the old
+// extension aside. Both renames stay on the same filesystem, and a failed swap
+// restores the previous extension instead of leaving an empty or partial folder.
+func installExtension(url, destination string) error {
+	parent := filepath.Dir(destination)
+	if err := os.MkdirAll(parent, 0755); err != nil {
+		return err
+	}
+	if err := recoverExtensionUpdates(destination); err != nil {
+		return err
+	}
+	stage, err := os.MkdirTemp(parent, "."+filepath.Base(destination)+"-update-*")
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-
-	// Install path, not launcher-local: on Windows this runs elevated, and the
-	// launcher-local folder is user-writable.
-	tempFile := utils.ResolveInstallPath(folder + "-temp.zip")
-	out, _ := os.Create(tempFile)
-	io.Copy(out, resp.Body)
-	out.Close()
-	defer os.Remove(tempFile)
-
-	// Remove old and extract new
-	extPath := filepath.Join(utils.ResolveInstallPath("web-extensions"), folder)
-	os.RemoveAll(extPath)
-	os.MkdirAll(extPath, 0755)
-
+	cleanup := true
+	defer func() {
+		if cleanup {
+			os.RemoveAll(stage)
+		}
+	}()
+	if err := markExtensionUpdate(stage, destination); err != nil {
+		return err
+	}
+	tempFile := filepath.Join(stage, "download.zip")
+	if err := utils.DownloadFile(url, tempFile, nil); err != nil {
+		return err
+	}
+	extPath := filepath.Join(stage, "extension")
 	// Extract zip
 	zipReader, err := zip.OpenReader(tempFile)
 	if err != nil {
@@ -211,7 +228,76 @@ func downloadAndExtractExtension(url, folder string) error {
 		}
 	}
 
+	if err := validateManifest(extPath); err != nil {
+		return err
+	}
+
+	backup := filepath.Join(stage, "previous")
+	hadPrevious := false
+	if _, err := os.Lstat(destination); err == nil {
+		// A linked developer checkout must never be replaced, even if the link
+		// appeared after UpdateAll's earlier check.
+		if _, err := os.Readlink(destination); err == nil {
+			return fmt.Errorf("refusing to replace linked extension %s", destination)
+		}
+		if err := os.Rename(destination, backup); err != nil {
+			return fmt.Errorf("moving previous extension aside: %w", err)
+		}
+		hadPrevious = true
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(extPath, destination); err != nil {
+		if hadPrevious {
+			if restoreErr := os.Rename(backup, destination); restoreErr != nil {
+				// Keep the backup for recovery instead of deleting it with stage.
+				cleanup = false
+				return fmt.Errorf("installing extension: %v; restoring it: %v (backup: %s)", err, restoreErr, backup)
+			}
+		}
+		return fmt.Errorf("installing extension: %w", err)
+	}
 	return nil
+}
+
+func validateManifest(dir string) error {
+	data, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		return fmt.Errorf("reading extension manifest: %w", err)
+	}
+	var manifest struct {
+		ManifestVersion int    `json:"manifest_version"`
+		Name            string `json:"name"`
+		Version         string `json:"version"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return fmt.Errorf("parsing extension manifest: %w", err)
+	}
+	if (manifest.ManifestVersion != 2 && manifest.ManifestVersion != 3) || strings.TrimSpace(manifest.Name) == "" || manifest.Version == "" {
+		return fmt.Errorf("extension manifest must contain manifest_version (2 or 3), name and version")
+	}
+	if !validExtensionVersion(manifest.Version) {
+		return fmt.Errorf("invalid extension version %q", manifest.Version)
+	}
+	return nil
+}
+
+// Chromium accepts one to four canonical decimal components in [0, 65535],
+// with at least one nonzero component.
+func validExtensionVersion(version string) bool {
+	parts := strings.Split(version, ".")
+	if len(parts) > 4 {
+		return false
+	}
+	nonzero := false
+	for _, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil || n < 0 || n > 65535 || strconv.Itoa(n) != part {
+			return false
+		}
+		nonzero = nonzero || n != 0
+	}
+	return nonzero
 }
 
 func compareVersions(v1, v2 string) int {

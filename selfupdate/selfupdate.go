@@ -5,8 +5,6 @@ import (
 	"claude-webext-patcher/utils"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -44,7 +42,7 @@ func CheckAndUpdate() error {
 
 	// Check latest release
 	url := "https://api.github.com/repos/lugia19/Claude-WebExtension-Launcher/releases/latest"
-	resp, err := http.Get(url)
+	resp, err := utils.GetURL(url)
 	if err != nil {
 		return fmt.Errorf("failed to check for updates: %v", err)
 	}
@@ -106,22 +104,10 @@ func CheckAndUpdate() error {
 	// Download to temp
 	fmt.Println("Downloading update...")
 	tempZip := utils.ResolvePath("update-temp.zip")
-	resp, err = http.Get(downloadURL)
-	if err != nil {
-		return fmt.Errorf("failed to download update: %v", err)
+	if err := utils.DownloadFile(downloadURL, tempZip, nil); err != nil {
+		return fmt.Errorf("failed to download update: %w", err)
 	}
-	defer resp.Body.Close()
-
-	out, err := os.Create(tempZip)
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %v", err)
-	}
-	_, err = io.Copy(out, resp.Body)
-	out.Close()
-	if err != nil {
-		os.Remove(tempZip)
-		return fmt.Errorf("failed to save update: %v", err)
-	}
+	defer os.Remove(tempZip)
 
 	// Extract to temp dir
 	fmt.Println("Extracting update...")
