@@ -1,0 +1,46 @@
+# Installs the latest Claude through the launcher on every OS and checks that the
+# patched Claude starts, loads every extension and stays up (scripts/smoke-test.sh).
+# Claude updates arrive on their own schedule and can break the patching without any
+# change here (issue #68), so this also runs daily; a failed scheduled run emails the
+# repository owner.
+name: Smoke test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * *"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu-22.04: no user-namespace restriction, so Claude's sandbox needs no
+        # AppArmor profile (and no password prompt to install one).
+        runner: [windows-latest, ubuntu-22.04, macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    env:
+      CGO_ENABLED: "1"
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb gcc libgl1-mesa-dev libwayland-dev libxkbcommon-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libxxf86vm-dev
+      - name: Smoke test
+        shell: bash
+        timeout-minutes: 20
+        run: bash scripts/smoke-test.sh

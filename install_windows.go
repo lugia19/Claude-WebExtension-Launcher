@@ -75,6 +75,9 @@ func handOff(target string, args []string, debug bool) error {
 	cmd := exec.Command(target, args...)
 	cmd.Dir = filepath.Dir(target)
 	if debug {
+		// Pass our standard handles on too: when they're pipes rather than a console
+		// (CI's smoke test), attaching to the console wouldn't reach them.
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 		if err := cmd.Run(); err != nil {
 			if exit, ok := err.(*exec.ExitError); ok {
 				os.Exit(exit.ExitCode())
