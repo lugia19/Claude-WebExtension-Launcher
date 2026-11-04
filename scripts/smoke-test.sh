@@ -112,7 +112,10 @@ grep -q 'Update available:' "$out" && fail "the launcher updated itself, so this
 echo "webext-status.json: $(cat "$status_file")"
 n=$(grep -o '"loaded":[0-9]*' "$status_file" | cut -d: -f2)
 m=$(grep -o '"total":[0-9]*' "$status_file" | cut -d: -f2)
-[ -n "$m" ] && [ "$m" -gt 0 ] || fail "no extensions were found to load"
+# The bundled extensions (extensions/extensions.go) plus the sentinel. Fewer means some
+# weren't installed (e.g. their release lookup failed), which "loaded == total" misses.
+expected=3
+[ "$m" = "$expected" ] || fail "$m extensions were installed, expected $expected (see the worker's extension step in launcher.log)"
 [ "$n" = "$m" ] || fail "only $n of $m extensions loaded"
 loaded="$n/$m"
 
@@ -120,6 +123,11 @@ sleep 20
 kill -0 $launcher 2>/dev/null || fail "Claude didn't stay up after loading its extensions"
 
 stop_claude
+# Launcher and worker each note it once; on Windows the worker only gets it through the
+# stored user environment (smoke.yml).
+if [ -n "${CWEL_GITHUB_TOKEN:-}" ] && [ -f "$launcher_log" ]; then
+	echo "Processes that used CWEL_GITHUB_TOKEN: $(grep -c 'Using CWEL_GITHUB_TOKEN' "$launcher_log")"
+fi
 # Warnings don't fail the run, but they're worth seeing (the worker only logs to the file).
 if [ -f "$launcher_log" ] && grep -q '^Warning' "$launcher_log"; then
 	echo "--- warnings in launcher.log ---"

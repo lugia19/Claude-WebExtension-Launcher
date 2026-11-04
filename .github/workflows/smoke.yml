@@ -29,6 +29,9 @@ jobs:
     env:
       CGO_ENABLED: "1"
       MACOSX_DEPLOYMENT_TARGET: "12.0"
+      # The launcher's GitHub API lookups (extension releases, its own updates) are
+      # limited to 60 an hour per IP without a token, and runners share IPs.
+      CWEL_GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -40,6 +43,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends xvfb gcc libgl1-mesa-dev libwayland-dev libxkbcommon-dev \
             libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libxxf86vm-dev
+      # The Windows worker runs elevated (runas), which starts it with the user's stored
+      # environment rather than ours, so store the token there too.
+      - name: Give the elevated worker the token
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '[Environment]::SetEnvironmentVariable("CWEL_GITHUB_TOKEN", $env:CWEL_GITHUB_TOKEN, "User")'
       - name: Smoke test
         shell: bash
         timeout-minutes: 20

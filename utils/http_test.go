@@ -108,3 +108,28 @@ func TestDownloadReportsProgress(t *testing.T) {
 		t.Fatalf("download=%q, err=%v, progress=%d/%d", got, err, done, total)
 	}
 }
+
+func TestGitHubTokenOnlyForAPI(t *testing.T) {
+	t.Setenv(githubTokenEnv, "secret")
+	for url, want := range map[string]string{
+		"https://api.github.com/repos/o/r/releases/latest":  "Bearer secret",
+		"https://github.com/o/r/releases/download/v1/x.zip": "",
+		"https://downloads.claude.ai/releases/x.msix":       "",
+	} {
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		authorizeGitHub(req)
+		if got := req.Header.Get("Authorization"); got != want {
+			t.Errorf("%s: Authorization %q, want %q", url, got, want)
+		}
+	}
+
+	t.Setenv(githubTokenEnv, "")
+	req, _ := http.NewRequest(http.MethodGet, "https://api.github.com/x", nil)
+	authorizeGitHub(req)
+	if got := req.Header.Get("Authorization"); got != "" {
+		t.Errorf("no token set, but Authorization %q", got)
+	}
+}

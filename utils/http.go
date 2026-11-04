@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -44,6 +45,7 @@ func getURL(ctx context.Context, client *http.Client, url string) (*http.Respons
 	if err != nil {
 		return nil, err
 	}
+	authorizeGitHub(req)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -53,6 +55,25 @@ func getURL(ctx context.Context, client *http.Client, url string) (*http.Respons
 		return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
 	}
 	return resp, nil
+}
+
+// githubTokenEnv names a GitHub token the launcher sends with its GitHub API calls
+// (release lookups), which are otherwise limited to 60 an hour per IP. The smoke test
+// sets it, since CI runners share IPs. It's the launcher's own variable rather than
+// GITHUB_TOKEN, so a token someone has set for other tools isn't sent unasked.
+const githubTokenEnv = "CWEL_GITHUB_TOKEN"
+
+var githubTokenNoted sync.Once
+
+// authorizeGitHub adds the token to requests for api.github.com only. Go drops the
+// header itself if a request is redirected to another host.
+func authorizeGitHub(req *http.Request) {
+	token := os.Getenv(githubTokenEnv)
+	if token == "" || req.URL.Host != "api.github.com" {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	githubTokenNoted.Do(func() { fmt.Printf("Using %s for GitHub API requests\n", githubTokenEnv) })
 }
 
 // DownloadFile writes a complete successful response to dst. Timeouts cancel the
