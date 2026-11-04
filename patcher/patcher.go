@@ -55,12 +55,10 @@ var supportedVersions = map[string][]Patch{
 	// The wrapper (installed separately) handles instance isolation, multi-instance
 	// lock, extension loading, and polyfills. These content patches handle things
 	// that can't be done from the wrapper.
+	// (Adding "chrome-extension:" to Claude's protocol allow-list used to be one; it
+	// only gates top-level navigation and window.open, and extension UI runs in
+	// sub-frames, which skip that check.)
 	"generic": {
-		{
-			Files:   []string{".vite/build/index*.js"},
-			Exclude: []string{"index.pre", "wrapper"},
-			Func:    patchProtocolArray,
-		},
 		{
 			// index.pre.js holds the startup check, a chunk the runtime copy.
 			Files:   []string{".vite/build/*.js"},
@@ -111,51 +109,6 @@ func DeploySentinelExtension() error {
 
 	fmt.Println("Deployed sentinel extension.")
 	return nil
-}
-
-// patchProtocolArray adds "chrome-extension:" to the allowed protocols array.
-// Matches the prefix ["devtools:","file:" and inserts before the closing ].
-// The Windows/macOS bundles quote the entries with double quotes; the Linux bundle
-// uses template-literal backticks ([`devtools:`,`file:`,...]), so both are tried and
-// the inserted entry reuses whichever quote matched.
-//
-// Claude's bundle is heavily code-split, so this runs against many chunk files
-// and only one contains the array. "Prefix not found" is therefore the normal
-// case for most files and is reported as (content, false) without any warning —
-// the caller decides whether a genuine failure occurred (no chunk matched).
-func patchProtocolArray(content []byte) ([]byte, bool) {
-	contentStr := string(content)
-
-	for _, q := range []string{`"`, "`"} {
-		prefix := "[" + q + "devtools:" + q + "," + q + "file:" + q
-		idx := strings.Index(contentStr, prefix)
-		if idx == -1 {
-			continue
-		}
-
-		// Find the closing ] after the prefix
-		closingIdx := strings.Index(contentStr[idx:], "]")
-		if closingIdx == -1 {
-			fmt.Println("Warning: Could not find closing ] for protocol array")
-			debugPause()
-			return content, false
-		}
-		closingIdx += idx
-
-		// Check if chrome-extension: is already present
-		arrayContent := contentStr[idx : closingIdx+1]
-		if strings.Contains(arrayContent, "chrome-extension:") {
-			fmt.Println("Protocol array already contains chrome-extension:, skipping")
-			return content, false
-		}
-
-		// Insert ,"chrome-extension:" before the ]
-		contentStr = contentStr[:closingIdx] + "," + q + "chrome-extension:" + q + contentStr[closingIdx:]
-		fmt.Println("Added chrome-extension: to protocol array")
-		return []byte(contentStr), true
-	}
-
-	return content, false
 }
 
 // devModeGate is what patchDevModeGate inserts: the check passes when wrapper.js has
@@ -405,7 +358,8 @@ func applyPatches(version string) error {
 		return fmt.Errorf("installing wrapper: %v", err)
 	}
 
-	// Apply content patches (e.g. protocol array)
+	// Apply content patches. An I/O error fails the build (the previous install stays);
+	// a patch that matches nothing is only a warning.
 	modifiedFiles := map[string]bool{}
 	for i, patch := range patches {
 		fmt.Printf("Applying content patch %d/%d...\n", i+1, len(patches))
@@ -416,8 +370,7 @@ func applyPatches(version string) error {
 			pattern := filepath.Join(tempDir, filePattern)
 			matches, err := filepath.Glob(pattern)
 			if err != nil {
-				fmt.Printf("Error with pattern %s: %v\n", filePattern, err)
-				continue
+				return fmt.Errorf("content patch pattern %s: %v", filePattern, err)
 			}
 
 			for _, matchedFile := range matches {
@@ -437,8 +390,7 @@ func applyPatches(version string) error {
 
 				content, err := os.ReadFile(matchedFile)
 				if err != nil {
-					fmt.Printf("  Skipping %s: %v\n", relPath, err)
-					continue
+					return fmt.Errorf("reading %s: %v", relPath, err)
 				}
 
 				newContent, modified := patch.Func(content)
@@ -446,11 +398,10 @@ func applyPatches(version string) error {
 					continue
 				}
 
-				fmt.Printf("Patched %s\n", relPath)
 				if err := os.WriteFile(matchedFile, newContent, 0644); err != nil {
-					fmt.Printf("  Failed to write %s: %v\n", relPath, err)
-					continue
+					return fmt.Errorf("writing %s: %v", relPath, err)
 				}
+				fmt.Printf("Patched %s\n", relPath)
 				patchApplied = true
 				modifiedFiles[matchedFile] = true
 				if !patch.All {
@@ -468,7 +419,9 @@ func applyPatches(version string) error {
 	removeCompileCache(tempDir, modifiedFiles)
 
 	// Backup original and repack
-	os.Rename(asarPath, asarPath+".backup")
+	if err := os.Rename(asarPath, asarPath+".backup"); err != nil {
+		return fmt.Errorf("backing up asar: %v", err)
+	}
 
 	fmt.Println("Repacking asar...")
 	if err := asar.Pack(tempDir, asarPath); err != nil {
