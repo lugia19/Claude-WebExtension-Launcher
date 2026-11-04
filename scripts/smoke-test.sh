@@ -56,11 +56,15 @@ diagnose() {
 	echo "--- Claude's own logs ---"
 	for dir in "${APPDATA:-}/Claude-Main/logs" "$HOME/.config/Claude-Main/logs" \
 		"$HOME/Library/Logs/Claude-Main" "$HOME/Library/Application Support/Claude-Main/logs"; do
-		[ -f "$dir/main.log" ] || continue
-		echo "$dir/main.log (wrapper lines, then the last 60):"
-		grep -E 'webext|Loading|Extensions loaded|Sentinel' "$dir/main.log" | head -n 20
-		tail -n 60 "$dir/main.log"
+		[ -d "$dir" ] || continue
+		echo "$dir: wrapper.js lines in main.log, then its last 40 lines"
+		grep -F -e '[webext]' -e 'Loading web extensions' -e 'Extensions loaded' -e '[Sentinel]' "$dir/main.log"
+		tail -n 40 "$dir/main.log"
+		# The whole folder, uploaded by smoke.yml.
+		mkdir -p smoke-logs/claude && cp -r "$dir"/. smoke-logs/claude/
 	done
+	cp smoke.log smoke-logs/ 2>/dev/null
+	[ -f "$launcher_log" ] && cp "$launcher_log" smoke-logs/
 	echo "--- Claude processes ---"
 	case $os in
 		windows)
@@ -104,5 +108,10 @@ sleep 20
 kill -0 $launcher 2>/dev/null || fail "Claude didn't stay up after loading its extensions"
 
 stop_claude
+# Warnings don't fail the run, but they're worth seeing (the worker only logs to the file).
+if [ -f "$launcher_log" ] && grep -q 'Warning' "$launcher_log"; then
+	echo "--- warnings in launcher.log ---"
+	grep -A3 'Warning' "$launcher_log"
+fi
 echo
 echo "Smoke test passed: $loaded extensions loaded, and Claude stayed up for 20 s"

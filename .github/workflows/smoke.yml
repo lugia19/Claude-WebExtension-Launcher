@@ -44,3 +44,10 @@ jobs:
         shell: bash
         timeout-minutes: 20
         run: bash scripts/smoke-test.sh
+      - name: Upload the logs of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs-${{ matrix.runner }}
+          path: smoke-logs/
+          retention-days: 14
